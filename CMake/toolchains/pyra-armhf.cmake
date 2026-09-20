@@ -25,7 +25,11 @@ set(CMAKE_CXX_COMPILER ${PYRA_TRIPLE}-g++)
 # That matters: __ARM_NEON is what selects aMixImplNEON over the scalar audio
 # mixer (soh/soh/mixer.c:689, dispatch at :358-365). Without it the NEON path
 # silently compiles out.
-set(PYRA_ARCH_FLAGS "-march=armv7-a+neon-vfpv4 -mtune=cortex-a15 -mfloat-abi=hard")
+# armv7ve rather than armv7-a: Cortex-A15 implements ARMv7VE, which mandates the
+# integer divide instructions. Plain armv7-a leaves division to libgcc, and
+# __aeabi_uidiv shows up at ~1.6% of a profile of the running game. GCC has no
+# "+idiv" feature for armv7-a, so the architecture itself has to be raised.
+set(PYRA_ARCH_FLAGS "-march=armv7ve+neon-vfpv4 -mtune=cortex-a15 -mfloat-abi=hard")
 set(CMAKE_C_FLAGS_INIT   "${PYRA_ARCH_FLAGS}")
 set(CMAKE_CXX_FLAGS_INIT "${PYRA_ARCH_FLAGS}")
 
