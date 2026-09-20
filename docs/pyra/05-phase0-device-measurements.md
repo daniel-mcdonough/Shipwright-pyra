@@ -156,8 +156,79 @@ This remains worth confirming empirically once `oot.o2r` is available — a one-
 | SDL2 → hardware GLES2 on SGX544 | ✅ **GO**, two env vars |
 | Fill rate at target resolution | ✅ ~15× headroom |
 | Draw-call throughput | ✅ ~6× headroom |
-| Varying budget | ⚠️ narrow, well-understood, mitigations cheap |
+| Varying budget | ✅ **resolved in §5.6** — max numInputs is 4 game-wide; fits in 8 exactly |
 | Toolchain / dev packages on device | ✅ installed (gcc 14.2, cmake 3.31.6, ninja, all `-dev`) |
-| Runtime shader-variant histogram | ⏸ blocked on `oot.o2r` |
+| Shader-variant distribution | ✅ **resolved in §5.6** — scanned exhaustively from `oot.o2r` |
 
 No blocker survived Phase 0. Proceed to Phase 1.
+
+## 5.6 Phase 0.1 RESOLVED — varying budget measured across the whole game
+
+With `oot.o2r` available, the question was settled exhaustively rather than by play-through.
+`oot.o2r` is an uncompressed zip of serialised resources; display lists carry the magic `ODLT`
+and store `Gfx` commands as pairs of little-endian 32-bit words with the opcode in bits 31..24.
+`docs/pyra/tools/ccscan.py` walks every display list, decodes each `G_SETCOMBINE` (0xFC) with the
+same bit layout the interpreter uses (`gfx_set_combine_handler_rdp`,
+`libultraship/src/fast/interpreter.cpp:3774-3781`), and replays the slot allocator from
+`Interpreter::GenerateCC` (`:185-328`).
+
+```
+$ python3 docs/pyra/tools/ccscan.py /path/to/oot.o2r
+```
+
+### Results — every display list in the game
+
+| | display lists | `G_SETCOMBINE` commands | unique combine modes |
+|---|---|---|---|
+| `oot.o2r` | 9,099 | 11,878 | **317** |
+
+| `numInputs` | 1-cycle | 2-cycle (upper bound) |
+|---|---|---|
+| 0 | 0.37% | 0.06% |
+| 1 | 87.78% | 4.03% |
+| 2 | 10.83% | 92.51% |
+| 3 | 1.02% | 3.34% |
+| 4 | — | **0.06%** (7 commands) |
+| **≥5** | **0** | **0** |
+
+Cross-checks:
+- `soh.o2r` (port-authored assets) contains **no display lists at all** — only audio, textures
+  and JSON. Nothing to scan.
+- 106 `gDPSetCombineLERP` call sites in the decompiled C source (`soh/src`, `soh/soh`) reach a
+  maximum of **N=3**.
+
+### Verdict: the varying budget fits — exactly
+
+**`numInputs` never exceeds 4 anywhere in the game.** Worst-case varying cost is therefore:
+
+| Component | Vectors |
+|---|---|
+| 4 × `vInput` (vec4) | 4 |
+| `vFog` | 1 |
+| `vGrayscaleColor` | 1 |
+| `vTexCoord0` + `vTexCoord1` (2 × vec2, packed) | 1 |
+| 4 × clamp floats (packed) | 1 |
+| **Total** | **8 — exactly `MAX_VARYING_VECTORS`** |
+
+Without grayscale (an SoH enhancement, not stock rendering) it is 7, leaving one spare.
+
+**Blocker 1 from the executive summary is closed.** The mitigations in report 2 §2.4 items 2–4
+(uniform migration, feature degradation) are **not needed**.
+
+One item does get promoted, though: because the worst case lands on exactly 8 with **zero
+headroom**, it depends on the driver achieving the optimal packing described in GLSL ES 1.00
+Appendix A. Item 1 — **explicitly hand-packing the two texcoords into one `vec4` and the four
+clamp floats into another** — therefore moves from "defensive, optional" to **required**. It
+removes the dependence on the packer entirely and costs nothing.
+
+### Two incidental findings
+
+1. **Only 317 unique combine modes exist in the whole game.** The runtime shader-variant count is
+   small and bounded, which makes the `GL_OES_get_program_binary` shader cache (report 5 §5.3 /
+   plan Phase 5) both cheap to implement and highly effective — the entire game's shader set
+   could be pre-warmed.
+2. **36 `G_SETCOMBINE` commands use ccmux values the interpreter's switch does not handle**
+   (`interpreter.cpp:322`, `fprintf(stderr, "Unsupported ccmux: %d\n", ...)`). Most likely
+   `G_CCMUX_SHADE_ALPHA` (11) or `G_CCMUX_K5` (15). This is pre-existing upstream behaviour on
+   every platform, not Pyra-specific, but it is a latent correctness gap worth reporting upstream
+   separately.
