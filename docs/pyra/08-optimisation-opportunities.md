@@ -148,6 +148,8 @@ Discarding depth/stencil before swap and before each framebuffer switch removes 
 
 Small patch, no visual risk, extension confirmed present in the device string (report 0).
 
+**Measured: no benefit. See §8.10.**
+
 ### Unconditional `mod()` in the fragment shader
 
 `default.shader.fs:170`:
@@ -237,7 +239,7 @@ extra full-screen pass that does happen (render at 640×360 to `mGameFb`, then d
 | 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | large | low | yes |
 | 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes |
 | 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes |
-| 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | ~140 MB/s writeback | very low | device-specific |
+| 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific |
 | 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes |
 | 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes |
 | 7 | VBO ring buffer (§8.6) | 3 | unsized | medium | yes |
@@ -268,3 +270,90 @@ raised, or it measures the thermostat and the frame limiter rather than the chan
 
 Suggested order — cheapest and most certain first, so that the risky work is done against a
 stable baseline: **4 → 6 → 5 → 3 → 1 → 2**.
+
+## 8.10 Result: `GL_EXT_discard_framebuffer` (item 4) — no measurable gain
+
+Implemented and measured first, as the cheapest and most certain item. **It gains nothing on this
+hardware.** Recorded here so the idea is not revisited expecting a win.
+
+### Method
+
+Two binaries differing only in the change, deployed together and run **alternately at one thermal
+state** so that drift hits both arms equally rather than being attributed to the change. Five
+A/B pairs, 60 s each, after a 300 s warm-up to equilibrium (76–80 °C). 640×360 internal, vsync
+off, MSAA 1, frame cap raised to 60 so the limiter could not mask a difference. FPS sampled in
+5 s windows; the first three samples of each run were dropped as launch and shader-compile
+transient.
+
+### Result
+
+| Pair | A (no discard) | B (discard) | Δ |
+|---|---|---|---|
+| 1 | 29.44 | 29.32 | −0.13 |
+| 2 | 29.45 | 28.52 | −0.93 |
+| 3 | 29.11 | 29.16 | +0.05 |
+| 4 | 29.35 | 29.35 | +0.00 |
+| 5 | 29.19 | 29.25 | +0.06 |
+| **mean** | **29.31** | **29.12** | **−0.19 (−0.64%)** |
+
+Paired t(4) = −0.99, **not significant** (critical ±2.776). The design could have resolved an
+effect of ±0.52 FPS (1.8%); the true effect is smaller than that. The sign is negative but the
+per-pair deltas change sign, so this is noise, not a regression.
+
+### The null result is real, not a silent failure
+
+A discard that raises `GL_INVALID_ENUM` is a no-op and would look exactly like this. That was
+ruled out with a temporary probe calling `glGetError` after each discard:
+
+```
+GL_EXT_discard_framebuffer: in use
+DISCARD-PROBE fb=fbo     (idx 1) glGetError=0x0000
+DISCARD-PROBE fb=default (idx 0) glGetError=0x0000
+```
+
+Both call sites execute and the driver accepts both. The optimisation genuinely does not help.
+
+### Why, most likely
+
+The §8.5 estimate of ~140 MB/s of avoided writeback was right in magnitude but wrong in
+relevance. Report 7 §7.2 shows the workload is **fragment-shader bound** — ALU and texture fetch
+— not starved of raw memory bandwidth. Freeing bandwidth that was not the binding constraint
+changes nothing. The SGX driver may also already elide the writeback on its own: the depth
+attachment is a renderbuffer that is never sampled as a texture, and the default framebuffer's
+ancillary buffers are covered by EGL's default `EGL_SWAP_BEHAVIOR` of `EGL_BUFFER_DESTROYED`.
+
+### The measured configuration ran the game at 0.48x speed
+
+The frame cap was raised to 60 for this test so the limiter could not mask a difference. That has
+a consequence worth recording, because it was not anticipated: one call to `RunCommands`
+(`soh/soh/OTRGlobals.cpp:1794-1825`) is **one game-logic tick**, and it renders N interpolated
+sub-frames where N averages `InterpolationFPS / 20`. So
+
+```
+game speed = render FPS / InterpolationFPS
+```
+
+At 29 render FPS against a 60 cap the game logic ran at 9.7 Hz rather than 20 - roughly half
+speed.
+
+This does **not** invalidate the A/B. Both arms shared the configuration, and halving the
+game-logic rate while holding rendering at 29 full display-list traversals per second makes the
+workload *more* GPU-weighted than real gameplay, not less. If CPU contention were masking a
+GPU-side win, this is the configuration that would have exposed it. The null result is therefore
+conservative.
+
+It does mean the measured workload is not the shipping one, and a confirmation pass at the
+shipping cap would be worth doing before item 3 is judged on similar evidence.
+
+### Consequence for the rest of this report
+
+This is the second time a bandwidth-or-throughput argument has failed against this workload
+(report 7 §7.3 was the first). It lowers confidence specifically in **item 3** (§8.4, native
+texture formats), whose case is also "halve the memory traffic": if bandwidth is not the
+constraint, halving texel size may likewise buy nothing. Item 3 should be prototyped on a
+single format and measured before the full conversion is written.
+
+It does **not** bear on items 1 and 2 (§8.2, §8.3), whose case is fragment-shader work — fetch
+count and prefetch stalls — which is what the evidence says actually binds. Those now look like
+the only Tier 1 items with a live rationale, and the order in §8.9 should be revised to put them
+first.

@@ -97,6 +97,37 @@ FPS, fresh install, no manual tuning, 73.8 C:
 
 So an untouched install now lands at **~27 FPS sustained** where it previously landed at 17.
 
+## 7.5b CORRECTION - the recommended defaults run the game ~8% slow
+
+The defaults above were chosen by maximising frame rate. That was the wrong objective on its own,
+because in SoH frame rate and game speed are coupled.
+
+One call to `RunCommands` (`soh/soh/OTRGlobals.cpp:1794-1825`) is one game-logic tick, and it
+emits N interpolated sub-frames with N averaging `InterpolationFPS / 20`. Each becomes a rendered
+frame and a swap. There is no catch-up if the machine falls behind - the game simply ticks slower.
+So:
+
+```
+game speed = render FPS / InterpolationFPS
+```
+
+With the recommended `InterpolationFPS = 30` and the measured sustained **27.7 FPS**, the game
+runs at **0.92x** - about 8% slow, permanently, including audio pitch and any timing-based
+gameplay.
+
+| `InterpolationFPS` | Render FPS | Game speed | Trade |
+|---|---|---|---|
+| 30 (as recommended in 7.5) | ~27.7 | **0.92x** | 8% slow motion |
+| 20 | 20.0 | **1.00x** | correct speed, choppier |
+| 30 at 0.25x internal res | 37.5, capped to 30 | **1.00x** | correct speed, 320x180 |
+
+The cap is only honoured as a *speed* reference when the hardware can actually reach it. Setting
+it above sustained frame rate does not buy smoothness, it buys slow motion.
+
+This was found because the device's owner noticed the game playing in slow motion during a
+benchmark run - not by any measurement in this report. Frame rate was measured throughout and
+game speed never was.
+
 ## 7.6 CPU profile (for later work)
 
 `perf record` on the running game, no dominant hotspot — the cost is spread:
