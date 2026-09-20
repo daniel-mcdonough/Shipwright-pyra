@@ -45,8 +45,20 @@ if(PYRA)
     # direct GL calls dispatched through glvnd do not reach it (shader
     # compilation fails with an empty log). Measured - see docs/pyra/.
     set(PYRA_DDK_ROOT "" CACHE PATH "PowerVR SGX DDK root (contains lib/ and include/)")
+
+    # GLES 2.0 renderer. USE_OPENGLES2 is generic and implies USE_OPENGLES; it is
+    # the device-independent half of this preset.
+    set(USE_OPENGLES2 ON CACHE BOOL "" FORCE)
+
     if(PYRA_DDK_ROOT)
         message(STATUS "PYRA: using PowerVR SGX DDK at ${PYRA_DDK_ROOT}")
+        # Preset OPENGLES_LIBRARY so libultraship's find_library() is satisfied by
+        # the DDK rather than by libglvnd, and add an rpath so the resulting
+        # DT_NEEDED libGLESv2.so.1 resolves on the device.
+        set(OPENGLES_LIBRARY "${PYRA_DDK_ROOT}/lib/libGLESv2.so" CACHE FILEPATH "" FORCE)
+        include_directories(BEFORE SYSTEM "${PYRA_DDK_ROOT}/include")
+        set(CMAKE_INSTALL_RPATH "/opt/omap5-sgx-ddk-um-linux/lib")
+        set(CMAKE_BUILD_RPATH "/opt/omap5-sgx-ddk-um-linux/lib")
     endif()
 endif()
 
