@@ -25,6 +25,31 @@ else()
     MESSAGE("Skipping warning suppression")
 endif()
 
+################################################################################
+# DragonBox Pyra
+#
+# A preset, not an implementation. Device-specific settings belong here in
+# Shipwright; the pieces they switch on are deliberately generic and live
+# elsewhere, so none of this has to be carried upstream:
+#   - ARMv7/Cortex-A15 tuning  -> CMake/toolchains/pyra-armhf.cmake
+#   - the GLES2 renderer       -> USE_OPENGLES2 in libultraship
+# See docs/pyra/ for the audit and porting plan.
+################################################################################
+option(PYRA "Preset: DragonBox Pyra (OMAP5432 / SGX544 / GLES 2.0) defaults" OFF)
+if(PYRA)
+    message(STATUS "PYRA preset enabled (armhf / Cortex-A15 / PowerVR SGX544, GLES 2.0)")
+
+    # The PowerVR DDK is not in Debian and its SONAME is libGLESv2.so.1, while
+    # the system libglvnd provides libGLESv2.so.2. Linking the glvnd one builds
+    # fine and then fails at runtime: the context comes from the DDK via SDL, so
+    # direct GL calls dispatched through glvnd do not reach it (shader
+    # compilation fails with an empty log). Measured - see docs/pyra/.
+    set(PYRA_DDK_ROOT "" CACHE PATH "PowerVR SGX DDK root (contains lib/ and include/)")
+    if(PYRA_DDK_ROOT)
+        message(STATUS "PYRA: using PowerVR SGX DDK at ${PYRA_DDK_ROOT}")
+    endif()
+endif()
+
 set(NATO_PHONETIC_ALPHABET
   "Alfa" "Bravo" "Charlie" "Delta" "Echo" "Foxtrot" "Golf" "Hotel"
   "India" "Juliett" "Kilo" "Lima" "Mike" "November" "Oscar" "Papa"

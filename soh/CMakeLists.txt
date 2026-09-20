@@ -559,6 +559,13 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     else()
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
         set(CPU_OPTION -msse2 -mfpmath=sse)
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^armv7" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
+        # 32-bit ARMv7. Debian's armhf baseline is -march=armv7-a+fp, which does
+        # not define __ARM_NEON, so the NEON audio mixer in mixer.c (aMixImplNEON,
+        # selected at mixer.c:358-365) silently compiles out. Enable it here as
+        # well as in any cross toolchain file, so a native on-device build does
+        # not quietly lose it.
+        set(CPU_OPTION -march=armv7-a+neon-vfpv4 -mfloat-abi=hard)
         endif()
 
         target_compile_options(${PROJECT_NAME} PRIVATE

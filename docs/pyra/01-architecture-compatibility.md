@@ -12,7 +12,7 @@ landmines were cleaned out in the process. 32-bit ARM Linux is a new *combinatio
 | `soh/soh/Extractor/FastCrc32C.c:7-40,81-140` | `cpuid` + `<nmmintrin.h>` + `_mm_crc32_u*` | **OK** — gated on `__x86_64__ \|\| __i386__`; on armhf falls through to `NO_CRC_INTRIN` → portable table impl (`:112-120`) |
 | `soh/soh/Extractor/FastCrc32C.c:31-34` | `__asm__("crc32cx ...")` | **OK** — gated on `__aarch64__ && __ARM_FEATURE_CRC32`; skipped on armv7 |
 | `soh/soh/mixer.c:359-361,609-687` | SSE2 / AVX2 audio mixer | **OK** — gated on `__SSE2__ \|\| _M_AMD64` |
-| `soh/soh/mixer.c:689` | **`aMixImplNEON`, `#include <arm_neon.h>`** | **OK and a win** — a real NEON mixer path already exists and dispatch at `:358-365` selects it whenever `__ARM_NEON` is defined |
+| `soh/soh/mixer.c:689` | **`aMixImplNEON`, `#include <arm_neon.h>`** | ~~OK and a win~~ → **was a BLOCKER, now fixed.** See correction below |
 | `soh/CMakeLists.txt:560-561` | `-msse2 -mfpmath=sse` | **OK** — inside `if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")`; evaluates empty on armhf |
 
 No `xmmintrin.h` / `immintrin.h` / `emmintrin.h` / `_mm_` outside those two files.
@@ -22,6 +22,37 @@ No `.S` / `.asm` files anywhere in the tree. No naked functions.
 **Action:** to get the NEON mixer you must actually define `__ARM_NEON`, i.e. compile with
 `-mfpu=neon-vfpv4` (or `-march=armv7-a+neon-vfpv4`). Debian's default is `-march=armv7-a+fp`,
 which does **not** enable NEON. This is the single most valuable ARM compile flag in the port.
+
+### Correction (Phase 1) — the NEON mixer did not build on ARMv7 at all
+
+The assessment above was wrong, and the cross build proved it. The block is guarded on
+`__ARM_NEON`, which 32-bit ARMv7 defines once NEON is enabled — but the body uses
+**`vmull_high_n_s16` and `vmull_high_s16`, which are AArch64-only (A64) intrinsics**
+(`soh/soh/mixer.c:723-727`). On aarch64 (Switch, Apple Silicon) `__ARM_NEON` is always defined so
+it compiles; on armhf it is a hard compile error:
+
+```
+soh/soh/mixer.c:723:39: error: implicit declaration of function 'vmull_high_n_s16'
+soh/soh/mixer.c:723:39: error: incompatible types when initializing type 'int32x4_t' using type 'int'
+```
+
+So the guard is too broad upstream: this path has **never** been buildable on 32-bit ARM, and it
+fails loudly rather than degrading to `aMixImplRef`.
+
+Fixed by expressing the high-half forms with their exact AArch32 equivalents — a high-half
+widening multiply *is* a widening multiply of the upper four lanes:
+
+```c
+#define SOH_VMULL_HIGH_N_S16(a, n) vmull_n_s16(vget_high_s16(a), (n))
+#define SOH_VMULL_HIGH_S16(a, b)   vmull_s16(vget_high_s16(a), vget_high_s16(b))
+```
+
+Named distinctly rather than shadowing the intrinsics, so nothing collides if a toolchain later
+provides them for AArch32. Confirmed working: `mixer.c.o` contains **192 NEON instructions**, and
+`aMixImplNEON` is inlined into `aMixImpl`.
+
+**This is an upstream bug, not a Pyra one** — it affects every 32-bit ARM Linux target
+(Raspberry Pi 32-bit, other armhf handhelds). Worth submitting to Shipwright separately.
 
 ## 1.2 Pointer width — already `uintptr_t` clean
 
