@@ -162,12 +162,14 @@ Ordered by expected value:
 5. **Governor.** The device idles at 1.125 GHz under `ondemand` with a 1.5 GHz ceiling. The
    launcher should at minimum document (or optionally set) `performance` while the game runs.
 
-**Reality check on the target.** 2 × Cortex-A15 @ 1.5 GHz and an SGX544MP2 against a
-640x360 N64-workload render is a reasonable ask. 20 FPS minimum looks achievable; 30 FPS is
-plausible but will depend mostly on fill rate and draw-call count, not on the CPU. The existing
-`MAX_TRI_BUFFER = 256` batching (`interpreter.cpp:107`) is the same lightweight scheme that ran
-on Wii U, so the CPU-side submission cost is already in the right ballpark. I'd want Phase 0's
-numbers before committing to 30.
+**Reality check on the target — now measured, see report 5 §5.2-5.3.** Fill rate has ~15×
+headroom at 640x360 and draw-call overhead ~6× headroom, so **the GPU is not the constraint and
+the ordering above is wrong**. Report 5 §5.3 revises it: the NEON audio mixer moves up (CPU
+work), disabling three-point filtering moves down (fragment work is cheap), and the internal
+resolution can likely be 800x450 or higher rather than 640x360. The expected bottleneck is
+CPU-side — Fast3D display-list interpretation, game simulation and audio on 2 cores — so `perf`
+on the device, not GPU tracing, is the primary Phase 5 tool. 30 FPS now looks like the realistic
+target rather than the stretch goal.
 
 ## 4.7 Phase 6 — Packaging
 

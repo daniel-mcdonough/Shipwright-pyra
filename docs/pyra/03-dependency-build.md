@@ -108,26 +108,24 @@ Casing is inconsistent between `linux.cmake` (`OPENGL_GLESv2_LIBRARY`) and `open
 | glvnd EGL vendors | **only** `/usr/share/glvnd/egl_vendor.d/50_mesa.json` |
 | `ld.so.conf.d` | lists `/opt/omap5-sgx-ddk-um-linux/lib/` **after** `/usr/lib/arm-linux-gnueabihf` |
 
-SDL2 dlopens `libGLESv2.so.2` by default. That resolves to glvnd, whose only registered EGL
-vendor is Mesa, which on this hardware means **llvmpipe software rendering**. The SONAME
-mismatch (`.so.1` vs `.so.2`) means the DDK can never win by link order.
+>  **Superseded by report 5 §5.1, which measured this on the device.** The prediction below
+>  that SDL would silently fall back to Mesa llvmpipe was **wrong** — there is no working GLX on
+>  this system, so the desktop path hard-fails instead. The remedy was right; the mechanism was
+>  not, and the minimum environment turned out to be **two** variables, not four.
 
-This is almost certainly the root of the long-running "GLES works via Mesa, not hardware"
-reports on the Pyra forums.
+SDL2 dlopens `libGLESv2.so.2` by default. The SONAME mismatch (`.so.1` vs `.so.2`) means the DDK
+can never win by link order.
 
-**Fix is launcher configuration, not code.** SDL2 honours these environment variables:
+**Fix is launcher configuration, not code.** Measured minimum:
 
 ```sh
-SDL_VIDEO_X11_FORCE_EGL=1
-SDL_VIDEO_EGL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libEGL.so.1
-SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1
-SDL_OPENGL_ES_DRIVER=1
+export SDL_VIDEO_X11_FORCE_EGL=1
+export SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1
 ```
 
-This must be verified empirically as the very first thing in Phase 2 — before any performance
-number is collected, because a Mesa-software frame rate would send the whole optimisation effort
-in the wrong direction. A trivial `glGetString(GL_RENDERER)` log line at startup that must read
-`PowerVR SGX 544MP` is the guard against silently regressing to software.
+`SDL_VIDEO_EGL_DRIVER` is **not** required — the system glvnd `libEGL.so.1` routes to the DDK on
+its own. See report 5 §5.1 for the full test matrix, including the dangerous middle case where a
+context is created but every GL entry point resolves to NULL.
 
 ## 3.6 Existing non-desktop platform paths (the template)
 

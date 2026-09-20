@@ -97,6 +97,10 @@ fail to link on this GPU.
 PR #1288 cannot have caught this: it validated with `glslangValidator`, which checks syntax
 against the dialect, not a specific device's resource budget.
 
+> **Refined in report 5 §5.4.** Static analysis of the slot allocator narrows the failure
+> envelope considerably: it requires `numInputs >= 5` **and** fog **and** grayscale at once.
+> The mitigation order below is revised there.
+
 ### Mitigations, cheapest first
 
 1. **Measure the real distribution before designing anything.** Add a one-line log of
