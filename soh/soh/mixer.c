@@ -688,6 +688,22 @@ static void aMixImplSSE2(uint16_t count, int16_t gain, uint16_t in_addr, uint16_
 #endif
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
+
+// vmull_high_n_s16 / vmull_high_s16 are A64-only intrinsics, but this block is
+// guarded on __ARM_NEON, which 32-bit ARMv7 also defines when NEON is enabled.
+// That made the whole NEON mixer fail to compile on armhf rather than fall back
+// to scalar. On AArch32 the high-half forms are exactly a widening multiply of
+// the upper four lanes, so express them that way instead of dropping the path.
+// Named distinctly rather than shadowing the intrinsics, so this cannot collide
+// if a toolchain later provides them for AArch32.
+#if defined(__aarch64__)
+#define SOH_VMULL_HIGH_N_S16(a, n) vmull_high_n_s16((a), (n))
+#define SOH_VMULL_HIGH_S16(a, b) vmull_high_s16((a), (b))
+#else
+#define SOH_VMULL_HIGH_N_S16(a, n) vmull_n_s16(vget_high_s16(a), (n))
+#define SOH_VMULL_HIGH_S16(a, b) vmull_s16(vget_high_s16(a), vget_high_s16(b))
+#endif
+
 static const int32_t x4000Arr[4] = { 0x4000, 0x4000, 0x4000, 0x4000 };
 void aMixImplNEON(uint16_t count, int16_t gain, uint16_t in_addr, uint16_t out_addr) {
     int nbytes = ROUND_UP_32(ROUND_DOWN_16(count << 4));
@@ -720,11 +736,11 @@ void aMixImplNEON(uint16_t count, int16_t gain, uint16_t in_addr, uint16_t out_a
             int16x8_t outLoVec2 = vcombine_s16(outLoVec, outLoVec);
             int16x4_t inLoVec = vget_low_s16(inVec);
             int16x8_t inLoVec2 = vcombine_s16(inLoVec, inLoVec);
-            int32x4_t outX7fffHiVec = vmull_high_n_s16(outVec, 0x7FFF);
-            int32x4_t outX7fffLoVec = vmull_high_n_s16(outLoVec2, 0x7FFF);
+            int32x4_t outX7fffHiVec = SOH_VMULL_HIGH_N_S16(outVec, 0x7FFF);
+            int32x4_t outX7fffLoVec = SOH_VMULL_HIGH_N_S16(outLoVec2, 0x7FFF);
 
-            int32x4_t inGainLoVec = vmull_high_s16(inLoVec2, gainVec);
-            int32x4_t inGainHiVec = vmull_high_s16(inVec, gainVec);
+            int32x4_t inGainLoVec = SOH_VMULL_HIGH_S16(inLoVec2, gainVec);
+            int32x4_t inGainHiVec = SOH_VMULL_HIGH_S16(inVec, gainVec);
             int32x4_t addVecLo = vaddq_s32(outX7fffLoVec, inGainLoVec);
             int32x4_t addVecHi = vaddq_s32(outX7fffHiVec, inGainHiVec);
             addVecHi = vaddq_s32(addVecHi, x4000Vec);
