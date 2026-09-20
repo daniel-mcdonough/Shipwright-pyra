@@ -269,6 +269,57 @@ static bool VerifyArchiveVersion(OTRVersion version);
 std::string portArchivePath = "";
 static bool sohArchiveVersionMatch = false;
 
+#ifdef PYRA
+// Conservative starting defaults for the DragonBox Pyra (OMAP5432 / SGX544).
+//
+// Applied only to keys the user has not already set, so these are a starting
+// point rather than a lock - anything changed in the menu persists and is never
+// overwritten on a later launch.
+//
+// Measurements behind each value are in docs/pyra/07-phase5-performance.md:
+// at 640x360 the port sustains ~29 FPS at thermal equilibrium, against ~16 FPS
+// at the panel's native 1280x720.
+static void ApplyPyraDefaults() {
+    auto conf = Ship::Context::GetInstance()->GetConfig();
+    if (conf == nullptr) {
+        return;
+    }
+
+    const auto unset = [&conf](const char* cvar) {
+        return !conf->Contains(std::string("CVars.") + cvar);
+    };
+
+    // 0.5x of the 1280x720 panel is 640x360. Halving internal resolution is
+    // worth about +75% here; the workload is strongly fragment-bound.
+    if (unset(CVAR_INTERNAL_RESOLUTION)) {
+        CVarSetFloat(CVAR_INTERNAL_RESOLUTION, 0.5f);
+    }
+
+    // InterpolationFPS defaults to 20 because OoT renders natively at 20 and SoH
+    // interpolates above it. Left at 20 the frame limiter caps the device below
+    // what it can actually sustain.
+    if (unset(CVAR_SETTING("InterpolationFPS"))) {
+        CVarSetInteger(CVAR_SETTING("InterpolationFPS"), 30);
+    }
+
+    // Vsync quantises presentation to 60/N. At ~35 ms/frame the frame misses the
+    // 33.3 ms slot and falls to 50 ms, turning ~29 FPS into exactly 20.
+    if (unset(CVAR_VSYNC_ENABLED)) {
+        CVarSetInteger(CVAR_VSYNC_ENABLED, 0);
+    }
+
+    // There is no multisampling on the GLES2 path regardless; make it explicit.
+    if (unset(CVAR_MSAA_VALUE)) {
+        CVarSetInteger(CVAR_MSAA_VALUE, 1);
+    }
+
+    // Persist immediately rather than waiting for a clean shutdown, so the
+    // values are visible in the settings menu on this first run and survive a
+    // crash or a kill.
+    CVarSave();
+}
+#endif
+
 OTRGlobals::OTRGlobals() {
     context = Ship::Context::CreateUninitializedInstance("Ship of Harkinian", appShortName, "shipofharkinian.json");
 
@@ -280,6 +331,9 @@ OTRGlobals::OTRGlobals() {
 
     context->InitConfiguration();
     context->InitConsoleVariables();
+#ifdef PYRA
+    ApplyPyraDefaults();
+#endif
 
     auto controlDeck = std::make_shared<LUS::ControlDeck>(std::vector<CONTROLLERBUTTONS_T>({
         BTN_CUSTOM_MODIFIER1,

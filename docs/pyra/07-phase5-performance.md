@@ -72,6 +72,31 @@ rate can be held reliably under 33.3 ms.
 Expected result: **~27–29 FPS sustained at thermal equilibrium**, versus the 17 FPS seen at
 native resolution with the stock 20 FPS cap.
 
+### Implemented
+
+`ApplyPyraDefaults()` in `soh/soh/OTRGlobals.cpp`, called once right after
+`InitConsoleVariables()` and compiled in only when the `PYRA` preset defines it.
+
+Each value is written **only if the key is absent from the config**, so these are a starting
+point rather than a lock: anything changed in the settings menu persists and is never
+overwritten on a later launch. The block ends with `CVarSave()` so the values land on disk on
+the first run instead of waiting for a clean shutdown — they are then visible in the menu, and
+they survive a crash or a kill.
+
+Verified on the device with a fresh config directory:
+
+```
+InternalResolution   = 0.5
+InterpolationFPS     = 30
+VsyncEnabled         = 0
+MSAAValue            = 1
+
+FPS, fresh install, no manual tuning, 73.8 C:
+27.47, 27.01, 29.04, 28.98, 27.40, 27.38, 27.16, 26.95
+```
+
+So an untouched install now lands at **~27 FPS sustained** where it previously landed at 17.
+
 ## 7.6 CPU profile (for later work)
 
 `perf record` on the running game, no dominant hotspot — the cost is spread:

@@ -50,6 +50,9 @@ if(PYRA)
     # the device-independent half of this preset.
     set(USE_OPENGLES2 ON CACHE BOOL "" FORCE)
 
+    # Compiled-in conservative defaults (ApplyPyraDefaults in OTRGlobals.cpp).
+    add_compile_definitions(PYRA)
+
     if(PYRA_DDK_ROOT)
         message(STATUS "PYRA: using PowerVR SGX DDK at ${PYRA_DDK_ROOT}")
         # Preset OPENGLES_LIBRARY so libultraship's find_library() is satisfied by
