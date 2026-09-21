@@ -234,17 +234,24 @@ extra full-screen pass that does happen (render at 640×360 to `mGameFb`, then d
 
 ## 8.8 Summary
 
-| # | Item | Tier | Est. gain | Risk | Upstreamable |
-|---|---|---|---|---|---|
-| 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | large | low | yes |
-| 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes |
-| 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes |
-| 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific |
-| 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes |
-| 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes |
-| 7 | VBO ring buffer (§8.6) | 3 | unsized | medium | yes |
-| 8 | Program binary cache (§8.6) | 3 | hitching only | low | device-specific |
-| 9 | NEON for the three scalar audio routines (§8.6) | 3 | heat, not FPS | low | yes |
+**Read §8.9 before acting on this table.** The estimates are reasoning rather than data, the
+tier ordering turned out to be the wrong way to sequence the work, and item 1's entry overstates
+what the code change alone recovers. Current status is in the last column.
+
+| # | Item | Tier | Est. gain | Risk | Upstreamable | Status |
+|---|---|---|---|---|---|---|
+| 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | large → **revised down**, §8.9 | low | yes | **next to screen** |
+| 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | screened by the same test |
+| 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes | confidence lowered, §8.10 |
+| 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific | done, no gain |
+| 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes | below the floor, deferred |
+| 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes | below the floor, deferred |
+| 7 | VBO ring buffer (§8.6) | 3 | unsized | medium | yes | unsized, needs a draw-call count |
+| 8 | Program binary cache (§8.6) | 3 | hitching only | low | device-specific | not attempted |
+| 9 | NEON for the three scalar audio routines (§8.6) | 3 | heat, not FPS | low | yes | still live — see §8.11 |
+
+The one measurement to take next is `gSettings.TextureFilter` 0 vs 1 on the report 9 harness.
+It needs no code, and its outcome decides items 1, 2 and 3 together — see §8.9.
 
 ## 8.9 Measurement discipline
 
@@ -381,3 +388,25 @@ It does **not** bear on items 1 and 2 (§8.2, §8.3), whose case is fragment-sha
 count and prefetch stalls — which is what the evidence says actually binds. Those now look like
 the only Tier 1 items with a live rationale, and the order in §8.9 should be revised to put them
 first.
+
+## 8.11 Item 9 survives the audio DSP move
+
+Audio playback on the Pyra now goes through the OMAP5 AESS DSP. It would be easy to read that as
+retiring item 9, and it does not.
+
+The DSP took over **playback** — moving finished samples to the codec, which is what PulseAudio
+was spending ~15.3% of a core on. Item 9 is about **synthesis**: `aEnvMixerImpl`,
+`aADPCMdecImpl` and `aResampleImpl` in `soh/soh/mixer.c` are the N64 audio microcode emulated
+in-process to produce those samples in the first place. Nothing about a DSP downstream of them
+changes that work, and all three are still scalar C on a core with NEON — `aMixImpl` already has
+a NEON path (`soh/soh/mixer.c:689`) and correspondingly does not appear in the profile, which is
+the direct evidence that the approach works on the three that do.
+
+What *has* changed is the value of the item. Its original justification was "heat, not FPS" —
+the workload is fragment-bound (§8.10, report 7 §7.3), so returning ~6% of a core was not
+expected to move frame rate much. That argument is unchanged. What is no longer true is the
+surrounding context in which it was ranked: the CPU is less contended than it was, which makes a
+CPU-side saving *less* likely to show up as frame rate, not more.
+
+So item 9 stays where it is — Tier 3, worth doing for thermal headroom and battery, not as a
+performance fix — and the reasoning behind that placement is now firmer rather than weaker.

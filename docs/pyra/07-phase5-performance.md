@@ -1,5 +1,22 @@
 # Report 7 — Phase 5: Performance Measurements
 
+> ## The FPS numbers in this report are superseded. Do not quote them as current.
+>
+> They remain useful as *ratios* — the resolution sweep in §7.2 and the vsync
+> quantisation in §7.4 are structural and still hold. The absolute frame rates do not,
+> for two independent reasons:
+>
+> 1. **The rig was too coarse.** Every number here came from the title-screen attract
+>    demo with the process relaunched between arms, which carries a noise floor around
+>    ±13% — wider than most of the changes anyone would want to test. Report 9 replaces
+>    that rig; anything re-measured should be measured with it.
+> 2. **Audio moved off the CPU afterwards.** The Pyra's AESS DSP path now carries
+>    playback, so PulseAudio's share of a core is largely gone. The §7.6 profile below
+>    was taken before that and its percentages no longer add up — see §7.8.
+>
+> §7.5's recommended defaults are still the shipping defaults, and §7.5b's correction to
+> them still applies, but the frame rate they were chosen against has moved.
+
 All measured on the device at **thermal equilibrium** (73–79 °C), title-screen attract demo,
 armv7ve build with `LUS_FPS_LOG`. Methodology matters here far more than expected — see §7.1.
 
@@ -165,3 +182,28 @@ file, corrupting it:
 
 This reproduced in a solo run, so it is not purely a concurrency artefact. It is a data-loss
 class bug and should be diagnosed before the port is used for real play. Not yet investigated.
+
+## 7.8 Audio moved to the DSP after this report, and these numbers predate it
+
+Audio playback on the Pyra now runs through the OMAP5 AESS DSP rather than the direct McPDM
+path, which is separate work tracked outside this repo. The consequence for everything above is
+that the CPU budget the game was competing for got larger between the measurements and now.
+
+What that does and does not change:
+
+- **PulseAudio's share is largely gone.** It was measured at ~15.3% of a core during playback,
+  and it was the single largest non-game consumer on the machine. That share was never visible
+  in a `perf` profile of the game — it is a different process — so it does not appear in the
+  §7.6 table at all, and removing it is a straight gain in headroom that the table cannot show.
+- **SoH's own audio cost is untouched.** The ~6% spent in `aEnvMixerImpl`, `aADPCMdecImpl` and
+  `aResampleImpl` (`soh/soh/mixer.c`) is the N64 audio microcode being emulated in-process to
+  *produce* the samples. The DSP receives those samples; it does not generate them. So report 8
+  item 9 — NEON paths for those three routines — is still live and is worth exactly what it was
+  worth before.
+- **Every FPS figure above is a lower bound on what the same build does now**, by an unknown
+  amount. The relationship is not simple: the freed time goes to two Cortex-A15 cores shared
+  with the render thread, and the workload was already found to be fragment-bound (§7.3), so
+  the gain may be small even though the freed CPU is not.
+
+**Nothing here has been re-measured.** The correct next step is a baseline run on the report 9
+harness, not an estimate. Until that exists, treat the FPS column of this report as history.

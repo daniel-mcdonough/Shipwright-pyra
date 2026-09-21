@@ -4,6 +4,11 @@ Audit date: 2026-09-20
 Repo: `Shipwright` @ `feature/touchpad-bindings` (91abd3b), submodule `libultraship` @ `e03c0ea5`
 Target verified live over SSH against the actual device (Debian 13 trixie, kernel 5.6.19-freq, armv7l).
 
+> **This is an audit snapshot, not a status page.** It records what was true when the port was
+> scoped. The device facts and GLES limits below are still accurate; some of the *recommendations*
+> have since been tested and were wrong. [README.md](README.md) lists which claims across all the
+> reports are still good and which are superseded — read it before acting on anything here.
+
 ## Verdict
 
 **The port is viable and is a moderate effort, not a rewrite.** The CPU side is essentially

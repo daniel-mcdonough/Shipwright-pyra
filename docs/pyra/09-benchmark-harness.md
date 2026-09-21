@@ -1,5 +1,12 @@
 # Report 9 — A deterministic benchmark harness
 
+> **Status: built and cross-compiles for the target; not yet validated on the device.**
+> The harness links into the armhf build with `-DSOH_BENCHMARK=ON` and every call site is
+> `#ifdef`'d, so a normal build is byte-identical to one without it. What has *not* happened is a
+> single run on real hardware. Until one has, treat the noise-floor improvement this report
+> argues for as a design claim, not a measured one — the first job on device is a repeatability
+> check (the same arm against itself, which should come back inside the MDE), not an A/B.
+
 Reports 7 and 8 both ended at the same wall: the measurement rig could not resolve anything
 smaller than about 13%. The `GL_EXT_discard_framebuffer` A/B (report 8 §8.10) needed five
 interleaved pairs and 300 s of warm-up to place a bound of ±1.8% on a single change, and that was
@@ -161,3 +168,26 @@ those, and accept the higher variance.
 **One viewpoint is not one scene.** Kokiri Forest from the treehouse and Kokiri Forest from the
 village floor are different workloads. Several pinned viewpoints per scene are worth more than
 one, and Hyrule Field and Market/Kakariko are still to be added.
+
+## 9.6 Bring-up order on the device
+
+The harness has three things that can be wrong independently, so they are checked in order rather
+than all at once by looking at a number at the end.
+
+**1. Does it reach the scene at all?** `SOH_BENCH=1` with defaults. Expect the log to show the
+scene loaded and a `BENCH viewpoint` line. A stall here means the entrance index is wrong; the
+harness gives up after 3600 frames and says so rather than hanging.
+
+**2. Is the viewpoint worth measuring?** Read `pos`, `yaw`, `eye`, `at` out of that line and look
+at what is on screen. The default `ENTR_KOKIRI_FOREST_0` spawn faces Link with very little scene
+behind him and is unrepresentatively cheap — it is the default because it is the *scene* that was
+chosen, not the view. Pick a view with real depth complexity in it, then pin it with
+`SOH_BENCH_POS` / `YAW` / `EYE` / `AT` so every later run is the same work.
+
+**3. Is the rig actually quiet?** Run the *same* arm against itself:
+`SOH_BENCH_AB_CVAR=gSettings.TextureFilter SOH_BENCH_AB_VALUES=1,1`. The paired t should be
+insignificant and the reported MDE is then the real resolution of the rig. This is the number
+that says whether any of report 8's items can be screened at all, and it is worth more than the
+first real A/B. Skipping it means the first surprising result has two possible explanations.
+
+Only then the measurement this was built for: `bench.sh ab gSettings.TextureFilter 0 1`.
