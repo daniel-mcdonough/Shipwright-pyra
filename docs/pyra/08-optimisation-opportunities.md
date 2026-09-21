@@ -268,8 +268,32 @@ The same trap applies to everything here. In particular:
 Every A/B must be taken at **thermal equilibrium** (report 7 §7.1) and with both frame caps
 raised, or it measures the thermostat and the frame limiter rather than the change.
 
-Suggested order — cheapest and most certain first, so that the risky work is done against a
-stable baseline: **4 → 6 → 5 → 3 → 1 → 2**.
+### Update: the ordering below was wrong, and the rig has been rebuilt
+
+Two corrections to this section.
+
+**The suggested order was `4 → 6 → 5 → 3 → 1 → 2`, cheapest-and-most-certain first. That is the
+wrong objective when the measurement floor is ±13%.** Items 6 and 5 are worth low single digits
+each and would have been unmeasurable — the work would have been done and nothing learned. Only
+large-effect items are worth spending while the rig is coarse.
+
+**§8.2 split the filtering problem the wrong way round.** It treated the three-point *default* as
+a settings matter outside this report's scope and kept only the branch-flattening question. But
+re-reading `gfx_opengl.cpp:722-725`, the bulk of the cost is the three texture fetches on tiles
+the N64 genuinely marked filtered, and the shader-variant rework does **not** remove those — the
+fragments still want three-point. What the rework recovers is the flattening penalty on
+*point*-filtered tiles, which in OoT is largely HUD. So the code-level item is probably small and
+the large lever is a one-line default. Measure `gSettings.TextureFilter` 0 against 1 before
+building anything: it is a faithful proxy for item 1's best case, because with the global mode
+set to linear the `@if` deletes the branch and leaves exactly one fetch — the same shader the
+rework would emit. That single measurement also discriminates items 1, 2 and 3 at once: if
+collapsing three fetches to one moves nothing, fragment fetch count is not the constraint and
+item 2's premise goes with it.
+
+The measurement rig itself has since been rebuilt — see **report 9**. The relevant change for
+this report is that an A/B no longer has to run two processes minutes apart with the scene
+drifting underneath it, so the items above can be screened at a resolution that makes them worth
+attempting.
 
 ## 8.10 Result: `GL_EXT_discard_framebuffer` (item 4) — no measurable gain
 

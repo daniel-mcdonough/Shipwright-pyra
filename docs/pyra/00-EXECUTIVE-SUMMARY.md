@@ -123,7 +123,9 @@ GL_IMG_uniform_buffer_object GL_IMG_multisampled_render_to_texture GL_KHR_debug
 
 **Notably present and worth exploiting** (see report 04, Phase 5):
 - `GL_EXT_discard_framebuffer` — on a tile-based deferred renderer, discarding depth/stencil at
-  end of frame avoids a full-resolution tile writeback. Cheap, real win.
+  end of frame avoids a full-resolution tile writeback. **Implemented and measured: no gain.**
+  The estimate of ~140 MB/s of avoided writeback was right in magnitude and wrong in relevance —
+  this workload is fragment-shader bound, not bandwidth starved. See report 8 §8.10.
 - `GL_OES_get_program_binary` / `GL_IMG_program_binary` — Fast3D compiles shader variants lazily
   at runtime and the SGX GLSL compiler is slow. A persistent on-disk program-binary cache would
   remove most first-encounter hitching.
