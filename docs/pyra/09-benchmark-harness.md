@@ -1,11 +1,8 @@
 # Report 9 — A deterministic benchmark harness
 
-> **Status: built and cross-compiles for the target; not yet validated on the device.**
-> The harness links into the armhf build with `-DSOH_BENCHMARK=ON` and every call site is
-> `#ifdef`'d, so a normal build is byte-identical to one without it. What has *not* happened is a
-> single run on real hardware. Until one has, treat the noise-floor improvement this report
-> argues for as a design claim, not a measured one — the first job on device is a repeatability
-> check (the same arm against itself, which should come back inside the MDE), not an A/B.
+> **Status: validated on hardware 2026-09-21. It resolves 0.40%, against the ±13% it replaces.**
+> Ten identical segments spread 1.15% peak-to-peak while the die went 59 °C → 81 °C and the
+> clock throttled 1.5 → 1.25 GHz. Full numbers in §9.7.
 
 Reports 7 and 8 both ended at the same wall: the measurement rig could not resolve anything
 smaller than about 13%. The `GL_EXT_discard_framebuffer` A/B (report 8 §8.10) needed five
@@ -191,3 +188,69 @@ that says whether any of report 8's items can be screened at all, and it is wort
 first real A/B. Skipping it means the first surprising result has two possible explanations.
 
 Only then the measurement this was built for: `bench.sh ab gSettings.TextureFilter 0 1`.
+
+## 9.7 Result: the rig resolves 0.40%
+
+First run on hardware, 2026-09-21. The check is the one §9.6 step 3 describes — **the same arm
+against itself**, `gSettings.TextureFilter` 1 vs 1, so the true effect is exactly zero by
+construction and anything the harness reports is its own noise.
+
+Kokiri Forest, child, noon, static, viewpoint pinned. 640×360 internal on a 1280×720 fullscreen
+window. 9000 warm-up frames, then 10 segments of 600 measured frames each, ABBA.
+
+| Segment | Mean frame time (µs) | FPS |
+|---|---|---|
+| 0 | 28113.4 | 35.57 |
+| 1 | 28005.7 | 35.71 |
+| 2 | 27960.5 | 35.77 |
+| 3 | 27857.0 | 35.90 |
+| 4 | 27908.2 | 35.83 |
+| 5 | 27881.1 | 35.87 |
+| 6 | 27956.2 | 35.77 |
+| 7 | 27935.4 | 35.80 |
+| 8 | 28063.1 | 35.63 |
+| 9 | 28177.5 | 35.49 |
+| **mean** | **27985.8** | **35.73** |
+
+Ten identical measurements spanning **320 µs, or 1.15% peak-to-peak**, with a standard deviation
+across segments of 0.37%.
+
+```
+paired n=5  mean_delta=-28.96 us  sd=89.97  t=-0.720  df=4
+mde_us=111.86
+```
+
+`t = -0.72` against a critical value of ±2.776: **correctly not significant**. A rig that reported
+a difference here would be broken, and this one does not.
+
+### What the resolution figure means, precisely
+
+The harness prints `2.78 × se`, which is the smallest delta that *would* have reached
+significance — 111.9 µs, **0.40%** of the 27986 µs baseline. The conventional minimum detectable
+effect at 80% power is larger, `(2.776 + 0.941) × se` = 149.6 µs, or **0.53%**. Quote 0.53% when
+asking "what could this rig have found"; quote 0.40% when asking "what would it have called
+significant". Both are roughly **33× better than the ±13% floor** reports 7 and 8 worked under.
+
+### It held through a 22 °C thermal excursion
+
+The die went **59.3 °C → 81.5 °C** across the run and the clock throttled **1.5 GHz → 1.25 GHz**.
+That is the single largest confound in every earlier measurement, and it is visible in the
+segment table if you look for it — segments 8 and 9 are the two slowest, which is the late-run
+throttle arriving. It is worth being precise about what the design did and did not do here:
+
+- **The drift is not linear.** Frame times fall from segment 0 to segment 3, sit flat through the
+  middle, then rise at 8 and 9. ABBA counterbalancing cancels a *linear* drift exactly; against
+  this shape it does not cancel exactly, it just averages well.
+- **Both arms were identical**, so the pairing had nothing to cancel anyway. This run demonstrates
+  that the drift is *small* — 1.15% over the whole excursion — not that the counterbalancing
+  works. That still has to be shown by a real two-arm A/B.
+
+The reason the drift is small at all is the fixed frame count: a segment is 600 frames of the
+same display list whether the clock is at 1.5 or 1.25 GHz, so throttling lengthens the segment
+rather than changing what is inside it.
+
+### One number that is not comparable to report 7
+
+35.73 FPS here against report 7's 28.7 FPS at the same resolution is **not** a 24% improvement.
+This scene is frozen, so `Play_Update` never runs — no actors, no collision, no AI — and audio
+has since moved off the CPU. It is a different workload. Do not quote it as a gameplay figure.

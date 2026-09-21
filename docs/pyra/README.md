@@ -16,7 +16,8 @@ reads a superseded number and acts on it.
 | Optimisation ordering `4 → 6 → 5 → 3 → 1 → 2` | 08 §8.8 | **wrong** — corrected in 08 §8.9 |
 | Item 1's estimated gain ("large") | 08 §8.2 | **overstated** — corrected in 08 §8.9 |
 | Item 9 retired by the audio DSP move | — | **no** — see 08 §8.11 |
-| Benchmark harness resolves better than ±13% | 09 | **unvalidated** — a design claim until a device run exists |
+| Benchmark harness resolves better than ±13% | 09 §9.7 | **validated on hardware** — resolves 0.40%, ~33× better |
+| "Items 5 and 6 are below the measurement floor" | 08 §8.9 | **no longer true** — the floor moved; see the same section |
 
 ## The reports
 

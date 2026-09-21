@@ -18,6 +18,15 @@ set -euo pipefail
 
 HOST="${PYRA_HOST:?set PYRA_HOST to user@device}"
 REMOTE_DIR="${PYRA_DIR:-/home/$(echo "$HOST" | cut -d@ -f1)/soh}"
+# Without these SDL loads libGLESv2.so.2, which resolves through glvnd to Mesa and
+# renders in software on llvmpipe. It still runs, it still reports a frame rate, and
+# the frame rate is meaningless - see docs/pyra/00-EXECUTIVE-SUMMARY.md finding 3.
+# The DDK SONAME really is .so.1 against the system .so.2; that mismatch is the bug.
+DDK_LIB="${PYRA_DDK_LIB:-/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1}"
+DISPLAY_ID="${PYRA_DISPLAY:-:0}"
+# A hung harness must not hang the shell. The harness exits on its own when
+# SOH_BENCH_EXIT=1 (the default), so reaching this is already a failure.
+RUN_TIMEOUT="${PYRA_TIMEOUT:-900}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BIN="$REPO/build-pyra/soh/soh.elf"
 # Truncated to the 15 characters `pkill -x` matches against comm, because matching
@@ -28,6 +37,11 @@ deploy() {
   [[ -f "$BIN" ]] || { echo "not built: $BIN" >&2; exit 1; }
   ssh "$HOST" "mkdir -p '$REMOTE_DIR'"
   scp "$BIN" "$HOST:$REMOTE_DIR/soh.elf"
+  # The game will not boot without its assets, and the failure looks like a hang
+  # rather than an error, so say so here instead.
+  ssh "$HOST" "cd '$REMOTE_DIR' && for f in oot.o2r soh.o2r; do
+      [ -e \"\$f\" ] || echo \"missing: \$REMOTE_DIR/\$f (symlink it from a working install)\" >&2
+    done"
 }
 
 run() {
@@ -35,10 +49,14 @@ run() {
   echo "==> ${env_args[*]}" >&2
   # `env -i`-style explicitness is deliberate: the run must be reproducible from
   # this line alone, not from whatever happens to be in the device's profile.
-  ssh "$HOST" "cd '$REMOTE_DIR' && rm -f bench.txt && ${env_args[*]} ./soh.elf" >/dev/null 2>&1 || true
+  ssh "$HOST" "cd '$REMOTE_DIR' && rm -f bench.txt && \
+    SDL_VIDEO_X11_FORCE_EGL=1 SDL_VIDEO_GL_DRIVER='$DDK_LIB' DISPLAY='$DISPLAY_ID' \
+    ${env_args[*]} timeout -s KILL $RUN_TIMEOUT ./soh.elf > run.log 2>&1" >/dev/null 2>&1 || true
   ssh "$HOST" "pkill -x '$COMM' 2>/dev/null || true"
   ssh "$HOST" "cat '$REMOTE_DIR/bench.txt' 2>/dev/null" || {
-    echo "no results - check the device log" >&2; exit 1; }
+    echo "no results. Last of $REMOTE_DIR/run.log:" >&2
+    ssh "$HOST" "tail -30 '$REMOTE_DIR/run.log' 2>/dev/null" >&2 || true
+    exit 1; }
 }
 
 case "${1:-run}" in

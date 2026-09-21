@@ -244,8 +244,8 @@ what the code change alone recovers. Current status is in the last column.
 | 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | screened by the same test |
 | 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes | confidence lowered, §8.10 |
 | 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific | done, no gain |
-| 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes | below the floor, deferred |
-| 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes | below the floor, deferred |
+| 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes | now measurable, §8.9 |
+| 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes | now measurable, §8.9 |
 | 7 | VBO ring buffer (§8.6) | 3 | unsized | medium | yes | unsized, needs a draw-call count |
 | 8 | Program binary cache (§8.6) | 3 | hitching only | low | device-specific | not attempted |
 | 9 | NEON for the three scalar audio routines (§8.6) | 3 | heat, not FPS | low | yes | still live — see §8.11 |
@@ -301,6 +301,28 @@ The measurement rig itself has since been rebuilt — see **report 9**. The rele
 this report is that an A/B no longer has to run two processes minutes apart with the scene
 drifting underneath it, so the items above can be screened at a resolution that makes them worth
 attempting.
+
+#### And that partly un-does the correction above
+
+The rig was measured on hardware on 2026-09-21 and resolves **0.40%** (report 9 §9.7), against
+the ±13% assumed when the paragraphs above were written. So the claim that items 5 and 6 are
+"below the floor and would teach nothing" **is no longer true**. A change worth 2% is now
+comfortably measurable; so is one worth 1%.
+
+That does not promote them to the front of the queue. The argument for doing items 1, 2 and 3
+first was never only about measurability — they are the items with a live mechanism behind them
+(fragment-shader work, which is what the evidence says binds), and items 5 and 6 remain small by
+their own estimates. What changes is that items 5 and 6 are now worth *doing* rather than worth
+*skipping*: a 1-2% gain that can be demonstrated is a real gain, and both are nearly free.
+
+The sequencing that follows from a 0.40% rig is:
+
+1. `gSettings.TextureFilter` 0 vs 1 — no code, screens items 1, 2 and 3 together.
+2. Whichever of items 1-3 that result leaves standing.
+3. Items 6 and 5, which are cheap, safe, and now measurable.
+
+Item 7 (VBO ring buffer) still cannot be sized without a draw-call-per-frame count, and that is
+unchanged by the new rig.
 
 ## 8.10 Result: `GL_EXT_discard_framebuffer` (item 4) — no measurable gain
 
