@@ -65,6 +65,24 @@ if(PYRA)
     endif()
 endif()
 
+################################################################################
+# Benchmark harness
+#
+# A deterministic performance fixture: boots straight into a chosen scene on a
+# debug save, optionally freezes game logic so the display list is identical
+# every frame, renders a fixed frame count rather than running for a fixed time,
+# and can alternate a CVar inside one process so both arms of an A/B share a
+# thermal state. Driven entirely by SOH_BENCH* environment variables.
+#
+# Off by default. Every call site is #ifdef'd, so a normal build is unaffected.
+# See docs/pyra/09-benchmark-harness.md.
+################################################################################
+option(SOH_BENCHMARK "Build the deterministic benchmark harness (dev tool)" OFF)
+if(SOH_BENCHMARK)
+    message(STATUS "SOH_BENCHMARK enabled - benchmark harness compiled in")
+    add_compile_definitions(SOH_BENCHMARK)
+endif()
+
 set(NATO_PHONETIC_ALPHABET
   "Alfa" "Bravo" "Charlie" "Delta" "Echo" "Foxtrot" "Golf" "Hotel"
   "India" "Juliett" "Kilo" "Lima" "Mike" "November" "Oscar" "Papa"
