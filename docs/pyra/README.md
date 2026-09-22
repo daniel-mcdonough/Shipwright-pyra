@@ -1,8 +1,12 @@
 # DragonBox Pyra port — documentation index
 
-Ten reports, written as the work happened. They are a record rather than a manual, which means
+Eleven reports, written as the work happened. They are a record rather than a manual, which means
 **the later ones correct the earlier ones** in several places. This index exists so that nobody
 reads a superseded number and acts on it.
+
+**If you are looking for what to do rather than what happened, read [`NEXT.md`](NEXT.md).** It is
+the live work queue and it is rewritten as things land; where it disagrees with a report, it is
+newer.
 
 ## Scope: this fork targets the Pyra only
 
@@ -81,6 +85,8 @@ check the date.
 | Item 7 (VBO ring buffer) needs a draw-call count to size | 08 §8.6, §8.9 | **no** — report 5 §5.3 had already measured it at 4× *worse*. Refuted, 08 §8.6 |
 | Item 1 (shader-variant key) is still worth doing | 08 §8.2, §8.12 | **not here** — the shipped `FILTER_LINEAR` default already strips the branch at compile time, 08 §8.16 |
 | Whether the IMG compiler flattens the filtering branch is open | 08 §8.2, §8.9 | **moot** — no branch exists on the default; §8.14 cannot isolate it on the other path, 08 §8.16 |
+| The save corruption needs investigating before real play | 07 §7.7 | **mechanism closed, cause open** — saves are defended, the stray `close()` is not yet named, 10 |
+| `logs/` not being writable explains the flush failures | 07 §7.7 | **no** — `EBADF` from `fflush` means the descriptor is gone, not the directory, 10 §10.1 |
 
 ## The reports
 
@@ -96,6 +102,7 @@ check the date.
 | [07](07-phase5-performance.md) | Phase 5 performance | The resolution sweep, the 20 FPS cap, the vsync trap, the game-speed coupling bug. Ratios good, absolutes stale. |
 | [08](08-optimisation-opportunities.md) | Code-level optimisation opportunities | The catalogue of nine candidate optimisations, what each rests on, and the three results measured so far. |
 | [09](09-benchmark-harness.md) | Deterministic benchmark harness | The measurement rig built because 07 and 08 both hit the same ±13% wall. Validated, and ABBA confirmed in §9.8. |
+| [10](10-save-file-corruption.md) | The save file corruption bug | 07 §7.7, closed. The mechanism reproduced, the save path made verify-before-replace, and the one open question left with the tool that answers it. |
 
 `tools/ccscan.py` is a helper used by report 08 to enumerate Fast3D colour-combiner variants.
 

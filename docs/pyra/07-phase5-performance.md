@@ -181,7 +181,14 @@ file, corrupting it:
 ```
 
 This reproduced in a solo run, so it is not purely a concurrency artefact. It is a data-loss
-class bug and should be diagnosed before the port is used for real play. Not yet investigated.
+class bug and should be diagnosed before the port is used for real play. ~~Not yet
+investigated.~~
+
+> **Investigated 2026-09-22 — see [report 10](10-save-file-corruption.md).** The mechanism is a
+> stray `close()` elsewhere in the process freeing the log's descriptor, which the save's stream
+> is then handed; reproduced byte for byte. Saves now verify before replacing, so a corrupt write
+> costs one save rather than the save. The caller of that `close()` is still unnamed, and
+> `scripts/pyra/fdguard.c` exists to name it on the next device run.
 
 ## 7.8 Audio moved to the DSP after this report, and these numbers predate it
 
