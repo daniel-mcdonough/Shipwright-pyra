@@ -265,7 +265,7 @@ what the code change alone recovers. Current status is in the last column.
 
 | # | Item | Tier | Est. gain | Risk | Upstreamable | Status |
 |---|---|---|---|---|---|---|
-| 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | **small** — see §8.12 | low | yes | screened; the win is a default, not the refactor |
+| 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | **none on the shipped default** | low | yes | **CLOSED here — the `FILTER_LINEAR` default already strips the branch at compile time, §8.16** |
 | 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | **CLOSED — already implemented, §8.15.** 97.6% of tiles already take the cheap path; the 3.6% left is correctness |
 | 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes | confidence lowered again, §8.12 |
 | 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific | done, no gain |
@@ -701,3 +701,69 @@ certain"* was half right: it was the least certain, and the uncertainty was not 
 claimed to be. Every other estimate in §8.5-§8.7 was produced the same way. Items 3, 5, 6, 7 and 8
 should be treated as unvalidated readings of code rather than as a work queue — each one needs the
 §8.9 treatment of a crude probe before it is worth implementing.
+
+## 8.16 Item 1 is dead on the shipped default, and the flattening question with it
+
+Prompted by `~/git/dragonbox-pyra/docs/gpu-optimization.md` §4.2, which raises the
+branch-flattening question independently and uses this exact shader as its worked example of a
+pattern to avoid. Checking it against what we shipped turns the question inside out.
+
+`o_three_point_filtering` is a **compile-time** substitution, not a uniform
+(`gfx_opengl.cpp:364`):
+
+```cpp
+{ "o_three_point_filtering", mCurrentFilterMode == FILTER_THREE_POINT },
+```
+
+and it gates the whole block in `default.shader.fs`:
+
+```glsl
+vec4 hookTexture2D(in int id, sampler2D tex, in vec2 uv, in vec2 texSize) {
+@if(o_three_point_filtering)
+    if(texture_filtering[id] == @{FILTER_THREE_POINT}) {
+        return filter3point(tex, uv, texSize);
+    }
+@end
+    return @{texture}(tex, uv);
+}
+```
+
+With `mCurrentFilterMode == FILTER_LINEAR` — the Pyra default since §8.14 — the `@if` block is
+not compiled at all. `hookTexture2D` *is* `texture2D(tex, uv)`: one fetch, no `filter3point`, no
+`texture_filtering` test, nothing for a compiler to flatten.
+
+That is exactly what item 1's proposed fix was for. **It has already been obtained, for free, by
+a settings default.** Item 1's remaining scope is users who turn three-point back on in the menu,
+where the variant-key rework would still remove a branch — real, upstreamable good practice, and
+worth nothing on the shipped configuration.
+
+### The flattening question is answered where it matters and unanswerable where it does not
+
+§8.9 and §8.2 both flagged "does the IMG compiler flatten this branch?" as an untested
+assumption that item 1's magnitude rested on. Two things are now true:
+
+- **On the shipped default it cannot arise.** There is no branch in the generated source.
+- **On the three-point path, §8.14 does not isolate it.** That A/B compared a shader containing
+  `filter3point` *and* the branch against a shader containing neither, so the 19.88% is the sum of
+  the extra fetches and whatever the branch costs. Splitting them would need a third arm —
+  unconditional `filter3point`, no branch — and the answer would inform only a configuration we
+  do not ship.
+
+**Verdict: do not build item 1 here, and do not run the flattening A/B for it.** If it is ever
+offered upstream, it should be for correctness of style rather than for a number.
+
+### What survives from §4.2 of the hardware document
+
+The general rule does — *prefer shader variants over uniform branches* — and it applies to items
+5 and 6, which are still live and still unmeasured. It also explains a piece of existing code
+that looks odd: `ClearShaderCache` exists precisely because `o_three_point_filtering` is **not**
+part of the variant key, so flipping the CVar at runtime has to throw the whole pool away. That
+is the cost of the compile-time approach, and on a fork that ships one filtering mode it is a
+cost we pay once at startup and never again.
+
+### How this item was ranked wrong
+
+Item 1 was written as "large but unquantified" from the same reading habit that mis-ranked item 2
+(§8.15): the shader source was read, and the C++ that decides which shader source exists was not.
+Three of the nine items have now been closed by reading the call site. That is not a coincidence,
+it is a method failure, and the fix is the one §8.9 already named — probe before estimating.

@@ -79,6 +79,8 @@ check the date.
 | Report 8's items 3, 5, 6, 7, 8 are a work queue | 08 §8.8 | **no** — unvalidated code readings; probe each first, 08 §8.15 |
 | The benchmark measured the viewpoint the docs describe | 09 §9.2 | **no** — the player pins never held, 09 §9.9 |
 | Item 7 (VBO ring buffer) needs a draw-call count to size | 08 §8.6, §8.9 | **no** — report 5 §5.3 had already measured it at 4× *worse*. Refuted, 08 §8.6 |
+| Item 1 (shader-variant key) is still worth doing | 08 §8.2, §8.12 | **not here** — the shipped `FILTER_LINEAR` default already strips the branch at compile time, 08 §8.16 |
+| Whether the IMG compiler flattens the filtering branch is open | 08 §8.2, §8.9 | **moot** — no branch exists on the default; §8.14 cannot isolate it on the other path, 08 §8.16 |
 
 ## The reports
 
