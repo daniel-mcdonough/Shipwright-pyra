@@ -163,6 +163,40 @@ Applied to every fragment. In 1-cycle mode the combiner output is already in ran
 following `clamp` makes the `mod` a no-op — but it is still executed. `mod` on a vec3/vec4 costs
 several cycles. Guard it with `@if` for 1-cycle variants.
 
+> **The premise is wrong as written, and the fix is a different one. 2026-09-22.** Cycle count
+> does not bound the combiner output. One cycle computes `(A - B) * C + D`, which reaches
+> `[-1, 2]` from operands in `[0, 1]`, and the wrap is load-bearing there: an output of 1.8 has
+> to come out as −0.22 and clamp to black, not saturate to white. Guarding on `o_2cyc` would
+> have changed what the screen shows.
+>
+> What does bound it is the *shape* of the formula. `gfx_cc_get_features`
+> (`interpreter.cpp:4752`) already reduces a degenerate combiner to one of three shorter forms,
+> and none of them can leave `[0, 1]`:
+>
+> | Condition | Emitted | Range |
+> |---|---|---|
+> | `C == 0` → `do_single` | `D` | `[0, 1]` |
+> | `B == 0 && D == 0` → `do_multiply` | `A * C` | `[0, 1]` |
+> | `B == D` → `do_mix` | `mix(B, A, C)` | `[0, 1]` |
+> | otherwise | `(A - B) * C + D` | `[-1, 2]` |
+>
+> Every operand a cycle can name is itself in `[0, 1]`: the constants, the shade/prim/env inputs
+> (`uint8_t` divided by 255 at `interpreter.cpp:1835`, and barycentric interpolation does not
+> extrapolate), a texture sample, and the noise term. Three-point filtering is not an exception —
+> its weights are `1-|ox|-|oy|`, `|ox|`, `|oy|` with `|ox| + |oy| <= 1`, so it is a convex
+> combination of three samples. The one operand that is not bounded is `SHADER_COMBINED`, the
+> previous cycle's output, which is in range only if that cycle was.
+>
+> So the guard is per cycle and per formula shape, not per cycle count, and it extends to the
+> second wrap the report does not mention — the one between the two cycles at `:143-152`.
+> Implemented that way; see `CombinerCycleInRangeFor` in `gfx_opengl.cpp` and `NEXT.md` item A.
+>
+> **How much it covers: 95.2% of the `G_SETCOMBINE` commands in `oot.o2r`** (1-cycle, alpha on —
+> the conservative assumption), against 28.4% of the distinct shader variants. Measured with
+> `tools/wrapscan.py`, which reproduces `GenerateCC` over the archive and agrees with §5.6 on the
+> two figures that report published. Static command counts, not fragments — it bounds how broadly
+> the elision applies, not what it is worth.
+
 ### `int` uniforms converted to float per fragment
 
 `default.shader.fs:47-51` declares `texture_width[2]`, `texture_height[2]`, `mask_width[2]`,
@@ -177,6 +211,13 @@ The SGX fragment ALU is float. Pass these as `vec2` uniforms and the conversion 
 Trivial, free, no behaviour change. (Note the `mask_*` uniforms are ours — added in the GLES2
 port to replace `textureSize()`, report 2 row 15 — so at minimum we should not be adding to the
 problem.)
+
+> **Implemented, unmeasured. 2026-09-22.** Behind `SHADER_OPT_FLOAT_TEX_SIZE`. Two things to know
+> when the number arrives. It also removes one `glUniform1iv` per draw per texture pair, because
+> one `glUniform2fv` now carries width and height together — so a win cannot be attributed to the
+> per-fragment conversion alone. And the conversion may already be free: the PowerVR compiler
+> hoists expressions that depend only on uniforms into the secondary attribute update program,
+> which would make this exactly zero. Neither can be settled from the host.
 
 ## 8.6 Tier 3 — CPU side
 

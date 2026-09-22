@@ -213,16 +213,21 @@ size_t ArmIndexForSegment(int segment) {
 
 // Applying a CVar mid-run is only correct for settings that are read per frame. Texture filtering
 // is not one of them - it is compiled into the shader source - so it needs the cache dropped.
-// SetTextureFilter does that for us. Anything else here is assumed to be read live; if a future
-// A/B target is not, it needs a case adding rather than silently measuring nothing.
+// SetTextureFilter does that for us. CVAR_SHADER_OPTS is compiled in the same way and drops the
+// cache directly. Anything else here is assumed to be read live; if a future A/B target is not,
+// it needs a case adding rather than silently measuring nothing.
 void ApplyArm(const std::string& value) {
     CVarSetInteger(gCfg.abCVar.c_str(), (int)strtol(value.c_str(), nullptr, 0));
 
+    auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
+    if (wnd == nullptr) {
+        return;
+    }
+
     if (gCfg.abCVar == std::string(CVAR_TEXTURE_FILTER)) {
-        auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
-        if (wnd != nullptr) {
-            wnd->SetTextureFilter((Fast::FilteringMode)strtol(value.c_str(), nullptr, 0));
-        }
+        wnd->SetTextureFilter((Fast::FilteringMode)strtol(value.c_str(), nullptr, 0));
+    } else if (gCfg.abCVar == std::string(CVAR_SHADER_OPTS)) {
+        wnd->ResetShaderCache();
     }
 }
 
