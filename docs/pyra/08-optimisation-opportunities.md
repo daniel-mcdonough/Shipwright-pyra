@@ -193,7 +193,32 @@ Measured draw-call overhead is ~11–14 µs (report 5, corrected). `GL_OES_mapbu
 `GL_OES_vertex_array_object` are both available on the device. A ring buffer with
 `glBufferSubData` into a pre-allocated VBO would avoid the per-draw reallocation.
 
-Needs a draw-call-per-frame count before it can be sized — that number is not yet measured.
+~~Needs a draw-call-per-frame count before it can be sized — that number is not yet measured.~~
+
+> **Refuted — do not build this. 2026-09-22.** It does not need a draw-call count. Report 5
+> §5.3 had already measured this exact proposal on this exact driver, in the same report that
+> supplied the µs/draw figure quoted above:
+>
+> | Strategy | µs/draw |
+> |---|---|
+> | `glBufferData` per draw — what the code does today | 68 |
+> | single `glBufferData` per frame + offsets | 60 |
+> | client-side vertex arrays | 58 |
+> | **`glBufferSubData` into a ring buffer** | **221** |
+>
+> Four times worse, and report 5 said so in as many words: *"do not 'optimise' this into
+> `glBufferSubData`."* The one variant report 5 does not refute is a single `glBufferData` per
+> frame with offsets, at 60 against 68 — but that is 12% of a path costing ~14 µs per draw in a
+> frame-bound workload, well inside the noise of what building it would take.
+>
+> This is the worst kind of error in the catalogue: not an over-estimate, but a proposal to
+> build something the project had already measured as harmful. It survived because this report
+> was written from the code rather than from the measurements, and because nothing checked the
+> two reports against each other. Caught by the external triage in
+> `~/git/dragonbox-pyra/docs/optimization-playbook.md` §4.
+>
+> Report 5 also asked for a comment in the code so nobody would try it later. That was never
+> done either; it is now at `gfx_opengl.cpp` next to the `glBufferData` call.
 
 ### Program binary cache
 
@@ -241,12 +266,12 @@ what the code change alone recovers. Current status is in the last column.
 | # | Item | Tier | Est. gain | Risk | Upstreamable | Status |
 |---|---|---|---|---|---|---|
 | 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | **small** — see §8.12 | low | yes | screened; the win is a default, not the refactor |
-| 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | **premise confirmed, §8.12** — now the top candidate |
+| 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | **CLOSED — already implemented, §8.15.** 97.6% of tiles already take the cheap path; the 3.6% left is correctness |
 | 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes | confidence lowered again, §8.12 |
 | 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific | done, no gain |
 | 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes | now measurable, §8.9 |
 | 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes | now measurable, §8.9 |
-| 7 | VBO ring buffer (§8.6) | 3 | unsized | medium | yes | unsized, needs a draw-call count |
+| 7 | VBO ring buffer (§8.6) | 3 | **negative** | medium | yes | **REFUTED — report 5 §5.3 measured it at 4× worse. Do not build. §8.6** |
 | 8 | Program binary cache (§8.6) | 3 | hitching only | low | device-specific | not attempted |
 | 9 | NEON for the three scalar audio routines (§8.6) | 3 | heat, not FPS | low | yes | still live — see §8.11 |
 
@@ -272,7 +297,10 @@ The same trap applies to everything here. In particular:
   branch-free variant before investing in the shader-key rework.
 - **§8.3 is the largest claim and the weakest evidence.** It should be prototyped crudely on one
   variant before the general case is attempted.
-- **§8.6 (VBO) cannot be sized at all** without a draw-call-per-frame count.
+- ~~**§8.6 (VBO) cannot be sized at all** without a draw-call-per-frame count.~~ **Wrong — it
+  was already measured, in report 5 §5.3, at 4× worse than the code today. See §8.6.** This
+  bullet is the clearest illustration of the point the section is making: the report asked for
+  a new measurement while the answer sat in an earlier report by the same author.
 
 Every A/B must be taken at **thermal equilibrium** (report 7 §7.1) and with both frame caps
 raised, or it measures the thermostat and the frame limiter rather than the change.

@@ -37,6 +37,27 @@ What it does *not* change:
   has never been buildable on any 32-bit ARM target, and report 5 §5.2 a latent colour-combiner
   gap on every platform. Reporting those costs nothing and is not contingent on merging.
 
+## The hardware knowledge base lives in another repository
+
+`~/git/dragonbox-pyra/docs/` holds the system-level work on this machine, and since 2026-09-22 it
+carries a hardware playbook that covers both projects:
+
+- [`optimization-playbook.md`](../../../dragonbox-pyra/docs/optimization-playbook.md) — index, and
+  a triage of every optimisation proposed on this device, system and application alike. It is the
+  only document that reads the two projects against each other, and doing that immediately caught
+  a contradiction neither had noticed (item 7, below).
+- `hardware-overview.md` + `known-limitations.md` — the minimum pair for context: the first builds
+  the model, the second stops closed questions being re-derived.
+- `gpu-optimization.md` + `rendering-guidelines.md` — read before touching the renderer.
+- `profiling-guide.md` — read before measuring anything.
+
+Their convention is worth adopting here too: every claim marked **Measured**, **Spec** or
+reasoning, and corrections kept visible rather than edited away.
+
+The reports in *this* directory remain the source of truth for the port itself; the playbook's
+application-level triage (§4) is written against them and will lag them. Where the two disagree,
+check the date.
+
 ## Read this first: which numbers are still good
 
 | Claim | Where | Status |
@@ -57,6 +78,7 @@ What it does *not* change:
 | Item 2 (dependent texture reads) is the top code candidate | 08 §8.3, §8.12 | **no** — already implemented; zero headroom, 08 §8.15 |
 | Report 8's items 3, 5, 6, 7, 8 are a work queue | 08 §8.8 | **no** — unvalidated code readings; probe each first, 08 §8.15 |
 | The benchmark measured the viewpoint the docs describe | 09 §9.2 | **no** — the player pins never held, 09 §9.9 |
+| Item 7 (VBO ring buffer) needs a draw-call count to size | 08 §8.6, §8.9 | **no** — report 5 §5.3 had already measured it at 4× *worse*. Refuted, 08 §8.6 |
 
 ## The reports
 
