@@ -23,6 +23,7 @@
 
 #include <fstream>
 #include <filesystem>
+#include <iterator>
 #include <array>
 #include <mutex>
 
@@ -60,6 +61,96 @@ std::filesystem::path SaveManager::GetFileTempName(int fileNum) {
     const std::filesystem::path sSavePath(Ship::Context::GetPathRelativeToAppDirectory("Save"));
     return sSavePath / ("file" + std::to_string(fileNum + 1) + ".temp");
 }
+
+#if defined(__SWITCH__) || defined(__WIIU__)
+int copy_file(const char* src, const char* dst); // defined below, next to its explanation
+#endif
+
+namespace {
+
+// Writing a save used to be: stream the JSON at a temp file, rename it over the real one. Nothing
+// checked that the bytes on disk were the bytes we meant to write, and report 7 section 7.7 found
+// out why that matters. A stray close() elsewhere in the process freed the log file's descriptor,
+// this stream was handed the same number, and the logger's next flush wrote a log record into the
+// middle of the save. rename() does not care what is in the file, so the good save was replaced by
+// the corrupt one.
+//
+// So: write, close, read back, and only rename if what came back is what went out. The readback
+// compares bytes rather than re-parsing the JSON, because a parse would accept several of the ways
+// this can go wrong - a short write, a truncated tail, a stale file left by a failed attempt - and
+// because a parse of a 200 KB save costs more than a compare of one.
+//
+// This does not fix the descriptor bug. Nothing here can defend against that one - you cannot
+// stop another thread closing your descriptor, and by the time you notice, the number belongs to
+// somebody else. It has to be fixed where the close is; scripts/pyra/fdguard.c exists to find the
+// caller, and docs/pyra/10-save-file-corruption.md has the mechanism. What this fixes is the
+// consequence that matters: a corrupt write now costs this save, not the save.
+bool WriteJsonVerified(const std::filesystem::path& finalPath, const std::filesystem::path& tempPath,
+                       const nlohmann::json& block) {
+    // Matches what "output << std::setw(1) << block << std::endl" produced before, byte for byte,
+    // so an existing save is not rewritten differently just because it was rewritten.
+    const std::string expected = block.dump(1) + "\n";
+
+    // One retry. The corruption this guards against is transient - it needs another thread to be
+    // holding a stale descriptor at the moment we write - so a second attempt is usually clean. A
+    // third would only be waiting for a permanent fault to go away.
+    constexpr int kAttempts = 2;
+
+    for (int attempt = 1; attempt <= kAttempts; attempt++) {
+        std::error_code ec;
+        std::filesystem::remove(tempPath, ec);
+
+        {
+            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
+            output << expected;
+            output.close();
+            if (!output) {
+                SPDLOG_ERROR("Save: writing {} failed (attempt {} of {})", tempPath.string(), attempt, kAttempts);
+                continue;
+            }
+        }
+
+        std::ifstream input(tempPath, std::ios::binary);
+        const std::string actual((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+        input.close();
+
+        if (actual != expected) {
+            SPDLOG_ERROR("Save: {} read back wrong - wrote {} bytes, got {} back. Existing save left "
+                         "untouched (attempt {} of {})",
+                         tempPath.string(), expected.size(), actual.size(), attempt, kAttempts);
+            continue;
+        }
+
+#if defined(__SWITCH__) || defined(__WIIU__)
+        // std::filesystem::rename does not work properly with the Wii U toolchain, hence the copy.
+        std::filesystem::remove(finalPath, ec);
+        if (copy_file(tempPath.c_str(), finalPath.c_str()) != 0) {
+            SPDLOG_ERROR("Save: copying {} into place failed (attempt {} of {})", tempPath.string(), attempt,
+                         kAttempts);
+            continue;
+        }
+        std::filesystem::remove(tempPath, ec);
+#else
+        std::filesystem::rename(tempPath, finalPath, ec);
+        if (ec) {
+            SPDLOG_ERROR("Save: renaming {} into place failed: {} (attempt {} of {})", tempPath.string(),
+                         ec.message(), attempt, kAttempts);
+            continue;
+        }
+#endif
+        return true;
+    }
+
+    // Loud, because the alternative is a player who thinks the game saved. The previous save is
+    // still the previous save, which is the whole point, but nothing on screen says so yet.
+    std::error_code ec;
+    std::filesystem::remove(tempPath, ec);
+    SPDLOG_ERROR("Save: gave up writing {}. The previous save is intact and this one was not written.",
+                 finalPath.string());
+    return false;
+}
+
+} // namespace
 
 std::vector<RandomizerHint> Rando::StaticData::oldVerHintOrder{
     RH_COLOSSUS_GOSSIP_STONE,
@@ -1170,40 +1261,15 @@ void SaveManager::SaveFileThreaded(int fileNum, SaveContext* saveContext, int se
         svi.func(saveContext, sectionID, false);
     }
 
-    std::filesystem::path fileName = GetFileName(fileNum);
-    std::filesystem::path tempFile = GetFileTempName(fileNum);
-
-    if (std::filesystem::exists(tempFile)) {
-        std::filesystem::remove(tempFile);
-    }
-
-#if defined(__SWITCH__) || defined(__WIIU__)
-    FILE* w = fopen(tempFile.c_str(), "w");
-    std::string json_string = saveBlock.dump(1);
-    fwrite(json_string.c_str(), sizeof(char), json_string.length(), w);
-    fclose(w);
-#else
-    std::ofstream output(tempFile);
-    output << std::setw(1) << saveBlock << std::endl;
-    output.close();
-#endif
-
-#if defined(__SWITCH__) || defined(__WIIU__)
-    if (std::filesystem::exists(fileName)) {
-        std::filesystem::remove(fileName);
-    }
-    copy_file(tempFile.c_str(), fileName.c_str());
-    if (std::filesystem::exists(tempFile)) {
-        std::filesystem::remove(tempFile);
-    }
-#else
-    std::filesystem::rename(tempFile, fileName);
-#endif
+    const bool written = WriteJsonVerified(GetFileName(fileNum), GetFileTempName(fileNum), saveBlock);
 
     delete saveContext;
     InitMeta(fileNum);
+    // The hooks still fire on a failed write. Plenty of game and UI state keys off OnSaveFile, and
+    // suppressing it would trade a known data-loss bug for an unknown state one. The failure is in
+    // the log and in the line below; making it visible to the player is the outstanding half.
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnSaveFile>(fileNum, sectionID);
-    SPDLOG_INFO("Save File Finish - fileNum: {}", fileNum);
+    SPDLOG_INFO("Save File Finish - fileNum: {} ({})", fileNum, written ? "written" : "NOT WRITTEN");
     saveMtx.unlock();
 }
 
@@ -1242,8 +1308,9 @@ void SaveManager::SaveGlobal() {
     const std::filesystem::path sSavePath(Ship::Context::GetPathRelativeToAppDirectory("Save"));
     const std::filesystem::path sGlobalPath = sSavePath / std::string("global.sav");
 
-    std::ofstream output(sGlobalPath);
-    output << std::setw(1) << globalBlock << std::endl;
+    // This one was written straight over the live file with no temp copy, so any failed or
+    // misdirected write destroyed it outright rather than merely failing to update it.
+    WriteJsonVerified(sGlobalPath, sSavePath / std::string("global.temp"), globalBlock);
 }
 
 void SaveManager::LoadFile(int fileNum) {
