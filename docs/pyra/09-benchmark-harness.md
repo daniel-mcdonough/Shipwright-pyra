@@ -152,6 +152,14 @@ The last line is the minimum detectable effect. Reporting it next to a null resu
 difference between "no effect" and "no effect this rig could see" — a distinction report 8 §8.10
 had to make by hand.
 
+### The CPU governor is not controlled
+
+The device runs the `ondemand` governor across eleven steps from 250 MHz to 1.5 GHz. Runs up to
+2026-09-22 happened to sit at 1.25 GHz throughout and nothing showed; the run in report 8 §8.14
+moved 1.4 GHz → 1.0 GHz mid-run and cost a factor of three in resolution. ABBA cancels linear
+drift, not a step change. Pin the governor to `performance` before a run that needs to resolve
+under 1%, or treat such effects as unresolved.
+
 ## 9.5 What this does *not* fix
 
 **A static frame is a screen, not a verdict.** It answers "is this shader cheaper", not "does the

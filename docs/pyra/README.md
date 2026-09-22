@@ -16,10 +16,12 @@ reads a superseded number and acts on it.
 | Optimisation ordering `4 → 6 → 5 → 3 → 1 → 2` | 08 §8.8 | **wrong** — corrected in 08 §8.9 |
 | Item 1's estimated gain ("large") | 08 §8.2 | **overstated** — corrected in 08 §8.9 |
 | Item 9 retired by the audio DSP move | — | **no** — see 08 §8.11 |
-| Benchmark harness resolves better than ±13% | 09 §9.7 | **validated on hardware** — resolves 0.40%, ~33× better |
+| Benchmark harness resolves better than ±13% | 09 §9.7 | **validated on hardware** — 0.26–0.40%, but 1.02% when the CPU governor moves, 08 §8.14 |
 | "Items 5 and 6 are below the measurement floor" | 08 §8.9 | **no longer true** — the floor moved; see the same section |
 | Item 1 (shader-variant key) is the top lever | 08 §8.2, §8.8 | **no** — measured small; the win is a default, 08 §8.12 |
-| Three-point filtering is affordable on this GPU | — | **no** — it costs 17.75% of frame time, 08 §8.12 |
+| Three-point filtering is affordable on this GPU | — | **no** — 19.88% of frame time at a chosen viewpoint, 08 §8.14 |
+| Dropping to linear costs image quality | 08 §8.12 | **no** — indistinguishable at 3× zoom, 08 §8.13 |
+| The benchmark measured the viewpoint the docs describe | 09 §9.2 | **no** — the player pins never held, 09 §9.9 |
 
 ## The reports
 

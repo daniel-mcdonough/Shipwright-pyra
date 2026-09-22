@@ -558,3 +558,50 @@ One honest limit: this is one frame of one outdoor scene. Three-point's advantag
 largest on low-resolution textures magnified close to the camera, and the place that bites in OOT
 is more likely a dungeon wall or a text box than a village vista. The finding is "no visible cost
 here", not "no visible cost anywhere".
+
+## 8.14 Re-measured at a fixture someone chose: 19.88%
+
+§8.12's 17.75% was taken at a viewpoint that turned out not to be the one recorded (report 9
+§9.9). The measurement is repeated here at the replacement fixture — Kokiri Forest village square
+looking down the valley, walked to by hand, verified to reproduce.
+
+| Arm | Frame time | FPS |
+|---|---|---|
+| `FILTER_THREE_POINT` (0) | 36904 µs | **27.10** |
+| `FILTER_LINEAR` (1) | 29548 µs | **33.85** |
+| delta | **−7336.6 µs** | +6.75 FPS |
+
+```
+paired n=5 mean_delta_us=-7336.61 sd_us=302.17 t=-54.290 df=4
+mde_us=375.68 (1.02% of frame)
+pair deltas -20.78, -20.61, -18.87, -19.62, -19.58 %
+arm sequence 0,1,1,0,0,1,1,0,0,1 (ABBA)   69.99 -> 79.36 C
+```
+
+**Three-point filtering costs 19.88% of frame time — more at a viewpoint with depth, not less.**
+The effect is 19.5× the detection threshold. §8.12's caveat said the treehouse frame might be
+understating or overstating the cost and that the direction was not knowable without a second
+viewpoint; the answer is understating.
+
+The practical form of that number matters more than the percentage. At this fixture three-point
+runs at **27.1 FPS, under the 30 FPS target**, and linear clears it at **33.9**. The same change
+that was "a fidelity trade worth considering" at the old viewpoint is, at this one, the difference
+between missing and meeting the frame rate goal — and §8.13 established the fidelity side costs
+nothing visible here.
+
+### This run also exposed a confound the rig does not control
+
+The pair standard deviation was 302.17 µs against 87.40 µs in §8.12, and the resolution fell from
+0.26–0.40% to 1.02%. The cause is not the scene. The CPU governor is `ondemand`, with eleven
+frequency steps from 250 MHz to 1.5 GHz, and it moved **1.4 GHz → 1.0 GHz across the run**. The
+linear arm steps from ~29235 µs in its first two segments to ~29750 µs in its last three, a 1.8%
+shift with no counterpart in the three-point arm.
+
+ABBA cancels *linear* drift, which is why the effect survives intact. A step change part-way
+through is not linear drift, and it lands unevenly across pairs — visible in the deltas, which run
+−20.78, −20.61 then −18.87, −19.62, −19.58.
+
+Every earlier run happened to sit at 1.25 GHz throughout, so this never showed up. It is luck, not
+control. Pinning the governor to `performance` for the duration of a run would remove it; that is
+a device-level change requiring root, so it is recorded here rather than done. Until then, treat
+sub-1% effects at this fixture as unresolved rather than absent.
