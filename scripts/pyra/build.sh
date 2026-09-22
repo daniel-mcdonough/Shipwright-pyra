@@ -10,6 +10,7 @@
 #   ./scripts/pyra/build.sh configure  configure build-pyra/
 #   ./scripts/pyra/build.sh build      compile
 #   ./scripts/pyra/build.sh shell      interactive shell in the container
+#   ./scripts/pyra/build.sh fdguard    build the descriptor tracer (docs/pyra/10-...)
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -47,9 +48,15 @@ case "${1:-build}" in
   build)
     run cmake --build "/src/$BUILD_DIR" "${@:2}"
     ;;
+  fdguard)
+    # LD_PRELOAD shim that names whoever closes the log's descriptor. Report 10 section 10.3.
+    run arm-linux-gnueabihf-gcc -shared -fPIC -O1 -g -funwind-tables \
+        -o "/src/$BUILD_DIR/fdguard.so" /src/scripts/pyra/fdguard.c -ldl
+    echo "built $BUILD_DIR/fdguard.so"
+    ;;
   shell)
     docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp \
       -v "$REPO:/src" -v "$DDK:/opt/omap5-sgx-ddk-um-linux:ro" -w /src "$IMAGE" bash
     ;;
-  *) echo "usage: $0 {image|configure|build|shell}" >&2; exit 1 ;;
+  *) echo "usage: $0 {image|configure|build|fdguard|shell}" >&2; exit 1 ;;
 esac
