@@ -71,10 +71,10 @@ harness therefore holds the view exactly still wherever it is pointed.
 
 ### Why the camera must be pinned deliberately
 
-The obvious fixture — warp to Kokiri Forest, stand still — is not neutral. `ENTR_KOKIRI_FOREST_0`
-spawns Link on the treehouse platform with the camera tight behind him and the hut wall filling a
-large part of the frame. That is a much cheaper view than the scene can produce, and a
-fragment-cost measurement taken there would come back optimistically small.
+The obvious fixture — warp to Kokiri Forest, stand still — is not neutral. The spawn a warp lands
+on was chosen to start a game, not to exercise a renderer, and §9.9 shows how far that can go: of
+seven Kokiri Forest entrance indices surveyed by screenshot, two loaded a different scene
+entirely, one spawned with a dialogue box already open, and two put the camera inside a wall.
 
 The spawn a warp lands on is a property of the entrance table, not a considered benchmarking
 choice. The harness therefore logs position, yaw, eye, at and fovy every run, and warns when no
@@ -116,7 +116,7 @@ last arm persisted into the saved config.
 | `SOH_BENCH_AGE` | `1` | 0 adult, 1 child |
 | `SOH_BENCH_TIME` | `0x8000` | `dayTime`; noon. Fixed so lighting cannot drift |
 | `SOH_BENCH_NIGHT` | `0` | night flag |
-| `SOH_BENCH_POS` | unset | `x,y,z` to place the player |
+| `SOH_BENCH_POS` | unset | `x,y,z` ground position for the player; `y` is a starting height, the floor decides the rest (§9.9) |
 | `SOH_BENCH_YAW` | unset | facing, binang |
 | `SOH_BENCH_EYE` | unset | `x,y,z` camera position — takes effect once frozen |
 | `SOH_BENCH_AT` | unset | `x,y,z` camera target; required with `EYE` |
@@ -132,6 +132,7 @@ last arm persisted into the saved config.
 | `SOH_BENCH_TARGET_FPS` | `240` | high enough that the limiter never sleeps |
 | `SOH_BENCH_OUT` | unset | write results here as well as to the log |
 | `SOH_BENCH_EXIT` | `1` | quit when finished |
+| `SOH_BENCH_WATCH` | `0` | authoring mode: never freeze, never measure, log the viewpoint every 60 frames so a fixture can be walked to (§9.9) |
 
 ## 9.4 Output
 
@@ -281,3 +282,78 @@ not supply.
 boot: the linear arm drifted 1.44% across run 1 while the die climbed 46.1 → 76.8 °C. For a small
 effect that would matter even though ABBA cancels the linear component. The cheap fix is to run
 something on the device before benchmarking rather than to keep raising `SOH_BENCH_WARMUP`.
+
+## 9.9 The pins did not hold, and the fixture was never the one in the docs
+
+Every number in reports 8 and 9 up to this point was measured at a viewpoint nobody chose.
+
+**The bug.** `SOH_BENCH_POS` and `SOH_BENCH_YAW` were applied once, at settle frame 30, and then
+left alone for the remaining 210 settle frames. Ordinary player update — entrance animations,
+gravity, sliding, and an NPC's collision push-out — walked the player straight back off the mark.
+The camera pins held, because `ApplyCameraOverride` alone was re-applied every frame. So the runs
+were reproducible and the *camera* was exactly where it was asked to be, while the player ended
+up roughly 500 units away:
+
+```
+asked for  pos=[ -66.0,-80.0, 938.6]  yaw=0x638A
+got        pos=[-104.4,-80.0,1435.6]  yaw=0xBD0D     (reproducible to the decimal)
+```
+
+`ApplyPlayerOverrides` carried the comment *"a silent miss here would benchmark the wrong viewpoint
+and look entirely normal"*. That is what happened — not through a miss, but through a hit that was
+immediately undone.
+
+**What was actually being measured.** Not the "treehouse close-up" the docs described. The player
+was ~390 units *behind* the camera and out of frame entirely; the frame was a treehouse ladder in
+the right foreground with a large ground plane filling most of the screen. As a fill-rate fixture
+that is not unreasonable — large textured surfaces are what stress per-fragment filtering — but it
+is not what anyone wrote down, and it had little scene depth.
+
+**The fix.** The position pin is now held every settle frame rather than fired once. Height is
+deliberately *not* held: pinning `y` every frame hovers the player above sloping ground or buries
+him in it, which makes a viewpoint impossible to author by hand — you would have to know the floor
+height at every candidate position. `y` is now a starting height and the floor catches him, so
+`SOH_BENCH_POS` reads as a ground position. The settled height is logged. At freeze the run
+compares actual x/z against the request and logs an error above 4 units, so a fixture that has
+drifted says so instead of quietly benchmarking somewhere else.
+
+### Choosing a fixture by looking at it
+
+Entrance indices are a bad way to pick a viewpoint. Seven Kokiri Forest entrances were surveyed by
+screenshotting the frozen frame of each:
+
+| Entrance | What actually loaded |
+|---|---|
+| `0x00EE` | Kokiri Forest, village path — usable |
+| `0x0209` | **Deku Tree dungeon interior** (scene 0, not 85) |
+| `0x020D` | Kokiri Forest, long village vista — usable |
+| `0x0211` | **A house interior** (scene 52) |
+| `0x0266` | Kokiri Forest, but spawns with **a dialogue box already open** |
+| `0x026A` | Camera inside a wall, player mid-fall |
+| `0x0286` | Camera inside a wall, dark |
+
+Two of seven were not even the right scene. Pinning `0x020D` and walking the player forward ran
+into a second problem: Mido stands blocking that path, and his collision push-out fights the pin.
+
+So the fixture was authored by hand instead, which is what `SOH_BENCH_WATCH` exists for. It runs
+the game normally — no freeze, no overrides, no measurement — and logs position, yaw, eye, at and
+fovy every 60 frames. Walk the player to a good spot, let the camera settle, read the last line,
+pin those numbers.
+
+### The fixture
+
+```
+SOH_BENCH_ENTRANCE=0x00EE
+SOH_BENCH_POS=-592.8,0.0,-195.9
+SOH_BENCH_YAW=0x369E
+SOH_BENCH_EYE=-707.3,55.3,-222.8
+SOH_BENCH_AT=-592.8,34.7,-195.9
+```
+
+Kokiri Forest village square, looking down the valley. A large ground plane in the near field, a
+stone pillar, the shop roof, a bridge and fences at mid range, terrain and sky beyond, the player
+and a second Kokiri close to camera, and Navi as a large alpha-blended sprite. Near geometry, far
+geometry, characters and transparency in one frame — which is what the old fixture lacked.
+
+**Numbers taken before this section are not comparable to numbers taken after it.** The viewpoint
+changed, so every percentage in report 8 §8.12 belongs to the old frame.

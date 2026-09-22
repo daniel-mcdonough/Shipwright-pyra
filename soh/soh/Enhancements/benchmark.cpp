@@ -89,6 +89,12 @@ struct Config {
     std::string outPath;
     bool exitWhenDone = true;
     int targetFps = 240; // high enough that the frame limiter never sleeps
+
+    // Authoring mode. Nothing is frozen, nothing is measured and no override is applied: the
+    // game just runs, and the viewpoint is logged every couple of seconds. Walk the player to
+    // a good spot with the controls, read the last line out of the log, and pin those numbers.
+    // Picking a fixture any other way means picking it blind - see report 9 §9.9.
+    bool watch = false;
 };
 
 Config gCfg;
@@ -365,14 +371,47 @@ bool ApplyPlayerOverrides() {
     }
     if (gCfg.havePos) {
         player->actor.world.pos.x = gCfg.pos[0];
-        player->actor.world.pos.y = gCfg.pos[1];
         player->actor.world.pos.z = gCfg.pos[2];
+        // Height is placed once and then left to the game. Holding y down every frame the way
+        // x and z are held would hover the player above sloping ground or bury him in it, which
+        // makes a viewpoint impossible to author by hand - you would have to know the floor
+        // height at every candidate position. Dropping him in and letting the floor catch him
+        // means SOH_BENCH_POS can be read as a ground position.
+        if (!gPlayerMoved) {
+            player->actor.world.pos.y = gCfg.pos[1];
+        }
     }
     if (gCfg.haveYaw) {
         player->actor.world.rot.y = (int16_t)gCfg.yaw;
         player->actor.shape.rot.y = (int16_t)gCfg.yaw;
     }
     return true;
+}
+
+// Applying an override is not the same as it having stuck, and the difference is invisible
+// in the results. Check that the player really is where the run asked for, so a fixture that has
+// drifted says so instead of quietly benchmarking somewhere else.
+void VerifyPlayerOverrides() {
+    if (!gCfg.havePos || gPlayState == nullptr) {
+        return;
+    }
+    Player* player = GET_PLAYER(gPlayState);
+    if (player == nullptr) {
+        return;
+    }
+    // Only x and z are checked, because y is deliberately left to the floor - see
+    // ApplyPlayerOverrides. The settled height is logged so a fixture can be re-pinned to
+    // exactly where the player actually stood.
+    const float dx = player->actor.world.pos.x - gCfg.pos[0];
+    const float dz = player->actor.world.pos.z - gCfg.pos[2];
+    const float drift = std::sqrt(dx * dx + dz * dz);
+    if (drift > 4.0f) {
+        SPDLOG_ERROR("Benchmark: player ended {:.1f} units from SOH_BENCH_POS in x/z - the pinned position "
+                     "did NOT hold, and the frame being measured is not the one that was asked for",
+                     drift);
+    }
+    SPDLOG_INFO("Benchmark: player settled at y={:.1f} (asked for {:.1f})", player->actor.world.pos.y,
+                gCfg.pos[1]);
 }
 
 void ApplyCameraOverride() {
@@ -479,6 +518,7 @@ extern "C" void Benchmark_Init(void) {
     gCfg.reps = EnvInt("SOH_BENCH_REPS", gCfg.reps);
     gCfg.outPath = EnvOr("SOH_BENCH_OUT", "");
     gCfg.exitWhenDone = EnvBool("SOH_BENCH_EXIT", gCfg.exitWhenDone);
+    gCfg.watch = EnvBool("SOH_BENCH_WATCH", gCfg.watch);
     gCfg.fullscreen = EnvBool("SOH_BENCH_FULLSCREEN", gCfg.fullscreen);
     gCfg.targetFps = EnvInt("SOH_BENCH_TARGET_FPS", gCfg.targetFps);
 
@@ -608,13 +648,27 @@ extern "C" void Benchmark_FrameEnd(void) {
 
         case Phase::Settling:
             gPhaseFrames++;
-            // Give the scene a moment to spawn actors before reaching for the player, then keep
-            // trying until it takes, so the rest of the settle window is spent letting the
-            // camera and animations come to rest at the final position.
-            if (!gPlayerMoved && gPhaseFrames >= kPlayerMoveFrame) {
-                gPlayerMoved = ApplyPlayerOverrides();
-                if (gPlayerMoved && (gCfg.havePos || gCfg.haveYaw)) {
-                    SPDLOG_INFO("Benchmark: player override applied at settle frame {}", gPhaseFrames);
+            if (gCfg.watch) {
+                // Never leaves this phase: no freeze, no overrides, no measurement. Roughly
+                // every two seconds, so the log is readable rather than a firehose.
+                if (gPhaseFrames % 60 == 0) {
+                    LogViewpoint();
+                }
+                break;
+            }
+            // Give the scene a moment to spawn actors before reaching for the player, then hold
+            // the override down for the rest of the settle window. Applying it once is not
+            // enough: ordinary player update - entrance animations, gravity, sliding off a
+            // slope - walks the player straight back off the mark over the remaining frames,
+            // and the log then reports a viewpoint nothing asked for. Holding it also lets the
+            // camera and animations come to rest around the final position rather than chase it.
+            if (gPhaseFrames >= kPlayerMoveFrame) {
+                const bool applied = ApplyPlayerOverrides();
+                if (applied && !gPlayerMoved) {
+                    gPlayerMoved = true;
+                    if (gCfg.havePos || gCfg.haveYaw) {
+                        SPDLOG_INFO("Benchmark: player override applied at settle frame {}", gPhaseFrames);
+                    }
                 }
             }
             if (gPhaseFrames >= gCfg.settleFrames) {
@@ -622,6 +676,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                     SPDLOG_ERROR("Benchmark: player override never applied - the measured viewpoint is NOT the "
                                  "one that was asked for");
                 }
+                VerifyPlayerOverrides();
                 if (gCfg.staticScene && gPlayState != nullptr) {
                     // Frame advance stops Play_Update without stopping Play_Draw, so the same
                     // display list is submitted every frame from here on. See z_play.c:737 and

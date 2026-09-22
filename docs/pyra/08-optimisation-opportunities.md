@@ -515,3 +515,46 @@ measurement.
 - **16000 warm-up frames is still not thermal equilibrium.** The linear arm drifted
   27836 → 28236 µs across run 1 (1.44%) as the die went 46.1 → 76.8 °C. That drift is 3.6× the
   rig's resolution; ABBA cancelled it, the machine was not steady.
+
+> **Correction (report 9 §9.9).** Every number in §8.12 was measured at a viewpoint that was not
+> the one recorded. The player pins never held — they were applied once at settle frame 30 and
+> then walked ~500 units away by ordinary player update — so the frame measured was not the
+> "treehouse close-up" described here. It was a large ground plane with a ladder in the right
+> foreground and the player out of frame behind the camera. The runs were reproducible and the
+> A/B is internally valid; the *description* of what was measured was wrong, and the percentages
+> belong to that frame rather than to a viewpoint anyone chose. Re-measured at the replacement
+> fixture in §8.14.
+
+## 8.13 Result: linear filtering is visually free on this content
+
+§8.12 left the fidelity half of the trade unmeasured, and flagged it as the thing that could make
+a 21% win a bad deal: three-point is the N64's own filter, and if dropping to bilinear introduced
+visible seams where three-point was papering over texture-coordinate wrapping, the frame rate
+would be bought with image quality.
+
+It does not. The same frozen frame was captured under all three `gSettings.TextureFilter` modes at
+the report 9 §9.9 fixture and compared at 3× zoom on a texture-heavy region — a stone pillar, a
+fence, and distant terrain at several depths.
+
+| Comparison | RMSE | By eye at 3× |
+|---|---|---|
+| three-point vs **linear** | 1.5% | no difference found |
+| three-point vs **nearest** | 2.7% | obviously blockier and aliased |
+
+The whole-frame difference image between three-point and linear is black at auto-level: mean
+absolute difference 1.14/255 (0.45%), σ 3.25. What little structure it has sits on texture
+boundaries, which is where the two filters genuinely differ, and the residual includes actor
+animation phase — Navi orbits, so she is not in the same place in two separately launched runs.
+
+The nearest row is the control, and it matters. It proves the comparison is sensitive enough to
+see a filtering change: the same method that finds nothing between three-point and linear has no
+trouble at all with nearest. A null from a blind instrument would be worthless.
+
+**So the trade is not a trade.** On this content bilinear costs nothing visible. That strengthens
+the §8.12 recommendation rather than qualifying it — though it remains a Pyra default profile
+question, not a reason to touch upstream's default in `Fast3dWindow.cpp:107`.
+
+One honest limit: this is one frame of one outdoor scene. Three-point's advantage over bilinear is
+largest on low-resolution textures magnified close to the camera, and the place that bites in OOT
+is more likely a dungeon wall or a text box than a village vista. The finding is "no visible cost
+here", not "no visible cost anywhere".
