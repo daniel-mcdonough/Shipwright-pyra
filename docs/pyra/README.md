@@ -4,6 +4,39 @@ Ten reports, written as the work happened. They are a record rather than a manua
 **the later ones correct the earlier ones** in several places. This index exists so that nobody
 reads a superseded number and acts on it.
 
+## Scope: this fork targets the Pyra only
+
+Decided 2026-09-22. Earlier reports were written under a "keep changes upstreamable" constraint
+and several of their recommendations exist only to satisfy it — most explicitly report 4, which
+argued for putting the GLES2 backend in libultraship behind `USE_OPENGLES2` rather than forking it,
+on the grounds that *"I think you'd regret it at upstreaming time"*. That argument no longer
+applies. Where a report justifies a choice by upstreamability alone, the justification is void;
+where it justifies one on cost, risk or clarity, it still stands.
+
+What this changes in practice:
+
+- **Defaults may be Pyra-tuned directly.** No profile or platform-conditional machinery is needed
+  to ship a setting this device wants. The first of these is `CVAR_TEXTURE_FILTER`, now defaulting
+  to `FILTER_LINEAR` in `Fast3dWindow.cpp` — worth 19.88% of frame time (§8.14) at no visible cost
+  (§8.13).
+- **The "upstreamable?" column in report 8 §8.8 is no longer a ranking input.** Rank on measured
+  benefit, cost and risk alone.
+- **Device-specific assumptions are allowed.** SGX544MP2, OMAP5432, GLES2, 640×360 and the DDK's
+  SONAME quirk can be assumed rather than abstracted.
+
+What it does *not* change:
+
+- **Existing abstractions stay.** `USE_OPENGLES2` and the `PYRA` CMake option already work;
+  removing them would be effort spent to gain nothing. Stop paying *new* costs for upstreamability,
+  do not go back and undo the old ones.
+- **Pulling from upstream still has value and still has a price.** This port is itself a backport
+  of upstream PR #1288 (report 2 §2.2). Divergence makes each future pull more expensive, and
+  Ship of Harkinian is actively developed. That cost is now accepted deliberately rather than
+  avoided.
+- **Bugs that are upstream's should still be reported upstream.** Report 1 §1.2 found a guard that
+  has never been buildable on any 32-bit ARM target, and report 5 §5.2 a latent colour-combiner
+  gap on every platform. Reporting those costs nothing and is not contingent on merging.
+
 ## Read this first: which numbers are still good
 
 | Claim | Where | Status |
