@@ -605,3 +605,71 @@ Every earlier run happened to sit at 1.25 GHz throughout, so this never showed u
 control. Pinning the governor to `performance` for the duration of a run would remove it; that is
 a device-level change requiring root, so it is recorded here rather than done. Until then, treat
 sub-1% effects at this fixture as unresolved rather than absent.
+
+## 8.15 Item 2 was already implemented, and its remaining 3.6% is the price of being correct
+
+§8.3 proposed detecting, at tile-setup time, the case where the N64's clamp coincides with the
+texture edge and letting hardware `GL_CLAMP_TO_EDGE` handle it instead of the fragment shader. It
+called this *"potentially the largest item in this report"*, and §8.12 promoted it to top code
+candidate.
+
+**It has been implemented the whole time.** `interpreter.cpp:1648`:
+
+```c
+if ((cms & G_TX_CLAMP) && ((cms & G_TX_MIRROR) || tex_width1 != tex_width2[i])) {
+    tm |= 1 << 2 * i;      // shader clamp
+    cms &= ~G_TX_CLAMP;    // and drop the hardware clamp
+}
+```
+
+The shader path is taken *only* when mirroring is on or the tile's clamp rectangle differs from
+the texture width. Otherwise the flag is never set, `cms` keeps `G_TX_CLAMP`, `gfx_cm_to_opengl`
+maps it to `GL_CLAMP_TO_EDGE`, and the shader compiles
+`vec2 vTexCoordAdj0 = vTexCoord0;` — a straight varying pass-through with no fragment-side
+arithmetic. The equivalence is exact: the shader clamps to `[0.5/W, (tex_width2-0.5)/W]` and
+`GL_CLAMP_TO_EDGE` clamps to `[0.5/W, (W-0.5)/W]`, the same interval when `tex_width2 == W`.
+
+§8.3's load-bearing claim — *"the clamp path is the more damaging of the two because it applies to
+ordinary bilinear draws"* — is false. Instrumented at the §9.9 fixture, over 300 frames:
+
+```
+tiles=480000  shader_clamp=11400 (2.38%)  hw_clamp=268500 (55.94%)  mirror_clamp=6300
+```
+
+**97.6% of tile setups already take the non-dependent path.**
+
+### The residual is not available
+
+Tile setups are not pixels, so 2.38% of setups could still be a large share of fragments. Probed
+by forcing the shader clamp off entirely and measuring: **27629 µs against a 28673 µs baseline, a
+3.6% saving.** So those tiles do carry more than their share of fill.
+
+That 3.6% cannot be collected. Both surviving cases are genuinely inexpressible:
+
+- **`MIRROR|CLAMP`** (6300 of 11400, over half). GLES2 has no `GL_MIRROR_CLAMP_TO_EDGE` and SGX544
+  exposes no extension for it; `gfx_cm_to_opengl` already degrades the sampler to
+  `GL_MIRRORED_REPEAT`, and the shader clamp is the only thing making it correct.
+- **Clamp rectangle narrower than the texture.** The N64 clamps at a coordinate *inside* the
+  texture; `GL_CLAMP_TO_EDGE` clamps at the edge. A different place.
+
+The probe measures what could be saved by rendering incorrectly. **Item 2 is closed with zero
+headroom.** The detection at `interpreter.cpp:1648` is already exact, and there is no
+already-equivalent case being missed.
+
+### What the 3.6% does suggest
+
+The width-mismatch case exists because a tile addresses a sub-rectangle of a larger uploaded
+texture. Uploading that sub-rectangle as its own texture would make `tex_width2 == tex_width`, move
+the clamp to hardware, and make the read non-dependent. That is a change to texture upload and
+cache policy — related to §8.4, not to §8.3 — and it trades texture-cache entries and upload churn
+for fragment cost. It is a **new** candidate, unestimated, and it is capped by the non-mirror share
+of that 3.6%.
+
+### How this item was ranked wrong
+
+§8.3 was written by reading `default.shader.fs` and never reading the call site that decides which
+variant is compiled. The estimate *"potentially the largest item in this report, and the least
+certain"* was half right: it was the least certain, and the uncertainty was not where it was
+claimed to be. Every other estimate in §8.5-§8.7 was produced the same way. Items 3, 5, 6, 7 and 8
+should be treated as unvalidated readings of code rather than as a work queue — each one needs the
+§8.9 treatment of a crude probe before it is worth implementing.

@@ -152,13 +152,39 @@ The last line is the minimum detectable effect. Reporting it next to a null resu
 difference between "no effect" and "no effect this rig could see" — a distinction report 8 §8.10
 had to make by hand.
 
-### The CPU governor is not controlled
+### The CPU is pinned to 1.25 GHz for the duration of a run
 
 The device runs the `ondemand` governor across eleven steps from 250 MHz to 1.5 GHz. Runs up to
 2026-09-22 happened to sit at 1.25 GHz throughout and nothing showed; the run in report 8 §8.14
-moved 1.4 GHz → 1.0 GHz mid-run and cost a factor of three in resolution. ABBA cancels linear
-drift, not a step change. Pin the governor to `performance` before a run that needs to resolve
-under 1%, or treat such effects as unresolved.
+moved 1.4 GHz → 1.0 GHz mid-run and cost a factor of three in resolution, because ABBA cancels
+linear drift and not a step change part-way through. The game blocks waiting on the GPU, so CPU
+utilisation is not high enough to hold `ondemand` at the top of its range.
+
+`bench.sh` now sets `scaling_min_freq == scaling_max_freq == 1250000` around every run and restores
+the original range from a `trap` on exit, failure or interrupt. The **governor is deliberately left
+alone**: pinning min to max forces any governor to a single frequency, so there is no governor
+state to save — and sysfs will not hold a saved copy anyway. `PYRA_PIN_FREQ=` disables it.
+
+1.25 GHz rather than the 1.5 GHz maximum, for two reasons: it is where every quiet run happened to
+sit, so it keeps continuity with earlier numbers; and it is below the 1.4-1.5 GHz the governor
+otherwise reaches, so at equal load a pinned run cannot draw more power than an unpinned one.
+(That is a statement about power, not a measured temperature claim — a pinned 10-segment run still
+ended at 81.1 °C. Thermal protection is unaffected either way: the `cpu_thermal` zone clamps
+frequency through the `thermal-cpufreq-0` cooling device whatever the governor is set to, with the
+passive trip at 100 °C and benchmarks running around 80 °C.)
+
+**Measured effect**, null A/B at the §9.9 fixture, both arms identical, against the unpinned
+§8.14 run at the same fixture:
+
+| | pair sd | resolution |
+|---|---|---|
+| unpinned | 302.17 µs | 1.02% |
+| pinned 1.25 GHz | **135.63 µs** | **0.57%** |
+
+Thermal drift remains — segments ran 29415 → 29804 µs, +1.3%, as the die warmed 65.7 → 81.1 °C.
+Pinning removes the clock step, not the drift. The drift is now monotonic, which is the shape ABBA
+actually cancels: the five pair deltas came back +0.56, +0.03, +0.85, −0.03, −0.26%, mixed sign
+and not significant (t=1.111).
 
 ## 9.5 What this does *not* fix
 
