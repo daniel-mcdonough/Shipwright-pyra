@@ -18,6 +18,8 @@ reads a superseded number and acts on it.
 | Item 9 retired by the audio DSP move | — | **no** — see 08 §8.11 |
 | Benchmark harness resolves better than ±13% | 09 §9.7 | **validated on hardware** — resolves 0.40%, ~33× better |
 | "Items 5 and 6 are below the measurement floor" | 08 §8.9 | **no longer true** — the floor moved; see the same section |
+| Item 1 (shader-variant key) is the top lever | 08 §8.2, §8.8 | **no** — measured small; the win is a default, 08 §8.12 |
+| Three-point filtering is affordable on this GPU | — | **no** — it costs 17.75% of frame time, 08 §8.12 |
 
 ## The reports
 
@@ -31,8 +33,8 @@ reads a superseded number and acts on it.
 | [05](05-phase0-device-measurements.md) | Phase 0 device measurements | Synthetic benchmarks. **Its headline conclusion was wrong** — see 07 §7.3 for why, and treat it as a lesson about synthetic tests. |
 | [06](06-phase1-cross-build.md) | Phase 1 cross build | Getting an armhf binary out of Docker. |
 | [07](07-phase5-performance.md) | Phase 5 performance | The resolution sweep, the 20 FPS cap, the vsync trap, the game-speed coupling bug. Ratios good, absolutes stale. |
-| [08](08-optimisation-opportunities.md) | Code-level optimisation opportunities | The catalogue of nine candidate optimisations, what each rests on, and the one result measured so far. |
-| [09](09-benchmark-harness.md) | Deterministic benchmark harness | The measurement rig built because 07 and 08 both hit the same ±13% wall. |
+| [08](08-optimisation-opportunities.md) | Code-level optimisation opportunities | The catalogue of nine candidate optimisations, what each rests on, and the three results measured so far. |
+| [09](09-benchmark-harness.md) | Deterministic benchmark harness | The measurement rig built because 07 and 08 both hit the same ±13% wall. Validated, and ABBA confirmed in §9.8. |
 
 `tools/ccscan.py` is a helper used by report 08 to enumerate Fast3D colour-combiner variants.
 

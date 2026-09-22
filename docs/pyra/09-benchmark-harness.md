@@ -1,6 +1,8 @@
 # Report 9 — A deterministic benchmark harness
 
-> **Status: validated on hardware 2026-09-21. It resolves 0.40%, against the ±13% it replaces.**
+> **Status: validated on hardware 2026-09-21, and again across a reboot on 2026-09-22. It
+> resolves 0.26-0.40% depending on how warm the machine starts, against the ±13% it replaces.
+> ABBA counterbalancing confirmed working in §9.8.**
 > Ten identical segments spread 1.15% peak-to-peak while the die went 59 °C → 81 °C and the
 > clock throttled 1.5 → 1.25 GHz. Full numbers in §9.7.
 
@@ -254,3 +256,28 @@ rather than changing what is inside it.
 35.73 FPS here against report 7's 28.7 FPS at the same resolution is **not** a 24% improvement.
 This scene is frozen, so `Play_Update` never runs — no actors, no collision, no AI — and audio
 has since moved off the CPU. It is a different workload. Do not quote it as a gameplay figure.
+
+## 9.8 The rig across a reboot, and ABBA's first real test
+
+§9.7's repeatability check ran both arms identical, which proved the rig quiet but left the ABBA
+counterbalancing unexercised — the pairing had nothing to cancel. The first real A/B (report 8
+§8.12, 2026-09-22, after a power-down, a charge and a fresh boot on the same m4 kernel) exercised
+it.
+
+**Cross-day reproducibility: 0.22%.** The linear arm measured 28046.9 µs against §9.7's
+27985.8 µs — across a reboot, a different ambient, and a cold start at 46.1 °C instead of 59.3 °C.
+
+**ABBA holds.** With a 6051 µs effect present and worse thermal drift than §9.7 saw, the pair
+standard deviation was 87.40 µs — indistinguishable from §9.7's 89.97 µs, which was measured with
+*no* effect at all. The five pair deltas were −17.71, −17.99, −18.05, −17.51, −17.47%: same sign,
+spread 3.2% of the effect. The drift did not leak into the pairs. That is the evidence §9.7 could
+not supply.
+
+**Resolution varies with how warm the machine starts.** Run 1 (cold, 46.1 °C) gave
+`mde_us=108.66` on a 28 ms frame, 0.39%. Run 2, started warm at 63.6 °C, gave `mde_us=71.52`,
+**0.26%**. Starting warm is worth about a third of the rig's error.
+
+**Warm-up is still the limiting factor.** 16000 frames (~7.5 min) was not enough from a cold
+boot: the linear arm drifted 1.44% across run 1 while the die climbed 46.1 → 76.8 °C. For a small
+effect that would matter even though ABBA cancels the linear component. The cheap fix is to run
+something on the device before benchmarking rather than to keep raising `SOH_BENCH_WARMUP`.

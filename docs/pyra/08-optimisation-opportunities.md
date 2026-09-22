@@ -240,9 +240,9 @@ what the code change alone recovers. Current status is in the last column.
 
 | # | Item | Tier | Est. gain | Risk | Upstreamable | Status |
 |---|---|---|---|---|---|---|
-| 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | large → **revised down**, §8.9 | low | yes | **next to screen** |
-| 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | screened by the same test |
-| 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes | confidence lowered, §8.10 |
+| 1 | Filtering into shader key, not a uniform branch (§8.2) | 1 | **small** — see §8.12 | low | yes | screened; the win is a default, not the refactor |
+| 2 | Kill dependent texture reads via `GL_CLAMP_TO_EDGE` (§8.3) | 1 | largest / least certain | medium | yes | **premise confirmed, §8.12** — now the top candidate |
+| 3 | Native texture formats instead of RGBA8888 (§8.4) | 1 | moderate–large | low | yes | confidence lowered again, §8.12 |
 | 4 | `GL_EXT_discard_framebuffer` (§8.5) | 2 | **measured: none (§8.10)** | very low | device-specific | done, no gain |
 | 5 | Conditional `mod()` in 1-cycle variants (§8.5) | 2 | small | very low | yes | now measurable, §8.9 |
 | 6 | `int` → `vec2` size uniforms (§8.5) | 2 | small | none | yes | now measurable, §8.9 |
@@ -250,8 +250,10 @@ what the code change alone recovers. Current status is in the last column.
 | 8 | Program binary cache (§8.6) | 3 | hitching only | low | device-specific | not attempted |
 | 9 | NEON for the three scalar audio routines (§8.6) | 3 | heat, not FPS | low | yes | still live — see §8.11 |
 
-The one measurement to take next is `gSettings.TextureFilter` 0 vs 1 on the report 9 harness.
-It needs no code, and its outcome decides items 1, 2 and 3 together — see §8.9.
+~~The one measurement to take next is `gSettings.TextureFilter` 0 vs 1 on the report 9 harness.~~
+**Taken — see §8.12.** Three-point filtering costs 17.75% of frame time; nearest buys nothing
+over bilinear. Item 2's premise survived it, item 1's code change is confirmed small, and the
+large lever turned out to be a settings default rather than any of the nine items.
 
 ## 8.9 Measurement discipline
 
@@ -432,3 +434,84 @@ CPU-side saving *less* likely to show up as frame rate, not more.
 
 So item 9 stays where it is — Tier 3, worth doing for thermal headroom and battery, not as a
 performance fix — and the reasoning behind that placement is now firmer rather than weaker.
+
+## 8.12 Result: three-point filtering costs 17.75% of frame time
+
+Measured 2026-09-22 on the report 9 harness, Kokiri Forest (scene 85, entrance `0x00EE`), static
+scene, 640×360 game framebuffer, 5 ABBA pairs of 600 frames each.
+
+### Run 1 — `FILTER_THREE_POINT` (0) against `FILTER_LINEAR` (1)
+
+| Arm | Mean frame | FPS |
+|---|---|---|
+| 0 — three-point | 34098.2 µs | 29.33 |
+| 1 — linear | 28046.9 µs | 35.65 |
+| **delta** | **6051.3 µs** | **+6.33 FPS** |
+
+`paired n=5 mean_delta_us=-6051.28 sd_us=87.40 t=-154.818 df=4`, against `mde_us=108.66`. The
+effect is **56× the detection threshold**. As a fraction of the three-point frame it is
+**17.75%**; expressed as a speed-up over three-point it is **+21.6%**.
+
+`FILTER_THREE_POINT` is the shipped default — `libultraship/src/fast/Fast3dWindow.cpp:107`
+initialises `CVAR_TEXTURE_FILTER` to it.
+
+### Run 2 — `FILTER_LINEAR` (1) against `FILTER_NONE` (2)
+
+| Arm | Mean frame | FPS |
+|---|---|---|
+| 1 — linear | 28063.5 µs | 35.63 |
+| 2 — nearest | 28036.8 µs | 35.67 |
+
+`paired n=5 mean_delta_us=-26.74 sd_us=57.53 t=-1.039 df=4`, against `mde_us=71.52` (0.26%).
+**No effect.** Nearest buys nothing over bilinear, so it costs quality for no gain and is off
+the table.
+
+### What the pair of results means
+
+Run 2 is what makes run 1 interpretable. Bilinear reads four texels where nearest reads one, and
+that difference is unmeasurable — because the SGX texture unit filters in fixed-function hardware,
+so the extra taps never become shader work. Three-point costs 17.75% because Fast3D emulates it
+in the fragment shader: three `texture2D` *instructions* plus `fract`/`step`/`sign`/`abs` per
+texture unit (`default.shader.fs:68-84`), six fetches in 2-cycle mode where bilinear issues two.
+
+So the expensive thing is **shader-issued fetch instructions and the ALU around them**, not
+memory traffic. That bears on three items:
+
+- **Item 2 (dependent texture reads, §8.3) survives.** §8.9 said this measurement would kill
+  item 2's premise if collapsing three fetches to one moved nothing. It moved a great deal, so
+  fragment fetch cost is confirmed as a real constraint on this part.
+- **Item 3 (native texture formats, §8.4) is weakened, but not refuted.** Its argument is
+  footprint and bandwidth. Run 2 shows the texture unit's own taps are free, which is evidence
+  against a *bandwidth* bottleneck — but it says nothing about the working-set effect of halving
+  every texture, because both arms used the same RGBA8888 textures. Treat item 3 as still open
+  and lower confidence.
+- **Item 1 (shader-variant key, §8.2) is confirmed small, as §8.9 predicted.** 17.75% is the
+  gain from not wanting three-point at all. The code rework does not deliver that; it recovers
+  only the flattening penalty on tiles the N64 marked point-filtered, which in OoT is mostly HUD.
+  The large lever here is a default, not a refactor.
+
+### This is a fidelity trade, and it should not be fixed by changing the default
+
+Three-point is the N64's actual filter and upstream chose it deliberately. Switching
+`Fast3dWindow.cpp:107` would put a device-specific preference into shared code for every platform,
+which is exactly the kind of change this port is supposed to avoid. The 17.75% argues for:
+
+1. A **Pyra default profile** shipping `gSettings.TextureFilter=1`, leaving upstream's default and
+   the user's ability to change it untouched.
+2. **Saying so in the menu.** On this hardware the setting is worth 6 FPS and its description does
+   not hint that it is the most expensive option on the page.
+
+Not yet checked: whether linear introduces visible seams on this content, which would make the
+trade worse than the frame time suggests. That is a look-at-the-screen judgement, not a
+measurement.
+
+### Caveats on the number itself
+
+- **17.75% is viewpoint-specific.** It was taken at the treehouse spawn — camera 139 units from
+  Link, facing him, little scene behind. A fragment-cost percentage depends on what else is in
+  the frame, and this frame is not representative. The magnitude is far too large for the sign to
+  change, but the figure should not be quoted as scene-independent. The fixture needs a viewpoint
+  with real depth before item 2 or 3 is judged on it.
+- **16000 warm-up frames is still not thermal equilibrium.** The linear arm drifted
+  27836 → 28236 µs across run 1 (1.44%) as the die went 46.1 → 76.8 °C. That drift is 3.6× the
+  rig's resolution; ABBA cancelled it, the machine was not steady.
