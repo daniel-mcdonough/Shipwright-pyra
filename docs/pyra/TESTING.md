@@ -174,12 +174,28 @@ trap 3.
 ## 4. Reading the output
 
 ```
-BENCH segment 3 arm=0 frames=600 mean_us=30580.2 ... mean_fps=32.701 temp_c=81.5->80.6 fb=640x360->640x360
+BENCH config settle=400 warmup=600 measure=600 static=1 targetFps=240 uncap=1
+BENCH segment 0 arm=single frames=600 mean_us=18382.7 ... temp_c=75.5->76.0 fb=640x360->640x360 swap_us=5039.8 finish_us=0.0 period_us=21113.7 period_fps=47.36
+BENCH work 0 draws=167.3 tris=776.3 tex_uploads=0.00 ... shader_loads=63.0 fb_reallocs=0.00
 BENCH pair 1 a_us=30580.2 b_us=30573.1 delta_us=-7.1 delta_pct=-0.02
 BENCH paired n=8 mean_delta_us=-20.54 sd_us=164.36 t=-0.353 df=7
 BENCH mde_us=137.22 (2.365*se at df=7)
+BENCH period pair 1 ...
+BENCH period paired n=8 ...
+BENCH period mde_us=...
 ```
 
+- **`period_us` is the frame rate; `mean_us` is not.** `mean_us` times only
+  `DrawAndRunGraphicsCommands` (interpreter, GL submission, swap). `period_us` is start-of-frame
+  to start-of-frame, so it also contains `Play_Draw` and everything else the game does between
+  frames — 2.7 ms at Hyrule Field, 5.7 ms at the Market. It matches the game's own `LUS_FPS_LOG`
+  counter to within 0.1 fps. Read the `period` paired lines for "did the game get faster"; read
+  the unprefixed ones for "did drawing get cheaper".
+- `swap_us` is time blocked in `SDL_GL_SwapWindow`. `finish_us` is non-zero only with
+  `SOH_BENCH_FINISH=1`, which calls `glFinish` first: whatever is left in `swap_us` after that is
+  presentation, not rendering. ~5 ms of every frame is (2026-09-23, both fixtures).
+- `BENCH work` is what the interpreter handed to GL per frame, averaged. Use it to check a change
+  did what it claims — fewer draws, no texture uploads — rather than inferring from the time.
 - `delta` is **arm B minus arm A**, so negative means B is faster.
 - `|t| > 2.4` or so is a real effect at these sample sizes. `t = -23.7` is not a subtle result;
   `t = -0.35` is nothing.
@@ -261,7 +277,16 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
    `bench.txt` — a quarter-hour for "no results". Check the first soak lines of `run.log`; if the
    temperature has flattened below target, lower `SOH_BENCH_SOAK_C` to where it flattened and say
    so in the result. Set `PYRA_TIMEOUT=1800` for any soaked A/B.
-10. **`Failed flush to file ... Bad file descriptor`** in every log is a known open bug
+10. **The frame cap was never off, until `uncap=1`.** The harness set the target FPS to 240 once;
+    `Graph_ProcessGfxCommands` sets it back to `InterpolationFPS` on *every tick*
+    (`OTRGlobals.cpp:1837`). So every run before 2026-09-23 23:20 ran capped at 30 FPS, with the
+    limiter's sleep inside the timed window. A frame that fit under the cap then read as "33.3 ms
+    minus the untimed work" whatever the change did — Hyrule Field showed a flat ~30.7 ms against
+    4x fewer pixels, a 20% slower CPU and a 4x smaller window, when uncapped it runs at 21.1 ms.
+    Every Hyrule Field null in report 8 §8.18 is this artifact. Market-type results, where frames
+    overran the cap, were real but distorted. The config line now says `uncap=`; if it says `0`,
+    or is missing, the result is capped. `SOH_BENCH_UNCAP=0` reproduces the old behaviour.
+11. **`Failed flush to file ... Bad file descriptor`** in every log is a known open bug
    (report 10), not a symptom of your change.
 
 ## 6. Recipes

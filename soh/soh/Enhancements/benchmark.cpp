@@ -18,6 +18,7 @@
 #include <ship/Context.h>
 #include <ship/window/Window.h>
 #include <fast/Fast3dWindow.h>
+#include <fast/interpreter.h>
 #include <libultraship/bridge.h>
 #include <spdlog/spdlog.h>
 
@@ -99,6 +100,13 @@ struct Config {
     std::string outPath;
     bool exitWhenDone = true;
     int targetFps = 240; // high enough that the frame limiter never sleeps
+    // Graph_ProcessGfxCommands calls SetTargetFps(InterpolationFPS) on every game tick
+    // (OTRGlobals.cpp), so setting targetFps once is overwritten at the next tick and the 30 FPS
+    // limiter sleeps inside the timed window after all. Every run before this existed measured
+    // "33.3 ms minus the untimed work" whenever a frame fitted under the cap - which is why a
+    // light scene showed no response to anything. Uncapping re-asserts the target at the start of
+    // every frame. 0 reproduces the old, capped behaviour for comparison with earlier numbers.
+    bool uncap = true;
 
     // Authoring mode. Nothing is frozen, nothing is measured and no override is applied: the
     // game just runs, and the viewpoint is logged every couple of seconds. Walk the player to
@@ -247,6 +255,15 @@ struct Segment {
     // last measured frame. An arm that changes resolution and silently fails to looks exactly like
     // a scene that is not fill-bound, so the size is evidence rather than assumed from the CVar.
     uint32_t fbStartW = 0, fbStartH = 0, fbEndW = 0, fbEndH = 0;
+    // Sums over the measured frames, divided by the frame count when reported. Draws and
+    // triangles are what the interpreter handed to GL; swap is the time blocked presenting.
+    uint64_t counters[BENCH_COUNTER_COUNT] = {};
+    uint64_t swapMicros = 0;
+    uint64_t finishMicros = 0;
+    // Start of one rendered frame to the start of the next: the timed window plus everything
+    // outside it - Play_Draw, the frozen Play_Update, audio hand-off. This is what the frame
+    // rate is made of; the timed window alone is not.
+    uint64_t periodMicros = 0;
 };
 
 using Clock = std::chrono::steady_clock;
@@ -255,6 +272,9 @@ Phase gPhase = Phase::WaitingForScene;
 int gPhaseFrames = 0;
 int gSegmentIndex = 0;
 Clock::time_point gFrameStart;
+Clock::time_point gPrevFrameStart;
+uint32_t gPeriodMicros = 0;
+Fast::Fast3dWindow* gWnd = nullptr;
 std::vector<Segment> gRunSegments;
 bool gInitialised = false;
 bool gPlayerMoved = false;
@@ -329,6 +349,10 @@ double TCrit95(size_t df) {
     return df <= n ? kT[df - 1] : 2.042;
 }
 
+double PerFrame(const Segment& seg, uint64_t sum) {
+    return seg.frameMicros.empty() ? 0.0 : (double)sum / (double)seg.frameMicros.size();
+}
+
 double MeanMicros(const std::vector<uint32_t>& v) {
     if (v.empty()) {
         return 0.0;
@@ -364,8 +388,9 @@ void WriteResults() {
     snprintf(line, sizeof(line), "BENCH config entrance=0x%04X age=%d dayTime=0x%04X night=%d\n", gCfg.entrance,
              gCfg.linkAge, gCfg.dayTime, gCfg.nightFlag);
     text += line;
-    snprintf(line, sizeof(line), "BENCH config settle=%d warmup=%d measure=%d static=%d targetFps=%d\n",
-             gCfg.settleFrames, gCfg.warmupFrames, gCfg.measureFrames, gCfg.staticScene ? 1 : 0, gCfg.targetFps);
+    snprintf(line, sizeof(line), "BENCH config settle=%d warmup=%d measure=%d static=%d targetFps=%d uncap=%d\n",
+             gCfg.settleFrames, gCfg.warmupFrames, gCfg.measureFrames, gCfg.staticScene ? 1 : 0, gCfg.targetFps,
+             gCfg.uncap ? 1 : 0);
     text += line;
     // Recorded because the render target size is the single biggest determinant of the number
     // above it, and because it is the thing most likely to differ silently between two runs.
@@ -392,19 +417,36 @@ void WriteResults() {
         const Segment& seg = gRunSegments[i];
         snprintf(line, sizeof(line),
                  "BENCH segment %zu arm=%s frames=%zu mean_us=%.1f median_us=%.1f p95_us=%.1f mean_fps=%.3f "
-                 "temp_c=%.1f->%.1f fb=%ux%u->%ux%u\n",
+                 "temp_c=%.1f->%.1f fb=%ux%u->%ux%u swap_us=%.1f finish_us=%.1f period_us=%.1f period_fps=%.2f\n",
                  i, seg.arm.c_str(), seg.frameMicros.size(), MeanMicros(seg.frameMicros),
                  MedianMicros(seg.frameMicros), PercentileMicros(seg.frameMicros, 0.95),
                  MeanMicros(seg.frameMicros) > 0.0 ? 1e6 / MeanMicros(seg.frameMicros) : 0.0,
                  seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0, seg.fbStartW, seg.fbStartH,
-                 seg.fbEndW, seg.fbEndH);
+                 seg.fbEndW, seg.fbEndH, PerFrame(seg, seg.swapMicros), PerFrame(seg, seg.finishMicros),
+                 PerFrame(seg, seg.periodMicros),
+                 PerFrame(seg, seg.periodMicros) > 0.0 ? 1e6 / PerFrame(seg, seg.periodMicros) : 0.0);
+        text += line;
+        // Per-frame means of the GL work the interpreter issued. Kept off the segment line so that
+        // line stays readable; the counters matter when asking what a frame is spent on.
+        snprintf(line, sizeof(line),
+                 "BENCH work %zu draws=%.1f tris=%.1f tex_uploads=%.2f tex_upload_kb=%.1f fb_binds=%.1f "
+                 "clears=%.1f fb_copies=%.2f fb_readbacks=%.2f shader_loads=%.1f fb_reallocs=%.2f\n",
+                 i, PerFrame(seg, seg.counters[BENCH_DRAWS]), PerFrame(seg, seg.counters[BENCH_TRIS]),
+                 PerFrame(seg, seg.counters[BENCH_TEX_UPLOADS]), PerFrame(seg, seg.counters[BENCH_TEX_UPLOAD_KB]),
+                 PerFrame(seg, seg.counters[BENCH_FB_BINDS]), PerFrame(seg, seg.counters[BENCH_CLEARS]),
+                 PerFrame(seg, seg.counters[BENCH_FB_COPIES]), PerFrame(seg, seg.counters[BENCH_FB_READBACKS]),
+                 PerFrame(seg, seg.counters[BENCH_SHADER_LOADS]), PerFrame(seg, seg.counters[BENCH_FB_REALLOCS]));
         text += line;
     }
 
     // Paired summary. Segments were emitted arm-major within each rep, so rep r arm a is at
     // index r * arms + a. Pairing within a rep is what makes this robust to thermal drift: both
     // arms of a pair are seconds apart rather than minutes.
-    if (ArmCount() == 2 && gRunSegments.size() >= 2) {
+    // Run once on the timed window (the historical metric, lines unprefixed) and once on the
+    // frame period ("period" prefix). Under the frame cap only the period means anything; uncapped
+    // they differ by the work outside the window, and a change that moves one but not the other
+    // says where it acted.
+    const auto pairedSummary = [&](const char* prefix, double (*metric)(const Segment&)) {
         std::vector<double> deltas;
         for (int r = 0; r < gCfg.reps; r++) {
             size_t i0 = (size_t)(r * 2);
@@ -415,11 +457,11 @@ void WriteResults() {
             // The arms swap order every other pair (see ArmIndexForSegment), so which one is A
             // is read from the recorded arm rather than assumed from the position.
             const bool firstIsA = gRunSegments[i0].arm == gCfg.abValues[0];
-            double a = MeanMicros(gRunSegments[firstIsA ? i0 : i1].frameMicros);
-            double b = MeanMicros(gRunSegments[firstIsA ? i1 : i0].frameMicros);
+            double a = metric(gRunSegments[firstIsA ? i0 : i1]);
+            double b = metric(gRunSegments[firstIsA ? i1 : i0]);
             deltas.push_back(b - a);
-            snprintf(line, sizeof(line), "BENCH pair %d a_us=%.1f b_us=%.1f delta_us=%.1f delta_pct=%.2f\n", r, a, b,
-                     b - a, a > 0.0 ? 100.0 * (b - a) / a : 0.0);
+            snprintf(line, sizeof(line), "BENCH %spair %d a_us=%.1f b_us=%.1f delta_us=%.1f delta_pct=%.2f\n", prefix,
+                     r, a, b, b - a, a > 0.0 ? 100.0 * (b - a) / a : 0.0);
             text += line;
         }
 
@@ -435,7 +477,7 @@ void WriteResults() {
             }
             double sd = std::sqrt(ss / (double)(deltas.size() - 1));
             double se = sd / std::sqrt((double)deltas.size());
-            snprintf(line, sizeof(line), "BENCH paired n=%zu mean_delta_us=%.2f sd_us=%.2f t=%.3f df=%zu\n",
+            snprintf(line, sizeof(line), "BENCH %spaired n=%zu mean_delta_us=%.2f sd_us=%.2f t=%.3f df=%zu\n", prefix,
                      deltas.size(), mean, sd, se > 0.0 ? mean / se : 0.0, deltas.size() - 1);
             text += line;
             // The smallest effect this design could have resolved, at the usual two-sided 5%
@@ -443,10 +485,15 @@ void WriteResults() {
             // and "no effect this rig could see". The critical value has to follow the actual
             // degrees of freedom: hardcoding df=4's 2.776 overstated the detectable effect by
             // 17% on an eight-pair run, which reads as a weaker rig than the one that ran.
-            snprintf(line, sizeof(line), "BENCH mde_us=%.2f (%.3f*se at df=%zu)\n", TCrit95(deltas.size() - 1) * se,
-                     TCrit95(deltas.size() - 1), deltas.size() - 1);
+            snprintf(line, sizeof(line), "BENCH %smde_us=%.2f (%.3f*se at df=%zu)\n", prefix,
+                     TCrit95(deltas.size() - 1) * se, TCrit95(deltas.size() - 1), deltas.size() - 1);
             text += line;
         }
+    };
+
+    if (ArmCount() == 2 && gRunSegments.size() >= 2) {
+        pairedSummary("", [](const Segment& seg) { return MeanMicros(seg.frameMicros); });
+        pairedSummary("period ", [](const Segment& seg) { return PerFrame(seg, seg.periodMicros); });
     }
 
     SPDLOG_INFO("\n{}", text);
@@ -644,6 +691,8 @@ extern "C" void Benchmark_Init(void) {
     gCfg.watch = EnvBool("SOH_BENCH_WATCH", gCfg.watch);
     gCfg.fullscreen = EnvBool("SOH_BENCH_FULLSCREEN", gCfg.fullscreen);
     gCfg.targetFps = EnvInt("SOH_BENCH_TARGET_FPS", gCfg.targetFps);
+    gBenchFinish = EnvInt("SOH_BENCH_FINISH", 0);
+    gCfg.uncap = EnvBool("SOH_BENCH_UNCAP", gCfg.uncap);
 
     gCfg.havePos = ParseVec3("SOH_BENCH_POS", gCfg.pos);
     gCfg.haveEye = ParseVec3("SOH_BENCH_EYE", gCfg.eye);
@@ -730,7 +779,19 @@ extern "C" void Benchmark_FrameBegin(void) {
     if (!gCfg.enabled || gPhase == Phase::Done) {
         return;
     }
+    memset(gBenchCounters, 0, sizeof(gBenchCounters));
+    gBenchSwapMicros = 0;
+    gBenchFinishMicros = 0;
+    if (gCfg.uncap && gWnd != nullptr) {
+        gWnd->SetTargetFps(gCfg.targetFps);
+    }
     gFrameStart = Clock::now();
+    gPeriodMicros = gPrevFrameStart.time_since_epoch().count() == 0
+                        ? 0
+                        : (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(gFrameStart -
+                                                                                          gPrevFrameStart)
+                              .count();
+    gPrevFrameStart = gFrameStart;
 }
 
 extern "C" void Benchmark_FrameEnd(void) {
@@ -746,7 +807,9 @@ extern "C" void Benchmark_FrameEnd(void) {
         auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
         if (wnd != nullptr) {
             // Raise the frame cap so SyncFramerateWithTime never sleeps. Without this the
-            // harness would faithfully measure the frame limiter.
+            // harness would faithfully measure the frame limiter. The game lowers it again every
+            // tick, so FrameBegin repeats this when uncapping; see Config::uncap.
+            gWnd = wnd.get();
             wnd->SetTargetFps(gCfg.targetFps);
             // Window.Fullscreen.Enabled is read in Fast3dWindow::Init, which has already run by
             // the time Benchmark_Init is reached, so the window is resized here instead. A run
@@ -859,6 +922,12 @@ extern "C" void Benchmark_FrameEnd(void) {
         case Phase::Measuring:
             ApplyCameraOverride();
             gRunSegments.back().frameMicros.push_back(micros);
+            for (int k = 0; k < BENCH_COUNTER_COUNT; k++) {
+                gRunSegments.back().counters[k] += gBenchCounters[k];
+            }
+            gRunSegments.back().swapMicros += gBenchSwapMicros;
+            gRunSegments.back().finishMicros += gBenchFinishMicros;
+            gRunSegments.back().periodMicros += gPeriodMicros;
             if (gPhaseFrames == 0) {
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
