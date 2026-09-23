@@ -3,7 +3,7 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-22**, after staging item A for measurement.
+Last revised **2026-09-22**, after measuring item A on the device.
 
 ## Ground rules that keep being learned the hard way
 
@@ -38,14 +38,13 @@ untested and not needed (section 3).
 
 ## 2 — Performance work, ranked
 
-Of the nine catalogued items: 1 measured small, **3 closed** (1, 2, 7), 1 implemented at no gain
-(4), 1 premise weakened (3). What is actually left:
+Of the nine catalogued items: **2 measured and won** (5, 6 — §8.17, 2.4% together), **3 closed**
+(1, 2, 7), 1 implemented at no gain (4), 1 premise weakened (3). What is actually left:
 
 ### Worth doing
 
 | | Item | Expected | Why it is here |
 |---|---|---|---|
-| **A** | **Items 5 + 6 as one combined A/B** — eliding the combiner's no-op `mod()`, and `int` → `vec2` size uniforms (§8.5) | small each, now resolvable | **Written and staged; needs the device.** See "Item A is staged" below. |
 | **B** | **Item 8 — program binary cache** (§8.6) | hitching, not FPS | `GL_OES_get_program_binary` and `GL_IMG_program_binary` are both present; 317 shader variants game-wide. The playbook says "take it, for feel". **The one item a probe cannot gate**, because its benefit is not steady-state frame time — the fixture will report zero and be right. Judge it by shader-compile stalls on scene entry, not by the rig. |
 | **C** | **Item 9 — NEON the three scalar audio routines** (§8.6, §8.11) | heat, not FPS | §8.11 undersells this. The part is fanless and walks 1.5 → 0.75 GHz under sustained load; CPU work removed is thermal headroom returned, which shows up as frame time much later in a session than any benchmark run measures. |
 
@@ -66,124 +65,37 @@ Of the nine catalogued items: 1 measured small, **3 closed** (1, 2, 7), 1 implem
 - **Item 4, `GL_EXT_discard_framebuffer`.** Implemented, measured at no gain (§8.10). Decide
   keep-or-revert on commit `e1fae43d`; it is dead weight either way, not a regression.
 
-### Item A is staged
+### Item A is measured and done — 2.4%, pending one decision
 
-Both halves are implemented behind `CVAR_SHADER_OPTS`, a bitmask so the pair can be split
-afterwards without a second CVar: bit 0 `SHADER_OPT_ELIDE_NOOP_WRAP`, bit 1
-`SHADER_OPT_FLOAT_TEX_SIZE`. Default 0, which is the shader upstream generates. The harness knows
-to drop the shader cache when this is the A/B CVar, the same as the filtering mode.
+**Measured 2026-09-22** (§8.17), five ABBA pairs per arm at the §9.9 fixture, CPU pinned, at
+thermal equilibrium via the new soak:
 
-**To run it** (device must be free; the CPU pin and ABBA are the harness's):
+| arm | | mean Δ | t (df=4) | effect |
+|---|---|---|---|---|
+| `1` | item 5, elide the no-op `mod()` | **−696.4 µs** | −12.45 | **−2.37%** |
+| `2` | item 6, `int` → `vec2` size uniforms | −158.8 µs | −4.06 | −0.54% |
+| `3` | both | **−704.2 µs** | −11.04 | **−2.40%** |
 
-```sh
-./scripts/pyra/build.sh build -j"$(nproc)"          # done
-cmake --build build-cmake --target GenerateSohOtr   # done - the shader lives in soh.o2r, not the binary
+34.15 → 34.99 FPS at the fixture. Visually identical to the shipped shader — `shotcheck.sh`
+against an in-session control (§9.11). The two halves are not additive: the wrap elision is
+essentially the whole win.
 
-# soh-bench2/soh.o2r is a symlink into soh-pyra. Writing through it would replace the real
-# install's assets with a benchmark build's. Break the link first, deliberately.
-ssh pyra@pyra.local 'rm -f soh-bench2/soh.o2r'
-scp soh.o2r pyra@pyra.local:soh-bench2/soh.o2r
+**The decision below is yours: `gSettings.ShaderOpts` still defaults to 0, so none of this is on.**
+Recommend defaulting it to **3**. Both halves are positive and neither changes the picture; item 6
+earns little per fragment but removes a `glUniform` per draw, and keeping both on means one code
+path gets exercised rather than two. Nothing else in the catalogue that is not a fidelity trade
+comes close to 2.4%.
 
-export PYRA_HOST=pyra@pyra.local PYRA_DIR=/home/pyra/soh-bench2
-./scripts/pyra/bench.sh deploy
-./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 \
-    SOH_BENCH_ENTRANCE=0x00EE SOH_BENCH_POS=-592.8,0.0,-195.9 SOH_BENCH_YAW=0x369E \
-    SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400 \
-    SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000
-```
+Two caveats before it ships as a default:
 
-`reps` defaults to 5, which is the ten segments every other run in these documents used. Then
-`0 1` and `0 2` if the pair clears 0.57%, to find out which half earned it.
-
-**`SOH_BENCH_SOAK_C` is new and the sequence above needs it.** Warm-up holds until the die
-reaches that temperature rather than for a fixed number of frames, so all three runs start
-measuring at one temperature instead of at whatever the part happened to be when each launched.
-Without it the three runs are each internally valid and not comparable with each other — 76 °C is
-the bottom of the equilibrium band report 7 §7.1 measured, and §8.14 reached 76.8 °C in about
-16000 frames from cold, which is where `SOH_BENCH_WARMUP_MAX=20000` comes from. Runs two and
-three pay nothing: the device is already there. Every segment line now reports
-`temp_c=start->end`, so a run that gave up before reaching the target says so in its own results.
-
-**The visual check runs on the same harness**, before the benchmark, with three variables changed.
-`SOH_BENCH_EXIT=0` leaves the window up instead of closing it; the short segment lengths flip
-between arms every few seconds instead of every twenty-five; and because the scene is frozen and
-the camera pinned, *the two arms should be the same picture*. Watch the screen across a few
-segment boundaries:
-
-```sh
-# EXIT=0 means the harness never closes the window, so the run ends at PYRA_TIMEOUT instead.
-# Four short pairs is about eighty seconds of flipping; the rest of the timeout is looking time.
-# No SOH_BENCH_SOAK_C here: this run is looking at colours, not timing anything, and soaking
-# first would only mean waiting six minutes to start looking. It does leave the part warm for
-# the benchmark that follows, which is the right way round.
-PYRA_TIMEOUT=240 ./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 \
-    SOH_BENCH_ENTRANCE=0x00EE SOH_BENCH_POS=-592.8,0.0,-195.9 SOH_BENCH_YAW=0x369E \
-    SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400 \
-    SOH_BENCH_FRAMES=150 SOH_BENCH_SEG_WARMUP=60 SOH_BENCH_REPS=4 SOH_BENCH_EXIT=0
-```
-
-A correct elision is invisible: `mod()` then `clamp()` and `clamp()` alone agree to within a
-float rounding on values that were already in range. A wrong one is not subtle — a channel that
-should have wrapped to near-zero saturates to full instead, so the failure is a patch of the
-scene changing colour in step with the arm, not a shade nobody can call. If nothing flickers,
-run the benchmark above.
-
-This is an eyeball test and it is deliberately not automated. A `glReadPixels` capture and a
-pixel diff would be stricter and would make it repeatable, but there is no capture path in the
-harness today and the swap happens inside `Fast3dWindow::DrawAndRunGraphicsCommands` — adding one
-means a hook before the swap, not a call from `Benchmark_FrameEnd`, where the back buffer is
-already undefined on a tile-based renderer. Worth building if shader changes become routine.
-
-**The shader is an asset, not part of the binary.** `default.shader.fs` is copied out of
-libultraship into `soh/assets/custom/shaders/` and packed into `soh.o2r` at build time, so
-deploying `soh.elf` alone leaves the device running the old template. A binary that finds the old
-template logs `soh.o2r is older than this binary` and falls back to the int uniforms rather than
-rendering with unset texture sizes — but the wrap elision would then silently measure nothing, so
-check for that line before believing a null.
-
-**What was learned writing it, before any measurement:**
-
-- §8.5's premise was wrong. The wrap is not a no-op in 1-cycle mode — one cycle computes
-  `(A-B)*C+D`, which reaches `[-1,2]` — it is a no-op when the combiner *reduced* to `D`, `A*C` or
-  `mix(B,A,C)`, which is a different and cycle-count-independent test. Guarding on `o_2cyc` as the
-  report asked would have changed what the screen shows. The corrected analysis is in §8.5 and in
-  `CombinerCycleInRangeFor`.
-- That test is worth more than the report's version: it also covers the second wrap, between the
-  two cycles, which §8.5 never mentions.
-- **Almost every combiner in the game qualifies.** This was written down as "not knowable from
-  the host", which was wrong twice over: `oot.o2r` is on this machine, and `tools/ccscan.py`
-  already decodes the commands that answer it. `tools/wrapscan.py` reproduces `GenerateCC` and
-  the range test over the archive:
-
-  | assumption | unique variants | `G_SETCOMBINE` commands |
-  |---|---|---|
-  | 1-cycle, alpha on | 46/162 — 28.4% | 11305/11878 — **95.2%** |
-  | 1-cycle, alpha off | 93/162 — 57.4% | 11544/11878 — 97.2% |
-  | 2-cycle, alpha on | 103/224 — 46.0% | 10914/11878 — 91.9% |
-  | 2-cycle, alpha off | 150/224 — 67.0% | 11510/11878 — 96.9% |
-
-  Alpha-on is the conservative row. The two columns disagree because the combiners the game
-  *reaches for* are the simple ones: under a third of the distinct shaders qualify, but they
-  account for nineteen commands in twenty. The tool agrees with report 5 §5.6 exactly on the two
-  figures that report already published — 11,878 commands, 317 unique combine modes — which is
-  the check that it is decoding the same thing.
-
-  **This is a static count, not a fragment-weighted one.** A combiner set once for a full-screen
-  quad counts the same as one set for four pixels of HUD, and the display list does not say
-  which. It bounds how *broadly* the elision applies, not what it is worth. Each compiled variant
-  still logs its verdict when bit 0 is on, which is the check that the runtime agrees with this.
-- Item 6 also removes a `glUniform` call per draw, so a win there is not attributable to the
-  per-fragment conversion alone — and the PowerVR compiler may hoist that conversion into the
-  secondary attribute program anyway, making it zero. See §8.5.
-
-Checked without the device by `tools/offline-shader-checks.sh`: four template expansions rendered
-through the real prism processor, and a twelve-case table run against the range functions
-extracted verbatim from `gfx_opengl.cpp`. Both are in the repo rather than in a scratchpad, which
-is where the last staged patch went to be forgotten.
-
-Neither is a substitute for looking at the screen — **the first device run should be a visual
-check, not a benchmark.** If the analysis is wrong the failure is a colour that saturates where it
-should have wrapped, which the harness cannot see and a screenshot can.
+- **This is a frozen frame at one fixture.** Ground rule 4 applies: confirm in real play, and on a
+  second scene, before treating 2.4% as the game's number. The wrap elision's share depends on
+  which combiners a scene reaches for, and `wrapscan.py`'s 95.2% is a static command count, not a
+  fragment-weighted one.
+- **The shader is an asset.** Shipping this means shipping a matching `soh.o2r`; a binary that
+  meets an old archive logs `soh.o2r is older than this binary` and falls back. The benchmark
+  install's `soh.o2r` is no longer a symlink into `~/soh-pyra` — it is a real file, deliberately,
+  and the real install is still on the old archive.
 
 ## 3 — Measurement debt
 
@@ -196,7 +108,10 @@ should have wrapped, which the harness cannot see and a screenshot can.
       virtual display are still missing, and llvmpipe would answer "did the colours change" and
       nothing else. Worth an hour only if device time becomes the bottleneck.
 - [ ] **Re-baseline report 7's absolute FPS figures** on the report 9 harness, **with
-      `SOH_BENCH_SOAK_C`**. The fixture and the CPU pinning landed; the absolutes themselves were
+      `SOH_BENCH_SOAK_C`**. *Partly discharged:* §8.17 is the first absolute taken at a recorded
+      temperature — **29,282 µs / 34.15 FPS** at the §9.9 fixture, unmodified shader, every segment
+      between 80.6 and 83.6 °C. Report 7's own gameplay figures are still un-retaken, and this one
+      is a frozen frame, so it does not replace them. The fixture and the CPU pinning landed; the absolutes themselves were
       never re-taken, so every number in report 7 is still stale and still quoted. Absolutes are
       exactly the measurement the soak exists for: until this rig started recording temperature
       (§9.10) no absolute figure in any of these documents came with the die temperature it was
@@ -207,15 +122,19 @@ should have wrapped, which the harness cannot see and a screenshot can.
 
 ## 4 — Decisions waiting on the device's owner
 
+- [ ] **Default `gSettings.ShaderOpts` to 3.** Measured at −2.40% and visually identical
+      (§8.17); it is off by default, so the win is not being had. Recommended, with the two
+      caveats in section 2 — confirm in real play first, and ship a matching `soh.o2r`.
 - [ ] **`InterpolationFPS`**: the speed/smoothness trade (§7.5, §7.5b). 20 gives correct speed and
       a choppier picture; 30 gave 0.92× slow motion at report 7's 27.7 FPS. **That number is stale
       and the trade may have dissolved** — the fixture now runs 33.9 FPS on the shipped
       `FILTER_LINEAR` default (§8.14), which is above 30 and would make `InterpolationFPS = 30`
       correct speed *and* smoother. Do the re-baseline in section 3 before putting this to anyone;
-      it may already be a free choice rather than a trade. **33.9 is 3.9 FPS of margin over the
-      cap and was measured at an unrecorded temperature**, which is the one place where that
-      omission actually decides something: if it was taken early in a run it is a cold number and
-      the margin may not survive a soaked re-measurement.
+      it may already be a free choice rather than a trade. **Now measured at a known
+      temperature: 34.15 FPS at 80.6–83.6 °C** (§8.17, unmodified shader), and 34.99 with item A
+      on. So the margin over the 30 cap survives equilibrium at this fixture, and the trade does
+      look dissolved — but this is a frozen frame with `Play_Update` skipped, which is precisely
+      the measurement that flatters a speed-cap question. Confirm in real play before deciding.
 - [ ] **The staged `GfxSpVertex` hoist patch** — apply or drop. **Warning: it was staged in a
       session scratchpad and is not in the repo.** Nothing named `hoist.py` survives here, so this
       is "rewrite or forget", not "apply or drop". Treat it as forgotten unless someone has it.

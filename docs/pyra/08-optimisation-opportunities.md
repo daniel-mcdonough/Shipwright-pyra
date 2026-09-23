@@ -808,3 +808,55 @@ Item 1 was written as "large but unquantified" from the same reading habit that 
 (§8.15): the shader source was read, and the C++ that decides which shader source exists was not.
 Three of the nine items have now been closed by reading the call site. That is not a coincidence,
 it is a method failure, and the fix is the one §8.9 already named — probe before estimating.
+
+## 8.17 Result: items 5 + 6 measured — 2.4%, and almost all of it is the wrap
+
+Measured 2026-09-22 on the report 9 harness at the §9.9 fixture, CPU pinned, five ABBA pairs per
+arm, with the new thermal soak (§9.10) so every run started measuring at equilibrium. Every
+segment ran between 80.6 and 83.6 °C.
+
+| arm | what it turns on | mean Δ | sd | t (df=4) | MDE | effect |
+|---|---|---|---|---|---|---|
+| `1` | item 5, elide the no-op `mod()` | **−696.4 µs** | 125.1 | −12.45 | 155.5 | **−2.37%** |
+| `2` | item 6, `int` → `vec2` size uniforms | −158.8 µs | 87.4 | −4.06 | 108.7 | −0.54% |
+| `3` | both | **−704.2 µs** | 142.7 | −11.04 | 177.4 | **−2.40%** |
+
+29,282 → 28,578 µs, so 34.15 → 34.99 FPS at this fixture. Both halves are real — item 6 clears its
+own MDE, if only just — but they are **not additive**: 696 + 159 = 855 against a combined 704. The
+wrap elision is essentially the whole win, and turning item 6 on as well buys nothing measurable
+on top of it. Item 6 is worth keeping for the `glUniform` call it removes per draw rather than for
+anything it does per fragment; §8.5's note that the PowerVR compiler may already hoist the
+conversion looks right.
+
+This is the largest confirmed win in the catalogue that is not a fidelity trade, and it is
+invisible: §8.5's item 5 was ranked "small".
+
+**The premise in §8.5 was wrong and the correction is what made the item big.** The report said
+the wrap is a no-op in 1-cycle mode. It is not — one cycle computes `(A-B)*C+D`, which reaches
+`[-1,2]`. It is a no-op when the combiner *reduced* to `D`, `A*C` or `mix(B,A,C)`, which is a
+different test, independent of cycle count, and one that also covers a second wrap between the two
+cycles that §8.5 never mentions. `tools/wrapscan.py` puts 95.2% of the `G_SETCOMBINE` commands in
+`oot.o2r` in the qualifying set (28.4% of distinct variants — the game reaches for the simple
+combiners). Implementing the report as written would have guarded on `o_2cyc` and changed what the
+screen shows.
+
+### It was checked against the screen, and the first three checks were wrong
+
+`scripts/pyra/shotcheck.sh` (report 9 §9.11) grabs frames off the device for each arm and diffs
+them. Its first three runs all reported large, structured differences — Link's shield losing its
+crest, his tunic changing colour — and all three were artefacts:
+
+- **Leaked processes.** The game catches `SIGTERM` and shuts down slowly, so `pkill` returned
+  before the process died and each run launched alongside its predecessors. Eight instances
+  accumulated, all fullscreen, and `xwd -root` photographs whichever is on top — so the "arms"
+  being compared were sometimes two launches of the same arm, and sometimes an arm from three runs
+  earlier.
+- **No control.** Two launches of the *same* arm differ by ~10,000–18,000 pixels at this fixture,
+  with a worst channel near 240, because particles and fairies come to rest in different places
+  each time and then hold still there for the whole frozen run. A mask built from frames within
+  one launch does not remove them. Without a null, any pixel count looks alarming.
+
+With the leak fixed and a third run of arm A as an in-session control, all four comparisons land
+on the floor: control 17,557 pixels, both-arms 18,020 (and in an earlier clean session, control
+10,004 against 9,999 for item 5, 9,809 for item 6, 9,973 for both). **The arms are visually
+identical.** The tool now always captures the control, because the number means nothing without it.

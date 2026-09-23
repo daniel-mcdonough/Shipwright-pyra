@@ -429,3 +429,39 @@ repeatable starting point; it does not hold a temperature. Ambient is also unrec
 uncontrolled, so a run in a warm room and a run in a cold one reach 76 °C at different rates and
 sit at different equilibria. Comparing absolute frame times across sessions remains weaker than
 comparing arms within one.
+
+## 9.11 Checking the screen, not just the clock: `shotcheck.sh`
+
+The harness answers "is this frame cheaper". For a shader change the prior question is "is this
+frame still correct", and a frame time cannot see a colour saturating where it should have
+wrapped. `scripts/pyra/shotcheck.sh` answers that one: it runs the fixture once per arm, grabs
+frames with `xwd` off the device, and `shotdiff.py` reports how much the arms differ.
+
+Three things it learned the hard way, all of which are now enforced in the tool:
+
+- **A control is not optional.** Two launches of the *same* arm differ by ten to eighteen thousand
+  pixels at the §9.9 fixture, with a worst channel around 240/255. The scene is frozen but not
+  reproducible: particles and fairies come to rest in different places in each launch and then
+  hold still there, so a mask built from frames *within* a launch does not remove them. The script
+  therefore always runs a third slot with arm A again, and the verdict is B-against-A measured
+  against A-against-A. Without that, every comparison looks like a catastrophic regression.
+- **Kill the previous instance properly.** The game catches `SIGTERM` and shuts down slowly enough
+  that the next launch starts alongside it. Instances accumulate, every one of them fullscreen,
+  and `xwd -root` grabs whichever is on top — so the tool photographs an arm nobody asked for. The
+  cleanup now escalates to `SIGKILL`, waits, and refuses to grab frames if anything is left.
+- **`ssh host 'cd x && cmd > log &'` hangs.** The `&` backgrounds the whole list, so `cd` still
+  holds the channel's stdout open, the channel never closes and ssh waits forever. Group the
+  redirect and the `&` around the launch alone.
+
+Frames are named by slot rather than by arm value, so `shotcheck.sh <cvar> 0 0` is a real null
+rather than one launch quietly overwriting the other's frames and being compared with itself.
+
+### The 1.25 GHz cap is a daemon, not luck
+
+§9.7 says every run before the pin "sat at 1.25 GHz by luck". It is not luck: `pyra-thermal.service`,
+the Pyra's own thermal daemon, holds `scaling_max_freq` there. Writing `cpuinfo_max_freq`
+(1,500,000) into `scaling_max_freq` takes effect and is reverted within three seconds, with the
+`thermal-cpufreq-0` cooling device still at state 0 — so this is the daemon's policy, not kernel
+thermal throttling. Two consequences: `bench.sh` pinning to exactly 1.25 GHz agrees with the
+device's own steady state rather than fighting it, which is part of why pinning worked so well;
+and a run is never leaving the device in an unusual state, because the daemon puts it back.
