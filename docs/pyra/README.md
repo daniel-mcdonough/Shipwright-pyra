@@ -8,6 +8,11 @@ reads a superseded number and acts on it.
 the live work queue and it is rewritten as things land; where it disagrees with a report, it is
 newer.
 
+**If you are about to measure something, read [`TESTING.md`](TESTING.md) instead of report 9.** It
+is the operating manual for the harness — setup, the three fixtures, the four commands, how to
+read the output, and the traps that have each cost a session. Report 9 explains why it works;
+`TESTING.md` is how to use it.
+
 ## Scope: this fork targets the Pyra only
 
 Decided 2026-09-22. Earlier reports were written under a "keep changes upstreamable" constraint
