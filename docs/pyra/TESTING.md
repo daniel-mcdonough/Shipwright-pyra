@@ -192,16 +192,30 @@ BENCH mde_us=137.22 (2.365*se at df=7)
 ### Shader elision coverage, when a null needs explaining
 
 `gfx_opengl.cpp` logs, per compiled shader variant, whether the combiner wrap was proved
-redundant. It is `SPDLOG_DEBUG`, so raise the runtime level first (compile-time cutoff is already
-`TRACE`):
+redundant. It is `SPDLOG_DEBUG` and the release default is `info`, so raise the runtime level
+first — the compile-time cutoff is already `TRACE`, so nothing needs rebuilding. The
+`gDeveloperTools` section may not exist in the config yet; creating it works.
 
 ```sh
-# set gDeveloperTools.LogLevel = 1 (debug) in $PYRA_DIR/shipofharkinian.json, then after a run:
+ssh -n "$PYRA_HOST" "python3 -c \"
+import json
+p='$PYRA_DIR/shipofharkinian.json'
+d=json.load(open(p))
+d['CVars'].setdefault('gDeveloperTools',{})['LogLevel']=1
+json.dump(d,open(p,'w'),indent=4)\""
+
+# ...then any run, e.g. bench.sh run $FIELD SOH_BENCH_WARMUP=300 SOH_BENCH_FRAMES=120
+
 ssh -n "$PYRA_HOST" "grep -o 'shader .*wrap_out=[a-z]*' $PYRA_DIR/run.log | sort -u | tee /tmp/v.txt | wc -l; grep -c 'wrap_out=false' /tmp/v.txt"
 ```
 
-`wrap_out=false` means elided. This is what distinguished "the optimisation misses these shaders"
-from "this frame is not fragment-bound" — Hyrule Field elides 25 of 26 and still gains nothing.
+`wrap_out=false` means elided. Verified 2026-09-23: prints `26` then `25` at the Hyrule Field
+fixture, the same counts taken when the line was still `INFO`. This is what distinguished "the
+optimisation misses these shaders" from "this frame is not fragment-bound" — Hyrule Field elides
+25 of 26 and still gains nothing.
+
+Put the level back afterwards (delete the key). Debug is not ruinous — a short run logs ~240 lines
+— but leaving it on makes every later log harder to read.
 
 ## 5. Traps that have each cost real time
 
