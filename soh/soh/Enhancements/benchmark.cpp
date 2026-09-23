@@ -271,12 +271,13 @@ struct Segment {
     // long way and otherwise differs between runs silently. Milli-degrees C, -1 when unreadable.
     int tempStartMilliC = -1;
     int tempEndMilliC = -1;
-    // cpu0's clock at the segment's start and end, and the lowest seen by sampling in between.
+    // cpu0's clock at the segment's start and end, and the extremes seen by sampling in between.
     // One uncapped run at a pinned 1.25 GHz came out 15% slow with nothing to say why (report 8
     // §8.19); a segment whose clock moved is discarded, not averaged. kHz, -1 when unreadable.
     int cpuStartKHz = -1;
     int cpuEndKHz = -1;
     int cpuMinKHz = -1;
+    int cpuMaxKHz = -1;
     // The game framebuffer as it actually was while this segment was timed, read at its first and
     // last measured frame. An arm that changes resolution and silently fails to looks exactly like
     // a scene that is not fill-bound, so the size is evidence rather than assumed from the CVar.
@@ -294,11 +295,15 @@ struct Segment {
 
 using Clock = std::chrono::steady_clock;
 
-// Reads the clock and folds it into the segment's minimum; returns the reading.
+// Reads the clock and folds it into the segment's extremes; returns the reading. Both ends
+// matter: pyra-thermal.service can raise the ceiling above a pin as well as lower it.
 int SampleCpu(Segment& seg) {
     const int khz = ReadCpuKHz();
     if (khz >= 0 && (seg.cpuMinKHz < 0 || khz < seg.cpuMinKHz)) {
         seg.cpuMinKHz = khz;
+    }
+    if (khz > seg.cpuMaxKHz) {
+        seg.cpuMaxKHz = khz;
     }
     return khz;
 }
@@ -460,12 +465,12 @@ void WriteResults() {
         const Segment& seg = gRunSegments[i];
         snprintf(line, sizeof(line),
                  "BENCH segment %zu arm=%s frames=%zu mean_us=%.1f median_us=%.1f p95_us=%.1f mean_fps=%.3f "
-                 "temp_c=%.1f->%.1f cpu_mhz=%d->%d cpu_min_mhz=%d fb=%ux%u->%ux%u swap_us=%.1f finish_us=%.1f period_us=%.1f period_fps=%.2f\n",
+                 "temp_c=%.1f->%.1f cpu_mhz=%d->%d cpu_min_mhz=%d cpu_max_mhz=%d fb=%ux%u->%ux%u swap_us=%.1f finish_us=%.1f period_us=%.1f period_fps=%.2f\n",
                  i, seg.arm.c_str(), seg.frameMicros.size(), MeanMicros(seg.frameMicros),
                  MedianMicros(seg.frameMicros), PercentileMicros(seg.frameMicros, 0.95),
                  MeanMicros(seg.frameMicros) > 0.0 ? 1e6 / MeanMicros(seg.frameMicros) : 0.0,
                  seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0, KHzToMHz(seg.cpuStartKHz),
-                 KHzToMHz(seg.cpuEndKHz), KHzToMHz(seg.cpuMinKHz), seg.fbStartW, seg.fbStartH,
+                 KHzToMHz(seg.cpuEndKHz), KHzToMHz(seg.cpuMinKHz), KHzToMHz(seg.cpuMaxKHz), seg.fbStartW, seg.fbStartH,
                  seg.fbEndW, seg.fbEndH, PerFrame(seg, seg.swapMicros), PerFrame(seg, seg.finishMicros),
                  PerFrame(seg, seg.periodMicros),
                  PerFrame(seg, seg.periodMicros) > 0.0 ? 1e6 / PerFrame(seg, seg.periodMicros) : 0.0);

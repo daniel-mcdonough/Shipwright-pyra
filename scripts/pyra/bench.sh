@@ -69,19 +69,28 @@ deploy() {
 # Thermal protection is not affected: it is enforced by the cpu_thermal zone through the
 # thermal-cpufreq cooling device, which clamps frequency whatever the governor is set to.
 # The passive trip is 100 C and this device runs benchmarks around 80 C.
+#
+# The pin uses the userspace governor, not min == max. pyra-thermal.service rewrites
+# scaling_max_freq every 2 s - to 1.5 GHz whenever the die is below its 77 C rung - so a
+# min == max pin silently became a 1.25-1.5 GHz range under ondemand the moment the daemon
+# next ran (report 8 §8.20: two segments at 1500 MHz under a "1.25 GHz pin"). With
+# userspace, scaling_setspeed fixes the request: a daemon ceiling above it changes nothing,
+# and a thermal cap below it still lowers the clock, which the segment's cpu_mhz fields
+# then show. The daemon keeps running; it is the safety backstop and owns the charger.
+# The governor in force before the run is saved on the device and put back by unpin_cpu.
+GOV_SAVE=/tmp/soh-bench-governor
 pin_cpu() {
   [[ -n "$PIN_FREQ" ]] || return 0
-  # The governor is left alone deliberately. Setting scaling_min_freq == scaling_max_freq
-  # forces any governor to a single frequency, so there is no governor state to save and
-  # restore - and sysfs will not hold a saved copy anyway.
   ssh -n "$HOST" "
+    [ -e $GOV_SAVE ] || cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor > $GOV_SAVE
     for p in /sys/devices/system/cpu/cpu*/cpufreq; do
       [ -e \"\$p/scaling_max_freq\" ] || continue
       sudo sh -c \"cat \$p/cpuinfo_min_freq > \$p/scaling_min_freq\"
-      sudo sh -c \"echo $PIN_FREQ > \$p/scaling_max_freq\"
-      sudo sh -c \"echo $PIN_FREQ > \$p/scaling_min_freq\"
+      sudo sh -c \"cat \$p/cpuinfo_max_freq > \$p/scaling_max_freq\"
+      sudo sh -c \"echo userspace > \$p/scaling_governor\"
+      sudo sh -c \"echo $PIN_FREQ > \$p/scaling_setspeed\"
     done
-    echo \"pinned to \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)-\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) kHz (governor \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor) left as-is)\"" >&2
+    echo \"pinned: governor \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor) setspeed \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_setspeed) kHz, cur \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) kHz (was \$(cat $GOV_SAVE))\"" >&2
 }
 
 # Always runs, including on a failed or timed-out run: leaving a machine pinned would be a
@@ -89,12 +98,16 @@ pin_cpu() {
 unpin_cpu() {
   [[ -n "$PIN_FREQ" ]] || return 0
   ssh -n "$HOST" "
+    gov=\$(cat $GOV_SAVE 2>/dev/null || echo ondemand)
+    [ \"\$gov\" = userspace ] && gov=ondemand
     for p in /sys/devices/system/cpu/cpu*/cpufreq; do
       [ -e \"\$p/scaling_max_freq\" ] || continue
+      sudo sh -c \"echo \$gov > \$p/scaling_governor\"
       sudo sh -c \"cat \$p/cpuinfo_min_freq > \$p/scaling_min_freq\"
       sudo sh -c \"cat \$p/cpuinfo_max_freq > \$p/scaling_max_freq\"
     done
-    echo \"restored \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)-\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) kHz\"" >&2
+    rm -f $GOV_SAVE
+    echo \"restored \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)-\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) kHz, governor \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)\"" >&2
 }
 
 run() {
