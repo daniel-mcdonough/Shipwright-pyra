@@ -214,6 +214,13 @@ BENCH period mde_us=...
   must equal the pin.** A segment where any differs is discarded, not averaged, and the report says
   so. It reads the kernel's requested frequency; the true hardware clock (`cpuinfo_cur_freq`) is
   root-only and the game cannot read it.
+- `BENCH oncpu` (since 2026-09-24, NEXT.md §2a P1) — is the frame computing or waiting?
+  `thread_pct` is the render thread's own CPU time (`CLOCK_THREAD_CPUTIME_ID`) over wall time for
+  the segment, and `thread_us` scales it to one frame period so it reads against `period_us`.
+  `window_us`/`window_pct` are the same thread's CPU time inside the timed window, against
+  `mean_us`. `proc_pct` is every thread in the process and can exceed 100 (audio is on its own
+  thread). A thread near 100% is running and `perf record` will see where; well below 100% it is
+  blocked and a sampling profiler will not — use `perf sched` (§6).
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.

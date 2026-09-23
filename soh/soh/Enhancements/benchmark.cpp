@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include <time.h>
+
 #include "soh/OTRGlobals.h"
 #include "soh/cvar_prefixes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -247,6 +249,18 @@ int ReadCpuKHz() {
     return khz;
 }
 
+// Microseconds of CPU time consumed so far by the calling thread, or by the whole process. The
+// question these answer is whether a frame is spent computing or blocked (NEXT.md §2a): a
+// sampling profiler cannot tell the two apart, but a thread that is blocked does not accrue its
+// own CPU time. Not vDSO-backed on this kernel, so each is a real syscall - two per frame.
+uint64_t CpuMicros(clockid_t clock) {
+    timespec ts{};
+    if (clock_gettime(clock, &ts) != 0) {
+        return 0;
+    }
+    return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+}
+
 // Mid-segment clock samples, every this many measured frames. Start and end alone cannot see a
 // throttle that recovers before the segment ends; one sysfs read per 30 frames is noise.
 constexpr int kCpuSampleEvery = 30;
@@ -291,6 +305,14 @@ struct Segment {
     // outside it - Play_Draw, the frozen Play_Update, audio hand-off. This is what the frame
     // rate is made of; the timed window alone is not.
     uint64_t periodMicros = 0;
+    // The render thread's own CPU time inside the timed window, summed like swapMicros. Set
+    // against mean_us it says how much of the window the thread was actually running.
+    uint64_t windowCpuMicros = 0;
+    // Thread and process CPU time, and wall time, at the segment's first and last measured frame.
+    // Over the same span these give the on-CPU share of the whole frame period, outside the
+    // window included; the process figure folds in audio and every other thread.
+    uint64_t threadCpuStart = 0, threadCpuEnd = 0, procCpuStart = 0, procCpuEnd = 0;
+    std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
 };
 
 using Clock = std::chrono::steady_clock;
@@ -322,6 +344,7 @@ int gSegmentIndex = 0;
 Clock::time_point gFrameStart;
 Clock::time_point gPrevFrameStart;
 uint32_t gPeriodMicros = 0;
+uint64_t gFrameCpuStart = 0;
 Fast::Fast3dWindow* gWnd = nullptr;
 std::vector<Segment> gRunSegments;
 bool gInitialised = false;
@@ -486,6 +509,24 @@ void WriteResults() {
                  PerFrame(seg, seg.counters[BENCH_FB_COPIES]), PerFrame(seg, seg.counters[BENCH_FB_READBACKS]),
                  PerFrame(seg, seg.counters[BENCH_SHADER_LOADS]), PerFrame(seg, seg.counters[BENCH_FB_REALLOCS]));
         text += line;
+        // On-CPU time: is the frame computing or waiting? thread_pct is the render thread's CPU
+        // time over wall time for the segment; thread_us scales it to one frame period, so it
+        // reads directly against period_us. window_us is the same thread's CPU time inside the
+        // timed window, against mean_us. proc_pct counts every thread and can exceed 100.
+        {
+            const double wall = (double)std::chrono::duration_cast<std::chrono::microseconds>(seg.wallEnd -
+                                                                                              seg.wallStart)
+                                    .count();
+            const double threadPct = wall > 0.0 ? 100.0 * (double)(seg.threadCpuEnd - seg.threadCpuStart) / wall : 0.0;
+            const double procPct = wall > 0.0 ? 100.0 * (double)(seg.procCpuEnd - seg.procCpuStart) / wall : 0.0;
+            const double windowUs = PerFrame(seg, seg.windowCpuMicros);
+            const double meanUs = MeanMicros(seg.frameMicros);
+            snprintf(line, sizeof(line),
+                     "BENCH oncpu %zu thread_us=%.1f thread_pct=%.1f window_us=%.1f window_pct=%.1f proc_pct=%.1f\n",
+                     i, threadPct / 100.0 * PerFrame(seg, seg.periodMicros), threadPct, windowUs,
+                     meanUs > 0.0 ? 100.0 * windowUs / meanUs : 0.0, procPct);
+            text += line;
+        }
     }
 
     // Paired summary. Segments were emitted arm-major within each rep, so rep r arm a is at
@@ -842,6 +883,7 @@ extern "C" void Benchmark_FrameBegin(void) {
                                                                                           gPrevFrameStart)
                               .count();
     gPrevFrameStart = gFrameStart;
+    gFrameCpuStart = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
 }
 
 extern "C" void Benchmark_FrameEnd(void) {
@@ -849,6 +891,7 @@ extern "C" void Benchmark_FrameEnd(void) {
         return;
     }
 
+    const uint64_t windowCpu = CpuMicros(CLOCK_THREAD_CPUTIME_ID) - gFrameCpuStart;
     const uint32_t micros =
         (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - gFrameStart).count();
 
@@ -979,7 +1022,11 @@ extern "C" void Benchmark_FrameEnd(void) {
             gRunSegments.back().swapMicros += gBenchSwapMicros;
             gRunSegments.back().finishMicros += gBenchFinishMicros;
             gRunSegments.back().periodMicros += gPeriodMicros;
+            gRunSegments.back().windowCpuMicros += windowCpu;
             if (gPhaseFrames == 0) {
+                gRunSegments.back().threadCpuStart = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
+                gRunSegments.back().procCpuStart = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
+                gRunSegments.back().wallStart = Clock::now();
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
             }
@@ -987,6 +1034,9 @@ extern "C" void Benchmark_FrameEnd(void) {
                 SampleCpu(gRunSegments.back());
             }
             if (++gPhaseFrames >= gCfg.measureFrames) {
+                gRunSegments.back().threadCpuEnd = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
+                gRunSegments.back().procCpuEnd = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
+                gRunSegments.back().wallEnd = Clock::now();
                 gRunSegments.back().cpuEndKHz = SampleCpu(gRunSegments.back());
                 gRunSegments.back().fbEndW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbEndH = OTRGetGameRenderHeight();
