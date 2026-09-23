@@ -79,19 +79,22 @@ binary` and silently falls back to the old shader.
 
 ## 2. The three fixtures
 
-A fixture is a scene, a player position and a pinned camera. **Use at least two.** The same shader
-change measured −3.59%, −2.40% and −0.07% across these three (§8.18) — scene choice moves an answer
-sevenfold, far more than the rig's 0.5% resolution ever will.
+A fixture is a scene, a player position and a pinned camera. **Use at least two.** Uncapped
+(§8.19) Hyrule Field runs 21.1 ms and the Market 31.5 ms at the same settings — they are different
+workloads, not the same one twice. (The −3.59% / −2.40% / −0.07% spread quoted in §8.18 was taken
+capped; see trap 10.)
 
-**Market Day** — a dozen NPCs, near and far buildings. Actor-dense, fragment-bound.
+**Market Day** — a dozen NPCs, near and far buildings. The heaviest fixture: 31.5 ms uncapped,
+261 draws, 5.7 ms of game work outside the timed window. Quartering the pixels buys 4.9%.
 
 ```sh
 MARKET="SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_POS=-122.7,0.0,72.1 SOH_BENCH_YAW=0xD5A6 \
 SOH_BENCH_EYE=0.0,64.0,0.0 SOH_BENCH_AT=-134.5,64.0,79.0 SOH_BENCH_SETTLE=400"
 ```
 
-**Hyrule Field** — open plain, long draw distance. **Not fragment-bound**: three-point filtering
-costs +0.11% here. The control case for any shader change.
+**Hyrule Field** — open plain, long draw distance. The light fixture: 21.1 ms (47 FPS) uncapped,
+167 draws. ~~Not fragment-bound~~ — that came from capped runs (trap 10); quartering the pixels
+buys 6.3% uncapped.
 
 ```sh
 FIELD="SOH_BENCH_ENTRANCE=0x00CD SOH_BENCH_POS=1089.4,379.7,5669.1 SOH_BENCH_YAW=0xA1F9 \
@@ -105,7 +108,7 @@ KOKIRI="SOH_BENCH_ENTRANCE=0x00EE SOH_BENCH_POS=-592.8,0.0,-195.9 SOH_BENCH_YAW=
 SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400"
 ```
 
-Market and Hyrule Field bracket the answer between them; Kokiri sits in the middle and adds little.
+Market and Hyrule Field bracket the answer between them. Kokiri has not been re-measured uncapped.
 
 ## 3. The four things you can run
 
@@ -297,9 +300,15 @@ the soak. Two numbers, not one.
 **"Did this change the picture?"** — `shotcheck.sh` at the busiest fixture you have, then read the
 control number before the result number.
 
-**"Is this scene fragment-bound at all?"** — A/B `gSettings.TextureFilter` 1 vs 0. Three-point
-filtering is pure fragment ALU and worth 3.6–19.9% where it bites; if it is free here, nothing
-shader-side will help.
+**"Is this scene fill-bound at all?"** — A/B `gSettings.InternalResolution 0.5 0.25`. It is the
+direct test: a quarter of the pixels, every fragment cost with them. Read the `period` lines and
+check `fb=` alternates. At the shipped 0.5× neither Market nor Hyrule Field is (4.9% / 6.3%,
+§8.19). Make sure the config line says `uncap=1` — a capped run answers "no" for any scene that
+fits under 33 ms.
+
+**"Is the frame CPU-bound?"** — run the same fixture at `PYRA_PIN_FREQ=1250000` and `1000000`,
+bracketed (1.25, 1.0, 1.25). Separate launches, so not ABBA; a 20% clock step is large enough to
+see anyway, if the bracket agrees with itself. §8.19 had one bracket that did not.
 
 **"Did my new default actually take effect?"** — remove the CVar from the device's
 `shipofharkinian.json`, then `bench.sh run` one segment and compare the absolute against the known

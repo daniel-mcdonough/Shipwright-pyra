@@ -96,6 +96,10 @@ check the date.
 | Whether the IMG compiler flattens the filtering branch is open | 08 §8.2, §8.9 | **moot** — no branch exists on the default; §8.14 cannot isolate it on the other path, 08 §8.16 |
 | The save corruption needs investigating before real play | 07 §7.7 | **mechanism closed, cause open** — saves are defended, the stray `close()` is not yet named, 10 |
 | `logs/` not being writable explains the flush failures | 07 §7.7 | **no** — `EBADF` from `fflush` means the descriptor is gone, not the directory, 10 §10.1 |
+| Any harness result or `mean_fps` taken before 2026-09-23 23:20 | 08 §8.10–§8.18, 09 | **capped at 30 FPS** — the harness never uncapped; `mean_us` is 33.3 ms minus the untimed work for any scene under the cap, 08 §8.19 |
+| Hyrule Field is slow (~30 ms) and not fragment-bound | 08 §8.18, NEXT | **no** — both were the cap. Uncapped it runs 21.1 ms (47 FPS), the lightest fixture, 08 §8.19 |
+| Halving internal resolution is worth +75%; the workload is fill-bound | 07 §7.2, `OTRGlobals.cpp` | **only from 1.0× to 0.5×** — at the shipped 0.5×, going to 0.25× buys 5–6%, 08 §8.19 |
+| 33.9 / 34.15 FPS at the fixture; the `InterpolationFPS` trade has dissolved | 08 §8.14, §8.17, NEXT | **no** — 1/timed-window under the cap. Real uncapped Market period is 31.7 FPS, frozen, 08 §8.19 |
 
 ## The reports
 

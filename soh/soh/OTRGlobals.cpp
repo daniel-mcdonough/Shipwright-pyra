@@ -292,8 +292,9 @@ static void ApplyPyraDefaults() {
         return !conf->Contains(std::string("CVars.") + cvar);
     };
 
-    // 0.5x of the 1280x720 panel is 640x360. Halving internal resolution is
-    // worth about +75% here; the workload is strongly fragment-bound.
+    // 0.5x of the 1280x720 panel is 640x360. Going from 1.0x to 0.5x was worth
+    // about +75% (report 7). Below that the return is small: 0.5x -> 0.25x buys
+    // only 5-6% (report 8 section 8.19), so this is the knee, not a halfway point.
     if (unset(CVAR_INTERNAL_RESOLUTION)) {
         CVarSetFloat(CVAR_INTERNAL_RESOLUTION, 0.5f);
     }

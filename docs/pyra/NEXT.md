@@ -3,7 +3,7 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-22**, after measuring item A on the device.
+Last revised **2026-09-23**, after finding the harness had been capped at 30 FPS all along (§8.19).
 
 ## Ground rules that keep being learned the hard way
 
@@ -47,19 +47,27 @@ Of the nine catalogued items: **2 measured and won** (5, 6 — §8.17, 2.4% toge
 
 ### Do this first
 
-**Find out what Hyrule Field's 30 ms is actually spent on.** Not a catalogue item — a gap the
-catalogue does not know it has. The open field is where the game is slowest and where players
-spend the most time, and §8.18 established that fragment work there is free: three-point filtering
-costs 0.11%, and eliding the combiner wrap in 25 of 26 shader variants costs nothing measurable.
-That leaves geometry through the tiler, per-draw and display-list cost on the CPU, or bandwidth —
-and **every remaining shader-side item below is aimed at a bottleneck that is not present in that
-scene.** Ranking them without knowing this is ranking them blind.
+~~**Find out what Hyrule Field's 30 ms is actually spent on.**~~ **Closed 2026-09-23 (§8.19): it
+was the frame cap.** The harness never uncapped — the game resets the target FPS every tick — so
+Hyrule Field read "33.3 ms minus the untimed work" whatever changed. Uncapped it runs **21.1 ms
+(47 FPS)**; the Market, at **31.5 ms (31.7 FPS)**, is the scene near the 30 FPS line. Internal
+resolution 0.5→0.25 buys only 6.3% / 4.9%, so neither is fill-bound at 640×360.
 
-The first probe is cheap and needs no code: an A/B on internal resolution at the Hyrule Field
-fixture. If frame time barely moves when the pixel count halves, the cost is per-triangle or
-per-draw and the whole fragment queue is misdirected for open scenes; if it scales, the cost is
-per-pixel but not in the combiner, which points at bandwidth or overdraw instead. Either answer
-reorders the table below.
+In order:
+
+1. **Log the effective CPU frequency per segment** (`scaling_cur_freq`, start and end, like
+   `temp_c`). One uncapped run came out 15% slow at the same pin with nothing in any log to say
+   why. Until this exists, a CPU-clock result is not trustworthy. Ten lines in `benchmark.cpp`.
+2. **Re-measure `ShaderOpts` 0→3 uncapped at Market and Hyrule Field.** It is shipped on numbers
+   taken under the cap (§8.18). Direction is not in doubt; size is, and every ranking below leans
+   on it.
+3. **What the ~13 ms of non-swap timed work is waiting on.** It barely follows the CPU clock
+   (+~2% for −20%, tentative) and the draw counts are modest (167 / 261). Candidates: driver
+   synchronisation per draw, the tiler, memory. A `perf` profile of the frozen Market fixture,
+   uncapped, is the next probe — split interpreter from driver time before estimating anything.
+4. **The ~3.4 ms of the swap that does not scale with pixels** (extrapolated, §8.19). That is the
+   playbook's open "does Present flip or copy" question (`~/git/dragonbox-pyra/docs/improvements.md`
+   §6) showing up as frame time.
 
 ### Worth doing
 
@@ -96,8 +104,12 @@ Same harness, CPU pinned, thermal soak, `gSettings.ShaderOpts` 0 → 3:
 | Kokiri Forest | **−704.2 µs** | −11.04 | 5 | **−2.40%** (34.15 → 34.99 FPS) |
 | Hyrule Field | −20.5 µs | −0.35 | 8 | −0.07%, a clean null resolving 0.46% |
 
-The null is not a failure of the optimisation: Hyrule Field elides the wrap in 25 of its 26 shader
-variants, and is simply not fragment-bound — three-point filtering is free there too (§8.18). The
+> **All three rows were measured capped at 30 FPS (§8.19).** The Hyrule Field null is the cap
+> absorbing the change; the other two are real in direction, not reliable in size. Re-measure
+> uncapped (item 2 above) before quoting any of them.
+
+~~The null is not a failure of the optimisation: Hyrule Field elides the wrap in 25 of its 26 shader
+variants, and is simply not fragment-bound — three-point filtering is free there too (§8.18).~~ The
 change is positive in two scenes and neutral in the third, and has never measured negative.
 
 Visually identical at every fixture checked, against an in-session control each time (§9.11):
@@ -149,6 +161,11 @@ back. The benchmark install's `soh.o2r` is a real file, deliberately, and the re
       on. So the margin over the 30 cap survives equilibrium at this fixture, and the trade does
       look dissolved — but this is a frozen frame with `Play_Update` skipped, which is precisely
       the measurement that flatters a speed-cap question. Confirm in real play before deciding.
+      **Retracted 2026-09-23 (§8.19): those FPS figures are 1/timed-window, capped, and omit the
+      untimed work.** The real frame period uncapped is 31.5 ms (31.7 FPS) at the Market and
+      21.1 ms (47 FPS) at Hyrule Field, frozen. The Market margin over 30 is ~5%, in a frame with
+      `Play_Update` skipped — so the trade is probably **not** dissolved in busy scenes. Measure
+      in real play with `LUS_FPS_LOG` before putting it to anyone.
 - [ ] **The staged `GfxSpVertex` hoist patch** — apply or drop. **Warning: it was staged in a
       session scratchpad and is not in the repo.** Nothing named `hoist.py` survives here, so this
       is "rewrite or forget", not "apply or drop". Treat it as forgotten unless someone has it.

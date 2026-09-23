@@ -880,6 +880,10 @@ The Market result is the largest confirmed win in this catalogue: 30.71 → 31.9
 of its six pairs landed between −3.1% and −4.0%. The Hyrule Field result is a clean null — eight
 pairs, sd 164 µs, resolving about 0.46%, so 2.4% is firmly excluded rather than merely unproven.
 
+> **Superseded by §8.19 (2026-09-23).** Every run in this section was capped at 30 FPS by a
+> harness bug, so the Hyrule Field nulls below are the cap absorbing the change, not evidence
+> about fragment cost. The Market and Kokiri effects are real in direction, distorted in size.
+
 ### Hyrule Field is not fragment-bound, and that is the finding
 
 Two independent checks agree, and they rule out the obvious explanation.
@@ -912,3 +916,103 @@ amount of ABBA pairs at one spot would have revealed it.
 
 Shader-side changes from here run against Market and Hyrule Field at minimum. They bracket the
 answer: one frame where fragment cost dominates, one where it is free.
+
+## 8.19 The frame cap was on all along — and Hyrule Field is the light scene
+
+Measured 2026-09-23, evening. Started as §8.18's open question — what Hyrule Field's ~30 ms is
+spent on — and ended by showing the ~30 ms was never there.
+
+### The harness never uncapped
+
+`Benchmark_FrameEnd` set the window's target FPS to 240 once, "so the limiter never sleeps".
+`Graph_ProcessGfxCommands` calls `wnd->SetTargetFps(InterpolationFPS)` on **every game tick**
+(`OTRGlobals.cpp:1837`), so from the next tick on `SyncFramerateWithTime` paced every run at
+30 FPS — and it sleeps inside `SDL_GL_SwapWindow`'s caller, i.e. inside the timed window. With
+`LUS_FPS_LOG=5` the game's own counter read **30.00 FPS** at Hyrule Field throughout every
+measured segment, while the harness reported 30.7 ms / "32.5 FPS".
+
+So under the cap the harness measured **33.3 ms minus the untimed work** (`Play_Draw` and the
+rest of the tick, which sit outside `DrawAndRunGraphicsCommands`). A scene whose real work fits
+under 33.3 ms returns that number regardless of what is changed. That is exactly what Hyrule Field
+did, four times, before the cause was found:
+
+| capped probe at Hyrule Field | change in harness frame time |
+|---|---|
+| internal resolution 0.5 → 0.25 (4× fewer pixels) | −0.10%, t=−0.77, MDE 0.32% |
+| CPU pinned 1.25 → 1.0 GHz | −0.8% (the wrong direction) |
+| 1280×720 fullscreen → 640×360 window (4× fewer presented pixels) | +0.2% |
+| `glFinish` before the swap | GPU "done" in 0.16 ms, swap still 17.5 ms |
+
+The last row is what gave it away: 17.5 ms blocked in the swap with the GPU reporting idle is a
+sleep, not work. Fixed in `benchmark.cpp` (re-assert the target at every frame start,
+`SOH_BENCH_UNCAP`, default on) and validated: the new `period_us` field — start of one frame to
+start of the next — matches `LUS_FPS_LOG` to within 0.1 FPS in capped and uncapped runs alike.
+
+### What this retracts
+
+- **§8.18's Hyrule Field row and its conclusion.** "Hyrule Field is not fragment-bound" rested on
+  two capped nulls (three-point filtering +0.11%, `ShaderOpts` −0.07%). Both are the cap absorbing
+  the change. The statement is **unsupported**, not disproven — neither was re-run uncapped.
+- **§8.18's Market and Kokiri effect sizes are real but distorted.** Those scenes overran the cap
+  on some frames, so a change moved the mean, but the size mixes real savings with fewer overruns.
+  Direction stands; magnitude needs re-measuring uncapped before anything is ranked on it.
+- **Every absolute "FPS" the harness has printed** (`mean_fps`) is 1/timed-window: capped, and
+  missing the untimed work. That includes the 33.9 / 34.15 / 34.99 FPS that `NEXT.md` §4 rests the
+  `InterpolationFPS` decision on.
+- The comment at `OTRGlobals.cpp:297` ("strongly fragment-bound", "+75%") describes report 7's
+  1.0×→0.5× step. At the shipped 0.5× it is not true of either fixture (below).
+
+### Uncapped, the picture reverses
+
+Frozen fixtures, CPU pinned at 1.25 GHz, soaked to 70 °C (76 °C was not reachable this evening —
+TESTING.md trap 9):
+
+| | frame period | fps | timed window | of which swap | outside window | draws | tris |
+|---|---|---|---|---|---|---|---|
+| Hyrule Field | **21.1 ms** | **47.4** | 18.4 ms | 5.0 ms | 2.7 ms | 167 | 776 |
+| Market | **31.5 ms** | **31.7** | 25.9 ms | 5.1 ms | 5.7 ms | 261 | 1670 |
+
+**Hyrule Field is the light scene**, with headroom to ~47 FPS. The Market is the one near the
+30 FPS line. No texture uploads, framebuffer copies, readbacks or reallocations at either fixture
+(the new `BENCH work` line); two framebuffer binds and two clears per frame.
+
+### Internal resolution, uncapped — the probe §8.18 asked for
+
+`gSettings.InternalResolution` 0.5 → 0.25, six ABBA pairs each; `fb=` confirms every segment ran at
+640×360 or 320×180 as intended.
+
+| | Δ frame period | t | MDE | swap 0.5× → 0.25× |
+|---|---|---|---|---|
+| Hyrule Field | **−1319 µs (−6.3%)** | −15.0 | 226 µs | 5.03 → 3.82 ms |
+| Market | **−1561 µs (−4.9%)** | −38.1 | 105 µs | 5.07 → 3.73 ms |
+
+**Neither scene is fill-bound at 640×360**: four times fewer pixels buys 5–6%. Report 7's
+0.5→0.25 figure (+31%) does not survive. Nearly all of the saving lands inside the swap, which
+means the swap contains the tile-based deferred renderer's fragment pass: **`glFinish` on this
+DDK does not wait for it** (0.14 ms at both resolutions while the swap moved 1.2 ms), so the
+earlier capped reading of `finish_us` as "GPU idle" is withdrawn too. Extrapolating the pixel
+dependence, roughly 3.4 ms of the 5 ms swap does not scale with pixels — reasoning, not
+measured; it is the part a flip-vs-copy investigation (playbook `improvements.md` §6) would target.
+
+### CPU clock, uncapped — tentative
+
+| | 1.25 GHz | 1.0 GHz | 1.25 GHz |
+|---|---|---|---|
+| Hyrule Field period | 21.16 ms | 21.67 ms (+2.4%) | 24.34 ms — outlier |
+| Market period | 31.93 ms | 32.30 ms | 31.61 ms |
+
+A 20% slower CPU costs ~2%, so the ~13 ms of timed work outside the swap is not scaling with core
+clock. The third Field run is 15% slower at the same pin with the die cooling; nothing in the
+thermal service's journal explains it, and the harness does not record the effective CPU
+frequency, so the Field pair is **not trusted** until that is logged. The Market bracket is
+clean. If it holds, that 13 ms is waiting — on the driver, on the tiler, or on memory, none of
+which follow the core clock — rather than computing, which would make per-draw state and
+submission shape the next thing to measure, not shader arithmetic.
+
+### What it changes
+
+The question "what is Hyrule Field's 30 ms spent on" is closed: it was the cap. The live
+questions are the Market's 31.5 ms (the scene actually near 30 FPS), what the ~13 ms of
+non-swap timed work is waiting on, and the ~3.4 ms of the swap that does not scale with pixels.
+Every shader-side ranking in this document was built on capped numbers and should be re-measured
+uncapped before it is trusted.
