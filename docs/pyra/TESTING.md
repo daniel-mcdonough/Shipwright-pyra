@@ -82,7 +82,7 @@ binary` and silently falls back to the old shader.
 A fixture is a scene, a player position and a pinned camera. **Use at least two.** Uncapped
 (§8.19) Hyrule Field runs 21.1 ms and the Market 31.5 ms at the same settings — they are different
 workloads, not the same one twice. (The −3.59% / −2.40% / −0.07% spread quoted in §8.18 was taken
-capped; see trap 10.)
+capped; see trap 10. Uncapped, `ShaderOpts` is −4.85% / −4.55% at Market / Hyrule Field, §8.20.)
 
 **Market Day** — a dozen NPCs, near and far buildings. The heaviest fixture: 31.5 ms uncapped,
 261 draws, 5.7 ms of game work outside the timed window. Quartering the pixels buys 4.9%.
@@ -116,11 +116,12 @@ Market and Hyrule Field bracket the answer between them. Kokiri has not been re-
 
 ```sh
 PYRA_TIMEOUT=1800 ./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 $MARKET \
-    SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000 SOH_BENCH_REPS=6
+    SOH_BENCH_SOAK_C=70 SOH_BENCH_WARMUP_MAX=20000 SOH_BENCH_REPS=6
 ```
 
 One process, arms swapped between segments, ABBA counterbalanced, CPU pinned to 1.25 GHz for the
-duration and restored on exit. A segment is 600 measured frames plus a 180-frame recompilation
+duration (userspace governor, `scaling_setspeed`) and restored on exit — see trap 12 for why it is
+not `min == max` any more. A segment is 600 measured frames plus a 180-frame recompilation
 grace, so ~25 s; `reps` is **pairs**, so `REPS=6` is 12 segments and roughly 5 minutes, `REPS=8`
 is 16 and roughly 7. Add settle and soak. Run it with `run_in_background` and read the output file
 — `bench.sh` has its own timeout (`PYRA_TIMEOUT`, default 900 s), so a hung harness will not hang
@@ -133,7 +134,7 @@ effect" from "no effect this could see", add pairs.
 ### One arm, absolute numbers
 
 ```sh
-./scripts/pyra/bench.sh run $FIELD SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000 SOH_BENCH_REPS=3
+./scripts/pyra/bench.sh run $FIELD SOH_BENCH_SOAK_C=70 SOH_BENCH_WARMUP_MAX=20000 SOH_BENCH_REPS=3
 ```
 
 Use this to verify a *default* took effect, where an A/B would override the very thing you are
@@ -178,7 +179,7 @@ trap 3.
 
 ```
 BENCH config settle=400 warmup=600 measure=600 static=1 targetFps=240 uncap=1
-BENCH segment 0 arm=single frames=600 mean_us=18382.7 ... temp_c=75.5->76.0 fb=640x360->640x360 swap_us=5039.8 finish_us=0.0 period_us=21113.7 period_fps=47.36
+BENCH segment 0 arm=single frames=600 mean_us=18382.7 ... temp_c=75.5->76.0 cpu_mhz=1250->1250 cpu_min_mhz=1250 cpu_max_mhz=1250 fb=640x360->640x360 swap_us=5039.8 finish_us=0.0 period_us=21113.7 period_fps=47.36
 BENCH work 0 draws=167.3 tris=776.3 tex_uploads=0.00 ... shader_loads=63.0 fb_reallocs=0.00
 BENCH pair 1 a_us=30580.2 b_us=30573.1 delta_us=-7.1 delta_pct=-0.02
 BENCH paired n=8 mean_delta_us=-20.54 sd_us=164.36 t=-0.353 df=7
@@ -208,6 +209,11 @@ BENCH period mde_us=...
   absolute terms however tight their error bars.
 - A segment whose temperature *falls* mid-segment is suspect; one produced a −2.48% outlier that
   did not reproduce.
+- `cpu_mhz=start->end`, `cpu_min_mhz`, `cpu_max_mhz` — cpu0's `scaling_cur_freq` at the segment's
+  first and last measured frame, and the extremes of a sample every 30 frames between. **All four
+  must equal the pin.** A segment where any differs is discarded, not averaged, and the report says
+  so. It reads the kernel's requested frequency; the true hardware clock (`cpuinfo_cur_freq`) is
+  root-only and the game cannot read it.
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
@@ -245,7 +251,7 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
 1. **Soak, or the absolute is meaningless.** Frame rate moves ~30% cold to hot, and
    `pyra-thermal.service` *drops the clock ceiling from 1.5 to 1.25 GHz when warm* — so an
    unsoaked run straddles the daemon's decision, which is a step change, the one shape ABBA cannot
-   cancel. Always pass `SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000`. It is free on a device
+   cancel. Always pass `SOH_BENCH_SOAK_C=70 SOH_BENCH_WARMUP_MAX=20000` (trap 9 on the target). It is free on a device
    that is already hot, so a back-to-back sequence pays it once.
 2. **The game catches SIGTERM and dies slowly.** A plain `pkill` returns while a fullscreen window
    is still up. Instances accumulate, `xwd -root` photographs whichever is on top, and you end up
@@ -280,6 +286,10 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
    `bench.txt` — a quarter-hour for "no results". Check the first soak lines of `run.log`; if the
    temperature has flattened below target, lower `SOH_BENCH_SOAK_C` to where it flattened and say
    so in the result. Set `PYRA_TIMEOUT=1800` for any soaked A/B.
+   70 °C is the working target since. On 2026-09-24, on the userspace pin, a warm device crossed
+   it within a second and the segments then ran 73–80 °C at the Market and 78–81 °C at Hyrule
+   Field — the latter just under `pyra-thermal`'s 82 °C rung, which capped three segments to
+   1.0 GHz in one run (trap 12). Expect to discard the odd Hyrule Field segment.
 10. **The frame cap was never off, until `uncap=1`.** The harness set the target FPS to 240 once;
     `Graph_ProcessGfxCommands` sets it back to `InterpolationFPS` on *every tick*
     (`OTRGlobals.cpp:1837`). So every run before 2026-09-23 23:20 ran capped at 30 FPS, with the
@@ -290,7 +300,20 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     overran the cap, were real but distorted. The config line now says `uncap=`; if it says `0`,
     or is missing, the result is capped. `SOH_BENCH_UNCAP=0` reproduces the old behaviour.
 11. **`Failed flush to file ... Bad file descriptor`** in every log is a known open bug
-   (report 10), not a symptom of your change.
+   (report 10), not a symptom of your change. `RGBA Texture that isn't 16 or 32 bit. Size = 0`,
+   ~36 lines at Market scene load, is also pre-existing noise.
+12. **`pyra-thermal.service` moved the "pinned" clock, in both directions.** It rewrites
+    `scaling_max_freq` every 2 s: 1.5 GHz below its 77 °C core rung (released only once the die
+    falls 5 °C further), 1.0 GHz or lower once the fuel-gauge die passes 56 °C. The old pin was
+    `min == max == 1.25 GHz`, so whenever the die was cool enough the daemon widened it to
+    1.25–1.5 GHz and ondemand took the top. Found 2026-09-24 by the new `cpu_mhz` field: the first
+    two Market segments ran at 1500 MHz. Every pinned result before that is only as trustworthy as
+    its die temperature was high — above ~77 °C the daemon's cap happened to equal the pin. The
+    pin is now the userspace governor with `scaling_setspeed`: a daemon ceiling above it is inert,
+    a thermal cap below it still bites and shows in `cpu_min_mhz`. The daemon is left running on
+    purpose — it is the thermal backstop and it owns the charger's current limit. If a run is ever
+    killed so hard that `unpin_cpu` does not run, the device is left on `userspace` at 1.25 GHz;
+    `echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor` puts it back.
 
 ## 6. Recipes
 
@@ -308,7 +331,9 @@ fits under 33 ms.
 
 **"Is the frame CPU-bound?"** — run the same fixture at `PYRA_PIN_FREQ=1250000` and `1000000`,
 bracketed (1.25, 1.0, 1.25). Separate launches, so not ABBA; a 20% clock step is large enough to
-see anyway, if the bracket agrees with itself. §8.19 had one bracket that did not.
+see anyway, if the bracket agrees with itself. §8.19 had one bracket that did not — taken on the
+old `min == max` pin, which the thermal daemon could lift (trap 12), so re-take it before using it.
+Check `cpu_min_mhz`/`cpu_max_mhz` on every segment: at 1.0 GHz they must read 1000.
 
 **"Did my new default actually take effect?"** — remove the CVar from the device's
 `shipofharkinian.json`, then `bench.sh run` one segment and compare the absolute against the known

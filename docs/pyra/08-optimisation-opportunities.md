@@ -1016,3 +1016,102 @@ questions are the Market's 31.5 ms (the scene actually near 30 FPS), what the ~1
 non-swap timed work is waiting on, and the ~3.4 ms of the swap that does not scale with pixels.
 Every shader-side ranking in this document was built on capped numbers and should be re-measured
 uncapped before it is trusted.
+
+## 8.20 `ShaderOpts` uncapped: −4.9% at the Market, −4.6% at Hyrule Field — and the pin leaked
+
+Measured 2026-09-24, just after midnight. §8.19 left the shipped shader change (`gSettings.ShaderOpts`
+0 → 3, items 5 + 6) standing on capped numbers. This re-measures it uncapped, after first making the
+harness record the CPU clock, which turned out to be the more important half of the session.
+
+### The CPU "pin" was not a pin
+
+`benchmark.cpp` now reads cpu0's `scaling_cur_freq` at each segment's first and last measured frame
+and every 30 frames between, and prints `cpu_mhz=start->end cpu_min_mhz= cpu_max_mhz=`. Checked
+before use: 1250 under the default pin, 1000 under `PYRA_PIN_FREQ=1000000`.
+
+The first Market A/B then showed segments 0 and 1 at **1500 MHz** under a "1.25 GHz pin". The cause
+is `pyra-thermal.service`: it writes `scaling_max_freq` every **2 s**, to 1.5 GHz whenever the
+hotter of `core_thermal`/`cpu_thermal` is below its 77 °C rung (and only gives a step back 5 °C
+below the rung that took it), to 1.0 GHz above 82 °C, and lower still on the fuel-gauge die.
+`bench.sh` pinned by setting `min == max == 1.25 GHz`, so within two seconds the daemon had widened
+it to 1.25–1.5 GHz and ondemand took the top. The pin held only while the die was hot enough that
+the daemon's own cap happened to equal it.
+
+Fixed in `bench.sh`: the pin is now the userspace governor with `scaling_setspeed`. A daemon ceiling
+above it is inert (verified at 73 °C: the daemon wrote 1.5 GHz throughout, the clock held 1250 in
+all 17 samples); a thermal cap below it still bites, which is correct — the daemon stays running as
+the thermal backstop and the charger's current limit — and shows up in `cpu_min_mhz`. TESTING.md
+trap 12.
+
+It bit in the other direction within the hour. At Hyrule Field the die sits at 80–81 °C on the
+harness sensor, just under the daemon's 82 °C rung, and one run had segments 5–7 capped to
+**1000 MHz**. Those two pairs were discarded and the fixture re-run; the re-run stayed at 1250.
+
+What this does to earlier results: every pinned run below ~77 °C before today may have run partly at
+1.5 GHz. That includes §8.19's CPU-clock bracket — the 1.0 GHz arm could have been lifted too, and
+the 15%-slow Hyrule Field run is unexplained either way. **§8.19's "a 20% slower CPU costs ~2%" is
+unverified** until re-taken on the new pin. Soaked A/Bs near 80 °C (§8.17, §8.18) were probably
+genuinely at 1.25 GHz, since the daemon's cap sat there too — probably, not provably.
+
+### Result
+
+Frozen fixtures, 6 ABBA pairs each, uncapped (`uncap=1`), CPU 1250 MHz by all four fields in every
+segment reported below, soaked to 70 °C (reached within the first second — the device was already
+warm; segments ran 73–80 °C at the Market and 78–81 °C at Hyrule Field). `delta` is 3 minus 0.
+
+| | Δ frame period | t | MDE | Δ timed window | t | MDE |
+|---|---|---|---|---|---|---|
+| Market | **−1622 µs (−4.85%)** | −40.1 | 104 µs (0.31%) | −1553 µs (−5.69%) | −33.8 | 118 µs |
+| Hyrule Field | **−1025 µs (−4.55%)** | −13.3 | 198 µs (0.88%) | −1033 µs (−5.25%) | −23.0 | 116 µs |
+
+| per arm (ms) | period | fps | timed window | swap | window − swap | outside window |
+|---|---|---|---|---|---|---|
+| Market, 0 | 33.44 | 29.90 | 27.29 | 6.42 | 20.87 | 6.15 |
+| Market, 3 | 31.82 | 31.42 | 25.74 | 5.05 | 20.69 | 6.08 |
+| Hyrule Field, 0 | 22.50 | 44.45 | 19.67 | 5.86 | 13.82 | 2.83 |
+| Hyrule Field, 3 | 21.47 | 46.58 | 18.64 | 4.97 | 13.67 | 2.83 |
+
+Replications, not used in the table: the first Market run (old pin, pairs 1–5 after discarding the
+1500 MHz pair) gave −1653 µs period, t=−18.9; the first Hyrule Field run's four clean pairs gave
+−1019 µs, t=−17.9. Both agree with the table within its MDE.
+
+### Against the capped numbers
+
+- **Market: larger than shipped on.** Capped it was −1168 µs / −3.59% of the timed window;
+  uncapped it is −1553 µs / −5.69% of the same window and −4.85% of the real frame period. The cap
+  was absorbing about a quarter of the saving.
+- **Hyrule Field: the capped null was entirely the cap.** Capped −20.5 µs (−0.07%); uncapped
+  −1025 µs (−4.55%), t=−13.3. The same order in absolute terms as the Market. §8.18's "worth
+  −3.59%, −2.40% and nothing, depending on the scene" does not survive: in the two scenes
+  re-measured it is worth about 1–1.6 ms and 4.5–5% of the frame in both. Kokiri was not
+  re-measured.
+- At the Market the change is what takes the frozen fixture over 30 FPS: 29.90 → 31.42.
+
+### Where the saving lands
+
+About 87% of it is inside `SDL_GL_SwapWindow`: swap falls 1.37 ms at the Market and 0.89 ms at
+Hyrule Field, against 1.55 / 1.03 ms of timed window. The non-swap timed work moves by 0.15–0.19
+ms and the untimed work not at all. That is what a cheaper fragment shader should look like on this
+tile-based deferred renderer, where the fragment pass runs at the flush the swap forces (§8.19:
+`glFinish` does not wait for it). It also means the fragment pass is not the small share §8.19's
+"not fill-bound" might suggest: at `ShaderOpts` 0 the swap was 6.4 ms, not 5.
+
+### An observation, not yet a finding
+
+At the Market, arm 0's frame period rose steadily across the run — 32.80 → 34.12 ms (+4.0%) over
+about five minutes at a fixed 1250 MHz, the swap flat (6.45 → 6.36 ms), the die 73 → 79 °C. The
+first Market run did the same (33.84 → 34.26 over its clean pairs). Most of the growth is in the
+untimed work (5.67 → 6.55 ms) and the rest in the non-swap window. Hyrule Field's arm 0 barely moved
+(22.44 → 22.49). ABBA cancels a linear drift, so the deltas above stand; but something in the
+Market's CPU-side work gets slower over a run with the CPU clock held, and heat, memory or
+accumulating state are all still possible. It belongs to the next question.
+
+### What it changes
+
+- Item A (NEXT.md) is re-stated on these numbers. It stays shipped.
+- Every ranking that used "−3.59% at best, nothing at Hyrule Field" as the scale for a
+  shader-side item was using a number about a quarter low at the Market (−1168 against −1553 µs) and wrong at Hyrule Field. That
+  includes the 3.6% item 3's ceiling is a share of (§8.15), which was also capped.
+- The ~13 ms of non-swap timed work NEXT.md asks about is **Hyrule Field's** (13.7 ms at arm 3).
+  The Market's is **20.7 ms**. The next profile should use the Market, where the frame is closest to
+  30 FPS and the non-swap share is largest.

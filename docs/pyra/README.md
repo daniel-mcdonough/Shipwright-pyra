@@ -100,6 +100,9 @@ check the date.
 | Hyrule Field is slow (~30 ms) and not fragment-bound | 08 §8.18, NEXT | **no** — both were the cap. Uncapped it runs 21.1 ms (47 FPS), the lightest fixture, 08 §8.19 |
 | Halving internal resolution is worth +75%; the workload is fill-bound | 07 §7.2, `OTRGlobals.cpp` | **only from 1.0× to 0.5×** — at the shipped 0.5×, going to 0.25× buys 5–6%, 08 §8.19 |
 | 33.9 / 34.15 FPS at the fixture; the `InterpolationFPS` trade has dissolved | 08 §8.14, §8.17, NEXT | **no** — 1/timed-window under the cap. Real uncapped Market period is 31.7 FPS, frozen, 08 §8.19 |
+| `ShaderOpts` 3 is worth −3.59% / −2.40% / nothing by scene | 08 §8.17, §8.18, NEXT | **no** — capped. Uncapped: −4.85% Market, −4.55% Hyrule Field; Kokiri not re-measured, 08 §8.20 |
+| The CPU was pinned at 1.25 GHz during benchmark runs | 09, 08 §8.14–§8.19 | **only when the die was above ~77 °C** — `pyra-thermal.service` rewrote the ceiling every 2 s; fixed with the userspace governor, 08 §8.20 |
+| A 20% slower CPU costs the frame only ~2% | 08 §8.19, NEXT | **unverified** — taken on the leaky pin, 08 §8.20 |
 
 ## The reports
 

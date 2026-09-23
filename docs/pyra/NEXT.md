@@ -3,7 +3,8 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-23**, after finding the harness had been capped at 30 FPS all along (§8.19).
+Last revised **2026-09-24**, after re-measuring `ShaderOpts` uncapped and finding the CPU pin leaked
+(§8.20).
 
 ## Ground rules that keep being learned the hard way
 
@@ -11,16 +12,19 @@ Last revised **2026-09-23**, after finding the harness had been capped at 30 FPS
    the C++ call site after having estimated from the shader or the GL call — items 1, 2 and 7.
    That is one method failure, not three items (§8.16). Before building anything below, spend the
    twenty minutes to confirm the thing you think is happening is happening.
-2. **The rig resolves 0.57%** at the current fixture with the CPU pinned (§9.5). Effects smaller
-   than about 1% need the pin and an ABBA design, and anything claimed below 0.57% is noise.
+2. **The rig resolves 0.3–0.9%** of the frame period uncapped, six pairs, CPU pinned (§8.20) —
+   read each run's own `mde_us`. Effects smaller than about 1% need the pin and an ABBA design.
 3. **Frame rate and game speed are the same number** (§7.5b). An FPS win above the
    `InterpolationFPS` cap buys slow motion, not smoothness.
 4. **The fixture is a frozen frame.** It tells you a frame got cheaper to draw, not that the game
    got faster. Confirm in real play.
-5. **One fixture does not measure a change, it samples one.** The same shader optimisation is
-   worth −3.59% in the Market, −2.40% in Kokiri and nothing at all in Hyrule Field (§8.18). Scene
-   choice moved the answer by a factor of seven; the rig's 0.5% resolution never came close to
-   mattering that much. Run shader-side changes against **Market and Hyrule Field** at minimum.
+5. **One fixture does not measure a change, it samples one.** Run shader-side changes against
+   **Market and Hyrule Field** at minimum. (The example that taught this — the same shader change
+   "worth −3.59%, −2.40% and nothing" by scene, §8.18 — turned out to be the frame cap; uncapped it
+   is −4.9% and −4.6%, §8.20. The rule stands; its best example did not.)
+6. **Read every segment's `cpu_mhz`, `cpu_min_mhz`, `cpu_max_mhz`.** `pyra-thermal.service` moves
+   the clock under the harness in both directions (§8.20, TESTING.md trap 12). A segment off the
+   pin is discarded, and the report says so.
 
 ## 1 — Finish the save-corruption job (report 10)
 
@@ -42,8 +46,8 @@ untested and not needed (section 3).
 
 ## 2 — Performance work, ranked
 
-Of the nine catalogued items: **2 measured and won** (5, 6 — §8.17, 2.4% together), **3 closed**
-(1, 2, 7), 1 implemented at no gain (4), 1 premise weakened (3). What is actually left:
+Of the nine catalogued items: **2 measured and won** (5, 6 — together −4.9% / −4.6% of the frame
+uncapped, §8.20), **3 closed** (1, 2, 7), 1 implemented at no gain (4), 1 premise weakened (3). What is actually left:
 
 ### Do this first
 
@@ -55,16 +59,19 @@ resolution 0.5→0.25 buys only 6.3% / 4.9%, so neither is fill-bound at 640×36
 
 In order:
 
-1. **Log the effective CPU frequency per segment** (`scaling_cur_freq`, start and end, like
-   `temp_c`). One uncapped run came out 15% slow at the same pin with nothing in any log to say
-   why. Until this exists, a CPU-clock result is not trustworthy. Ten lines in `benchmark.cpp`.
-2. **Re-measure `ShaderOpts` 0→3 uncapped at Market and Hyrule Field.** It is shipped on numbers
-   taken under the cap (§8.18). Direction is not in doubt; size is, and every ranking below leans
-   on it.
-3. **What the ~13 ms of non-swap timed work is waiting on.** It barely follows the CPU clock
-   (+~2% for −20%, tentative) and the draw counts are modest (167 / 261). Candidates: driver
-   synchronisation per draw, the tiler, memory. A `perf` profile of the frozen Market fixture,
-   uncapped, is the next probe — split interpreter from driver time before estimating anything.
+1. ~~**Log the effective CPU frequency per segment.**~~ **Done 2026-09-24 (§8.20)**, and it found
+   the pin leaking: `pyra-thermal.service` rewrote the ceiling every 2 s. The pin is now the
+   userspace governor.
+2. ~~**Re-measure `ShaderOpts` 0→3 uncapped.**~~ **Done (§8.20): −4.85% Market, −4.55% Hyrule
+   Field**, both t ≤ −13. See Item A below.
+3. **What the non-swap timed work is waiting on — at the Market.** It is **20.7 ms** there and
+   13.7 ms at Hyrule Field (§8.20; this line used to say "~13 ms", which is the Field's figure).
+   The draw counts are modest (261 / 167). Candidates: driver synchronisation per draw, the
+   tiler, memory. A `perf` profile of the frozen Market fixture, uncapped and on the new pin, is
+   the next probe — split interpreter from driver time before estimating anything. Two things to
+   carry in: §8.19's "barely follows the CPU clock (+~2% for −20%)" was taken on the leaky pin and
+   is **unverified**; and the Market's frame period creeps +4% across a five-minute run at a fixed
+   clock, mostly in untimed work (§8.20) — the profile should cover the start and end of a run.
 4. **The ~3.4 ms of the swap that does not scale with pixels** (extrapolated, §8.19). That is the
    playbook's open "does Present flip or copy" question (`~/git/dragonbox-pyra/docs/improvements.md`
    §6) showing up as frame time.
@@ -93,24 +100,22 @@ In order:
 - **Item 4, `GL_EXT_discard_framebuffer`.** Implemented, measured at no gain (§8.10). Decide
   keep-or-revert on commit `e1fae43d`; it is dead weight either way, not a regression.
 
-### Item A is measured, confirmed and ready to ship
+### Item A is measured, confirmed and shipped
 
-**Measured 2026-09-22, confirmed across three scenes and in real play 2026-09-23** (§8.17, §8.18).
-Same harness, CPU pinned, thermal soak, `gSettings.ShaderOpts` 0 → 3:
+**Re-measured uncapped 2026-09-24 (§8.20)**, 6 ABBA pairs each, CPU at 1250 MHz in every segment,
+`gSettings.ShaderOpts` 0 → 3:
 
-| fixture | mean Δ | t | pairs | effect |
-|---|---|---|---|---|
-| Market Day | **−1167.9 µs** | −23.74 | 6 | **−3.59%** (30.71 → 31.90 FPS) |
-| Kokiri Forest | **−704.2 µs** | −11.04 | 5 | **−2.40%** (34.15 → 34.99 FPS) |
-| Hyrule Field | −20.5 µs | −0.35 | 8 | −0.07%, a clean null resolving 0.46% |
+| fixture | Δ frame period | t | MDE | Δ timed window | fps 0 → 3 |
+|---|---|---|---|---|---|
+| Market Day | **−1622 µs (−4.85%)** | −40.1 | 104 µs | −1553 µs (−5.69%) | 29.90 → 31.42 |
+| Hyrule Field | **−1025 µs (−4.55%)** | −13.3 | 198 µs | −1033 µs (−5.25%) | 44.45 → 46.58 |
+| Kokiri Forest | not re-measured | | | | |
 
-> **All three rows were measured capped at 30 FPS (§8.19).** The Hyrule Field null is the cap
-> absorbing the change; the other two are real in direction, not reliable in size. Re-measure
-> uncapped (item 2 above) before quoting any of them.
+About 87% of the saving is inside the swap — the fragment pass on this tiler.
 
-~~The null is not a failure of the optimisation: Hyrule Field elides the wrap in 25 of its 26 shader
-variants, and is simply not fragment-bound — three-point filtering is free there too (§8.18).~~ The
-change is positive in two scenes and neutral in the third, and has never measured negative.
+~~Capped (§8.17, §8.18): Market −3.59%, Kokiri −2.40%, Hyrule Field −0.07% "a clean null".~~ The
+Market figure was about a quarter low and the Hyrule Field null was the cap entirely (§8.20). The
+change has never measured negative.
 
 Visually identical at every fixture checked, against an in-session control each time (§9.11):
 Kokiri 9,973 against a control of 10,004; Hyrule Field 10,361 against 10,216; Market as recorded
@@ -148,9 +153,9 @@ back. The benchmark install's `soh.o2r` is a real file, deliberately, and the re
 
 ## 4 — Decisions waiting on the device's owner
 
-- [x] **Default `gSettings.ShaderOpts` to 3.** Done. −3.59% in the Market, −2.40% in Kokiri,
-      neutral in Hyrule Field, visually identical at all three and confirmed in real play
-      (§8.18). Ship a matching `soh.o2r` with any binary that carries it.
+- [x] **Default `gSettings.ShaderOpts` to 3.** Done. Uncapped: −4.85% of the frame at the Market,
+      −4.55% at Hyrule Field (§8.20); visually identical at all three fixtures and confirmed in
+      real play (§8.18). Ship a matching `soh.o2r` with any binary that carries it.
 - [ ] **`InterpolationFPS`**: the speed/smoothness trade (§7.5, §7.5b). 20 gives correct speed and
       a choppier picture; 30 gave 0.92× slow motion at report 7's 27.7 FPS. **That number is stale
       and the trade may have dissolved** — the fixture now runs 33.9 FPS on the shipped
