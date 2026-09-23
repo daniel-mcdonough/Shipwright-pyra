@@ -243,6 +243,10 @@ struct Segment {
     // long way and otherwise differs between runs silently. Milli-degrees C, -1 when unreadable.
     int tempStartMilliC = -1;
     int tempEndMilliC = -1;
+    // The game framebuffer as it actually was while this segment was timed, read at its first and
+    // last measured frame. An arm that changes resolution and silently fails to looks exactly like
+    // a scene that is not fill-bound, so the size is evidence rather than assumed from the CVar.
+    uint32_t fbStartW = 0, fbStartH = 0, fbEndW = 0, fbEndH = 0;
 };
 
 using Clock = std::chrono::steady_clock;
@@ -257,7 +261,7 @@ bool gPlayerMoved = false;
 // The A/B CVar is left exactly as it was found. Without this a run would quietly persist
 // whichever arm happened to be last into the user's config on exit.
 bool gHaveOriginalArm = false;
-int gOriginalArm = 0;
+std::string gOriginalArm;
 
 int ArmCount() {
     return gCfg.abCVar.empty() ? 1 : (int)gCfg.abValues.size();
@@ -285,8 +289,16 @@ size_t ArmIndexForSegment(int segment) {
 // SetTextureFilter does that for us. CVAR_SHADER_OPTS is compiled in the same way and drops the
 // cache directly. Anything else here is assumed to be read live; if a future A/B target is not,
 // it needs a case adding rather than silently measuring nothing.
+bool ArmIsFloat() {
+    return gCfg.abCVar == std::string(CVAR_INTERNAL_RESOLUTION);
+}
+
 void ApplyArm(const std::string& value) {
-    CVarSetInteger(gCfg.abCVar.c_str(), (int)strtol(value.c_str(), nullptr, 0));
+    if (ArmIsFloat()) {
+        CVarSetFloat(gCfg.abCVar.c_str(), strtof(value.c_str(), nullptr));
+    } else {
+        CVarSetInteger(gCfg.abCVar.c_str(), (int)strtol(value.c_str(), nullptr, 0));
+    }
 
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
     if (wnd == nullptr) {
@@ -297,6 +309,10 @@ void ApplyArm(const std::string& value) {
         wnd->SetTextureFilter((Fast::FilteringMode)strtol(value.c_str(), nullptr, 0));
     } else if (gCfg.abCVar == std::string(CVAR_SHADER_OPTS)) {
         wnd->ResetShaderCache();
+    } else if (ArmIsFloat()) {
+        // The interpreter copies the multiplier once at Init; the CVar alone changes nothing.
+        // Gui::CalculateGameViewport rescales the framebuffer from it on the next frame.
+        wnd->SetResolutionMultiplier(strtof(value.c_str(), nullptr));
     }
 }
 
@@ -376,11 +392,12 @@ void WriteResults() {
         const Segment& seg = gRunSegments[i];
         snprintf(line, sizeof(line),
                  "BENCH segment %zu arm=%s frames=%zu mean_us=%.1f median_us=%.1f p95_us=%.1f mean_fps=%.3f "
-                 "temp_c=%.1f->%.1f\n",
+                 "temp_c=%.1f->%.1f fb=%ux%u->%ux%u\n",
                  i, seg.arm.c_str(), seg.frameMicros.size(), MeanMicros(seg.frameMicros),
                  MedianMicros(seg.frameMicros), PercentileMicros(seg.frameMicros, 0.95),
                  MeanMicros(seg.frameMicros) > 0.0 ? 1e6 / MeanMicros(seg.frameMicros) : 0.0,
-                 seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0);
+                 seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0, seg.fbStartW, seg.fbStartH,
+                 seg.fbEndW, seg.fbEndH);
         text += line;
     }
 
@@ -555,7 +572,8 @@ void EnterMeasuring() {
     gRunSegments.push_back(Segment{ gCfg.abCVar.empty() ? std::string("single") : gCfg.abValues[0], {} });
     gRunSegments.back().frameMicros.reserve((size_t)gCfg.measureFrames);
     if (!gCfg.abCVar.empty()) {
-        gOriginalArm = CVarGetInteger(gCfg.abCVar.c_str(), 0);
+        gOriginalArm = ArmIsFloat() ? std::to_string(CVarGetFloat(gCfg.abCVar.c_str(), 1.0f))
+                                    : std::to_string(CVarGetInteger(gCfg.abCVar.c_str(), 0));
         gHaveOriginalArm = true;
         ApplyArm(gCfg.abValues[0]);
         // Same reasoning as AdvanceSegment: arm 0 may differ from whatever the config booted
@@ -576,7 +594,7 @@ void AdvanceSegment() {
         gPhase = Phase::Done;
         WriteResults();
         if (gHaveOriginalArm) {
-            ApplyArm(std::to_string(gOriginalArm));
+            ApplyArm(gOriginalArm);
         }
         if (gCfg.exitWhenDone) {
             Ship::Context::GetInstance()->GetWindow()->Close();
@@ -841,7 +859,13 @@ extern "C" void Benchmark_FrameEnd(void) {
         case Phase::Measuring:
             ApplyCameraOverride();
             gRunSegments.back().frameMicros.push_back(micros);
+            if (gPhaseFrames == 0) {
+                gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
+                gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
+            }
             if (++gPhaseFrames >= gCfg.measureFrames) {
+                gRunSegments.back().fbEndW = OTRGetGameRenderWidth();
+                gRunSegments.back().fbEndH = OTRGetGameRenderHeight();
                 gRunSegments.back().tempEndMilliC = ReadTempMilliC();
                 AdvanceSegment();
             }

@@ -112,7 +112,7 @@ Market and Hyrule Field bracket the answer between them; Kokiri sits in the midd
 ### A/B a CVar — the main tool
 
 ```sh
-./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 $MARKET \
+PYRA_TIMEOUT=1800 ./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 $MARKET \
     SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000 SOH_BENCH_REPS=6
 ```
 
@@ -120,7 +120,8 @@ One process, arms swapped between segments, ABBA counterbalanced, CPU pinned to 
 duration and restored on exit. A segment is 600 measured frames plus a 180-frame recompilation
 grace, so ~25 s; `reps` is **pairs**, so `REPS=6` is 12 segments and roughly 5 minutes, `REPS=8`
 is 16 and roughly 7. Add settle and soak. Run it with `run_in_background` and read the output file
-— `bench.sh` has its own 900 s timeout, so a hung harness will not hang you.
+— `bench.sh` has its own timeout (`PYRA_TIMEOUT`, default 900 s), so a hung harness will not hang
+you. The default is too short for a soak that has to run long; see trap 9.
 
 Five or six pairs resolves around 0.5% on a quiet device; a single noisy segment can push that to
 1.5%, which is why the `mde_us` line matters more than the `t`. If you need to separate "no
@@ -173,7 +174,7 @@ trap 3.
 ## 4. Reading the output
 
 ```
-BENCH segment 3 arm=0 frames=600 mean_us=30580.2 ... mean_fps=32.701 temp_c=81.5->80.6
+BENCH segment 3 arm=0 frames=600 mean_us=30580.2 ... mean_fps=32.701 temp_c=81.5->80.6 fb=640x360->640x360
 BENCH pair 1 a_us=30580.2 b_us=30573.1 delta_us=-7.1 delta_pct=-0.02
 BENCH paired n=8 mean_delta_us=-20.54 sd_us=164.36 t=-0.353 df=7
 BENCH mde_us=137.22 (2.365*se at df=7)
@@ -188,6 +189,9 @@ BENCH mde_us=137.22 (2.365*se at df=7)
   absolute terms however tight their error bars.
 - A segment whose temperature *falls* mid-segment is suspect; one produced a −2.48% outlier that
   did not reproduce.
+- `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
+  measured frame, read back from the interpreter rather than inferred from the CVar. For a
+  resolution A/B it is the proof the arm took effect; for anything else it should be constant.
 
 ### Shader elision coverage, when a null needs explaining
 
@@ -244,10 +248,20 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
    night spawns Stalchildren while Market Day becomes a different scene.
 7. **Don't pipe a script through `tail` while debugging it.** Buffering hides all progress and you
    cannot see where it stalled. Write to a file.
-8. **Changing some CVars needs the shader cache dropped.** `ApplyArm` already handles
-   `CVAR_TEXTURE_FILTER` and `CVAR_SHADER_OPTS`; anything else is assumed to be read per frame.
-   Check before A/Bing a new one or you will measure nothing and believe it.
-9. **`Failed flush to file ... Bad file descriptor`** in every log is a known open bug
+8. **Some CVars are not read live.** `ApplyArm` already handles `CVAR_TEXTURE_FILTER` and
+   `CVAR_SHADER_OPTS` (shader cache dropped) and `gSettings.InternalResolution` (read once at
+   `Interpreter::Init`, so `ApplyArm` pushes it through `SetResolutionMultiplier`; it is also the
+   only *float* arm — every other CVar goes through `CVarSetInteger`, which would turn `0.5` into
+   `0`). Anything else is assumed to be read per frame. Check before A/Bing a new one or you will
+   measure nothing and believe it.
+9. **76 °C is not always reachable, and missing it can cost the whole run.** On 2026-09-23 in the
+   evening the die plateaued at 71–73 °C with the pin at 1.25 GHz, so the soak ran to
+   `WARMUP_MAX=20000` (~11 min) before measuring. Add six pairs (~5 min) and the run crosses
+   `bench.sh`'s default `timeout -s KILL 900`, which kills the game *before* it writes
+   `bench.txt` — a quarter-hour for "no results". Check the first soak lines of `run.log`; if the
+   temperature has flattened below target, lower `SOH_BENCH_SOAK_C` to where it flattened and say
+   so in the result. Set `PYRA_TIMEOUT=1800` for any soaked A/B.
+10. **`Failed flush to file ... Bad file descriptor`** in every log is a known open bug
    (report 10), not a symptom of your change.
 
 ## 6. Recipes
