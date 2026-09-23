@@ -8,6 +8,7 @@
 #   ./scripts/pyra/bench.sh deploy                 copy the binary to the device
 #   ./scripts/pyra/bench.sh run [VAR=VAL ...]      run once, print the results
 #   ./scripts/pyra/bench.sh ab <cvar> <a> <b>      interleaved A/B on one CVar
+#   ./scripts/pyra/bench.sh watch start|read|stop  author a fixture with the controls
 #
 # Any SOH_BENCH* variable can be passed through on the command line, e.g.
 #   ./scripts/pyra/bench.sh run SOH_BENCH_FRAMES=1200 SOH_BENCH_STATIC=0
@@ -113,8 +114,55 @@ run() {
     exit 1; }
 }
 
+# --- Fixture authoring -------------------------------------------------------
+# SOH_BENCH_WATCH=1 runs the game normally - no freeze, no camera override, no
+# measurement - and logs position/yaw/eye/at every 60 frames, so a fixture can be
+# walked to with the controls in hand. It never ends on its own, which is why it is
+# not a `run`: start it, play, read the viewpoint, stop it.
+#
+#   ./scripts/pyra/bench.sh watch start SOH_BENCH_ENTRANCE=0x00CD
+#   ...walk to the spot, let the camera settle...
+#   ./scripts/pyra/bench.sh watch read
+#   ./scripts/pyra/bench.sh watch stop
+#
+# No CPU pin here: authoring is not a measurement, and the game is nicer to steer
+# at the clock the governor picks. Scene numbers in the log are the scene_table.h
+# ids - 0x55 Kokiri Forest, 0x51 Hyrule Field.
+watch_start() {
+  watch_stop
+  local env_args=("SOH_BENCH=1" "SOH_BENCH_WATCH=1" "$@")
+  echo "==> ${env_args[*]}" >&2
+  # The redirect and the & are grouped around the launch alone. Putting them after a
+  # `cd ... && rm ... &&` list backgrounds the whole list, so the earlier commands keep
+  # the ssh channel's stdout open and the ssh never returns.
+  ssh -n "$HOST" "cd '$REMOTE_DIR' && rm -f watch.log && \
+    { SDL_VIDEO_X11_FORCE_EGL=1 SDL_VIDEO_GL_DRIVER='$DDK_LIB' DISPLAY='$DISPLAY_ID' \
+      ${env_args[*]} nohup ./soh.elf > watch.log 2>&1 < /dev/null & }"
+  echo "started. Walk to the spot, then: $0 watch read" >&2
+}
+
+watch_read() {
+  ssh -n "$HOST" "grep 'Benchmark viewpoint' '$REMOTE_DIR/watch.log' 2>/dev/null | tail -5" || true
+}
+
+# The game catches SIGTERM and shuts down slowly, so a plain pkill returns long before
+# the process is gone and the next launch meets a live fullscreen window.
+watch_stop() {
+  ssh -n "$HOST" "pkill -x '$COMM' 2>/dev/null; sleep 3; pkill -9 -x '$COMM' 2>/dev/null; sleep 1; exit 0" >/dev/null 2>&1 || true
+}
+
 case "${1:-run}" in
   deploy) deploy ;;
+  watch)
+    shift
+    sub="${1:-start}"; [[ $# -gt 0 ]] && shift
+    case "$sub" in
+      start) watch_start "$@" ;;
+      read)  watch_read ;;
+      stop)  watch_stop ;;
+      *) echo "usage: $0 watch {start [VAR=VAL ...]|read|stop}" >&2; exit 1 ;;
+    esac
+    ;;
   run)    shift; run "$@" ;;
   ab)
     shift
@@ -122,5 +170,5 @@ case "${1:-run}" in
     cvar="$1"; a="$2"; b="$3"; shift 3
     run "SOH_BENCH_AB_CVAR=$cvar" "SOH_BENCH_AB_VALUES=$a,$b" "$@"
     ;;
-  *) echo "usage: $0 {deploy|run|ab}" >&2; exit 1 ;;
+  *) echo "usage: $0 {deploy|run|ab|watch}" >&2; exit 1 ;;
 esac

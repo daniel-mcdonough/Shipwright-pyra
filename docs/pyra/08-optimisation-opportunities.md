@@ -860,3 +860,55 @@ With the leak fixed and a third run of arm A as an in-session control, all four 
 on the floor: control 17,557 pixels, both-arms 18,020 (and in an earlier clean session, control
 10,004 against 9,999 for item 5, 9,809 for item 6, 9,973 for both). **The arms are visually
 identical.** The tool now always captures the control, because the number means nothing without it.
+
+## 8.18 The same optimisation is worth −3.59%, −2.40% and nothing, depending on the scene
+
+§8.17 measured one frozen frame in Kokiri Forest and reported 2.40%. `NEXT.md` ground rule 4 said
+to confirm that on a second scene before treating it as the game's number. It was right to, and
+not for the reason expected — the second scene did not shrink the number, it produced three
+different ones.
+
+Measured 2026-09-23, same harness, same CPU pin, same soak, `gSettings.ShaderOpts` 0 → 3:
+
+| fixture | what it is | mean Δ | t | pairs | effect |
+|---|---|---|---|---|---|
+| Market Day (§9.9c) | a dozen townspeople, near and far buildings | **−1167.9 µs** | −23.74 | 6 | **−3.59%** |
+| Kokiri Forest (§9.9) | enclosed village square, layered combiners | **−704.2 µs** | −11.04 | 5 | **−2.40%** |
+| Hyrule Field (§9.9b) | open plain, long draw distance, sky | −20.5 µs | −0.35 | 8 | **−0.07%** |
+
+The Market result is the largest confirmed win in this catalogue: 30.71 → 31.90 FPS, and every one
+of its six pairs landed between −3.1% and −4.0%. The Hyrule Field result is a clean null — eight
+pairs, sd 164 µs, resolving about 0.46%, so 2.4% is firmly excluded rather than merely unproven.
+
+### Hyrule Field is not fragment-bound, and that is the finding
+
+Two independent checks agree, and they rule out the obvious explanation.
+
+**The elision is applied there.** The per-variant instrumentation in `gfx_opengl.cpp:731` logs
+whether each compiled shader's final wrap was proved redundant. Hyrule Field compiles 26 variants
+and elides the wrap in **25 of them** (96%), 17 of those two-cycle. The Market compiles 23 and
+elides **all 23**, 14 two-cycle. Coverage is not the difference.
+
+**Fragment work in general is free there.** Three-point filtering is pure fragment ALU — three
+samples and their weights, computed per pixel — and §8.15 measured it at 3.6% where it bites. At
+the Hyrule Field fixture, switching it on costs **+33 µs, +0.11%** (n=5, t=0.34, resolves 0.9%).
+A frame that does not notice three extra texture samples per pixel will not notice one `mod()`
+removed.
+
+So roughly 30 ms of that frame is spent somewhere other than the fragment shader: geometry through
+the tiler, per-draw and display-list cost on the CPU, or bandwidth. Which of those is unknown and
+is now the most valuable open question in this document, because Hyrule Field is where the game is
+slowest *and* where every remaining shader-side item in this catalogue — items 3, 5, 6 and the
+whole of §8.6's shader queue — is aimed at a bottleneck that is not there.
+
+### What this changes about how items get ranked
+
+Every percentage in §8.10 through §8.17 was taken at one fixture, and §8.14 already warned that
+changing the viewpoint invalidates comparisons across it. This is worse than that: it means a
+single-fixture measurement does not estimate a change's value with error bars, it samples one
+point from a distribution that spans zero to −3.6%. The rig's 0.5% resolution was never the
+limiting factor in knowing what a change is worth — scene choice was, by a factor of seven, and no
+amount of ABBA pairs at one spot would have revealed it.
+
+Shader-side changes from here run against Market and Hyrule Field at minimum. They bracket the
+answer: one frame where fragment cost dominates, one where it is free.

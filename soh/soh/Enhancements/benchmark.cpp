@@ -300,6 +300,19 @@ void ApplyArm(const std::string& value) {
     }
 }
 
+// Two-sided 5% critical value of Student's t. Small table rather than a computed inverse: the
+// only consumer is the reported minimum detectable effect, the run always has a handful of pairs,
+// and 30+ is close enough to normal that the last entry covers every larger design.
+double TCrit95(size_t df) {
+    static const double kT[] = { 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306,
+                                 2.262,  2.228, 2.201, 2.179, 2.160, 2.145, 2.131 };
+    if (df < 1) {
+        return 0.0;
+    }
+    const size_t n = sizeof(kT) / sizeof(kT[0]);
+    return df <= n ? kT[df - 1] : 2.042;
+}
+
 double MeanMicros(const std::vector<uint32_t>& v) {
     if (v.empty()) {
         return 0.0;
@@ -410,8 +423,11 @@ void WriteResults() {
             text += line;
             // The smallest effect this design could have resolved, at the usual two-sided 5%
             // level. Reporting it alongside a null result is the difference between "no effect"
-            // and "no effect this rig could see".
-            snprintf(line, sizeof(line), "BENCH mde_us=%.2f (approx, 2.78*se at df=4)\n", 2.78 * se);
+            // and "no effect this rig could see". The critical value has to follow the actual
+            // degrees of freedom: hardcoding df=4's 2.776 overstated the detectable effect by
+            // 17% on an eight-pair run, which reads as a weaker rig than the one that ran.
+            snprintf(line, sizeof(line), "BENCH mde_us=%.2f (%.3f*se at df=%zu)\n", TCrit95(deltas.size() - 1) * se,
+                     TCrit95(deltas.size() - 1), deltas.size() - 1);
             text += line;
         }
     }

@@ -17,6 +17,10 @@ Last revised **2026-09-22**, after measuring item A on the device.
    `InterpolationFPS` cap buys slow motion, not smoothness.
 4. **The fixture is a frozen frame.** It tells you a frame got cheaper to draw, not that the game
    got faster. Confirm in real play.
+5. **One fixture does not measure a change, it samples one.** The same shader optimisation is
+   worth −3.59% in the Market, −2.40% in Kokiri and nothing at all in Hyrule Field (§8.18). Scene
+   choice moved the answer by a factor of seven; the rig's 0.5% resolution never came close to
+   mattering that much. Run shader-side changes against **Market and Hyrule Field** at minimum.
 
 ## 1 — Finish the save-corruption job (report 10)
 
@@ -40,6 +44,22 @@ untested and not needed (section 3).
 
 Of the nine catalogued items: **2 measured and won** (5, 6 — §8.17, 2.4% together), **3 closed**
 (1, 2, 7), 1 implemented at no gain (4), 1 premise weakened (3). What is actually left:
+
+### Do this first
+
+**Find out what Hyrule Field's 30 ms is actually spent on.** Not a catalogue item — a gap the
+catalogue does not know it has. The open field is where the game is slowest and where players
+spend the most time, and §8.18 established that fragment work there is free: three-point filtering
+costs 0.11%, and eliding the combiner wrap in 25 of 26 shader variants costs nothing measurable.
+That leaves geometry through the tiler, per-draw and display-list cost on the CPU, or bandwidth —
+and **every remaining shader-side item below is aimed at a bottleneck that is not present in that
+scene.** Ranking them without knowing this is ranking them blind.
+
+The first probe is cheap and needs no code: an A/B on internal resolution at the Hyrule Field
+fixture. If frame time barely moves when the pixel count halves, the cost is per-triangle or
+per-draw and the whole fragment queue is misdirected for open scenes; if it scales, the cost is
+per-pixel but not in the combiner, which points at bandwidth or overdraw instead. Either answer
+reorders the table below.
 
 ### Worth doing
 
@@ -65,37 +85,31 @@ Of the nine catalogued items: **2 measured and won** (5, 6 — §8.17, 2.4% toge
 - **Item 4, `GL_EXT_discard_framebuffer`.** Implemented, measured at no gain (§8.10). Decide
   keep-or-revert on commit `e1fae43d`; it is dead weight either way, not a regression.
 
-### Item A is measured and done — 2.4%, pending one decision
+### Item A is measured, confirmed and ready to ship
 
-**Measured 2026-09-22** (§8.17), five ABBA pairs per arm at the §9.9 fixture, CPU pinned, at
-thermal equilibrium via the new soak:
+**Measured 2026-09-22, confirmed across three scenes and in real play 2026-09-23** (§8.17, §8.18).
+Same harness, CPU pinned, thermal soak, `gSettings.ShaderOpts` 0 → 3:
 
-| arm | | mean Δ | t (df=4) | effect |
+| fixture | mean Δ | t | pairs | effect |
 |---|---|---|---|---|
-| `1` | item 5, elide the no-op `mod()` | **−696.4 µs** | −12.45 | **−2.37%** |
-| `2` | item 6, `int` → `vec2` size uniforms | −158.8 µs | −4.06 | −0.54% |
-| `3` | both | **−704.2 µs** | −11.04 | **−2.40%** |
+| Market Day | **−1167.9 µs** | −23.74 | 6 | **−3.59%** (30.71 → 31.90 FPS) |
+| Kokiri Forest | **−704.2 µs** | −11.04 | 5 | **−2.40%** (34.15 → 34.99 FPS) |
+| Hyrule Field | −20.5 µs | −0.35 | 8 | −0.07%, a clean null resolving 0.46% |
 
-34.15 → 34.99 FPS at the fixture. Visually identical to the shipped shader — `shotcheck.sh`
-against an in-session control (§9.11). The two halves are not additive: the wrap elision is
-essentially the whole win.
+The null is not a failure of the optimisation: Hyrule Field elides the wrap in 25 of its 26 shader
+variants, and is simply not fragment-bound — three-point filtering is free there too (§8.18). The
+change is positive in two scenes and neutral in the third, and has never measured negative.
 
-**The decision below is yours: `gSettings.ShaderOpts` still defaults to 0, so none of this is on.**
-Recommend defaulting it to **3**. Both halves are positive and neither changes the picture; item 6
-earns little per fragment but removes a `glUniform` per draw, and keeping both on means one code
-path gets exercised rather than two. Nothing else in the catalogue that is not a fidelity trade
-comes close to 2.4%.
+Visually identical at every fixture checked, against an in-session control each time (§9.11):
+Kokiri 9,973 against a control of 10,004; Hyrule Field 10,361 against 10,216; Market as recorded
+in §8.18. Confirmed in real play by the device's owner across Kokiri, Hyrule Field and the Market
+— no artefacts, including at the fire, water and dark-interior cases where a mis-analysed wrap
+would show first.
 
-Two caveats before it ships as a default:
-
-- **This is a frozen frame at one fixture.** Ground rule 4 applies: confirm in real play, and on a
-  second scene, before treating 2.4% as the game's number. The wrap elision's share depends on
-  which combiners a scene reaches for, and `wrapscan.py`'s 95.2% is a static command count, not a
-  fragment-weighted one.
-- **The shader is an asset.** Shipping this means shipping a matching `soh.o2r`; a binary that
-  meets an old archive logs `soh.o2r is older than this binary` and falls back. The benchmark
-  install's `soh.o2r` is no longer a symlink into `~/soh-pyra` — it is a real file, deliberately,
-  and the real install is still on the old archive.
+One caveat survives: **the shader is an asset.** Shipping this means shipping a matching
+`soh.o2r`; a binary that meets an old archive logs `soh.o2r is older than this binary` and falls
+back. The benchmark install's `soh.o2r` is a real file, deliberately, and the real install at
+`~/soh-pyra` is still on the old archive.
 
 ## 3 — Measurement debt
 
@@ -122,9 +136,9 @@ Two caveats before it ships as a default:
 
 ## 4 — Decisions waiting on the device's owner
 
-- [ ] **Default `gSettings.ShaderOpts` to 3.** Measured at −2.40% and visually identical
-      (§8.17); it is off by default, so the win is not being had. Recommended, with the two
-      caveats in section 2 — confirm in real play first, and ship a matching `soh.o2r`.
+- [x] **Default `gSettings.ShaderOpts` to 3.** Done. −3.59% in the Market, −2.40% in Kokiri,
+      neutral in Hyrule Field, visually identical at all three and confirmed in real play
+      (§8.18). Ship a matching `soh.o2r` with any binary that carries it.
 - [ ] **`InterpolationFPS`**: the speed/smoothness trade (§7.5, §7.5b). 20 gives correct speed and
       a choppier picture; 30 gave 0.92× slow motion at report 7's 27.7 FPS. **That number is stale
       and the trade may have dissolved** — the fixture now runs 33.9 FPS on the shipped

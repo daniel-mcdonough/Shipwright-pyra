@@ -378,6 +378,13 @@ the game normally — no freeze, no overrides, no measurement — and logs posit
 fovy every 60 frames. Walk the player to a good spot, let the camera settle, read the last line,
 pin those numbers.
 
+`bench.sh watch start|read|stop` drives it. It is deliberately not a `run`: watch mode never ends
+on its own, so there is nothing to wait for and nothing to fetch. `start` launches the game
+detached and returns, `read` prints the last few viewpoint lines, `stop` kills it — TERM, wait,
+KILL, because the game catches TERM and shuts down slowly enough that a plain `pkill` returns
+while a fullscreen window is still on the screen. There is no CPU pin: authoring is not a
+measurement.
+
 ### The fixture
 
 ```
@@ -395,6 +402,55 @@ geometry, characters and transparency in one frame — which is what the old fix
 
 **Numbers taken before this section are not comparable to numbers taken after it.** The viewpoint
 changed, so every percentage in report 8 §8.12 belongs to the old frame.
+
+### The second fixture — Hyrule Field
+
+One indoor fixture is not a workload, and the wrap elision's share of a frame depends on which
+combiners a scene reaches for. Authored 2026-09-22 with the controls in hand:
+
+```
+SOH_BENCH_ENTRANCE=0x00CD
+SOH_BENCH_POS=1089.4,379.7,5669.1
+SOH_BENCH_YAW=0xA1F9
+SOH_BENCH_EYE=1217.7,458.2,5780.3
+SOH_BENCH_AT=1089.4,424.7,5669.1
+```
+
+Hyrule Field, on high ground looking out across the plain. It is the opposite frame to Kokiri by
+design: a very large ground plane, long draw distance, a lot of sky, few actors, almost no
+transparency. Noon and child Link, which the harness forces anyway — Hyrule Field at night spawns
+Stalchildren, and a fixture whose actor population depends on the clock is not a fixture.
+
+The camera creeps about 0.3 units every two seconds even with the player standing still, because
+the camera spring never fully settles. That does not matter once `SOH_BENCH_EYE`/`AT` are pinned,
+but it is why the viewpoint is read from the *last* log line rather than the first still one.
+
+### The third fixture — Market Day
+
+```
+SOH_BENCH_ENTRANCE=0x00B1
+SOH_BENCH_POS=-122.7,0.0,72.1
+SOH_BENCH_YAW=0xD5A6
+SOH_BENCH_EYE=0.0,64.0,0.0
+SOH_BENCH_AT=-134.5,64.0,79.0
+```
+
+Hyrule Market Day, standing in the square. A dozen townspeople including a knot of them at mid
+range, a cucco, Navi, foliage, two villagers hard against the left edge of a 16:9 frame, stone
+buildings near and far, and a cobbled ground plane filling the lower third. The most actor-heavy
+frame of the three, and the one closest to where the game is actually played.
+
+`SOH_BENCH_EYE` really is the world origin here — the Market's camera happens to sit at
+`[0, 64, 0]` from this spot. It looks like an uninitialised value and is not one.
+
+### Why three fixtures and not one
+
+The three are not redundant, and the reason is the whole point of §8.18: the same optimisation
+measures −2.40%, −0.07% and −3.59% across them. A single fixture cannot tell you which of those
+numbers your change actually has. Kokiri is enclosed and layered, the Market is actor-dense, and
+Hyrule Field is open and — as it turns out — not fragment-bound at all. Any shader-side change
+should be run against at least Market and Hyrule Field, because between them they bracket the
+answer.
 
 ## 9.10 The soak: making two runs comparable, not just two segments
 
