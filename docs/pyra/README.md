@@ -13,6 +13,10 @@ is the operating manual for the harness — setup, the three fixtures, the four 
 read the output, and the traps that have each cost a session. Report 9 explains why it works;
 `TESTING.md` is how to use it.
 
+**If you are starting a fresh session on performance, [`PROMPT.md`](PROMPT.md) is the paste-ready
+brief** — the current task, the device rule, what not to redo. Rewrite its task section when that
+task lands; a stale prompt is worse than none.
+
 ## Scope: this fork targets the Pyra only
 
 Decided 2026-09-22. Earlier reports were written under a "keep changes upstreamable" constraint
