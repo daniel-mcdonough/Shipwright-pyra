@@ -14,6 +14,19 @@
 #
 # The device must be idle. Measuring while anything else is running measures that
 # instead - see docs/pyra/07-phase5-performance.md for how much the machine moves.
+#
+# It must also be at a repeatable temperature. Frame rate falls ~30% between a cold
+# part and equilibrium, and the warm-up frame count alone does not get there: report 8
+# §8.14 watched a run with 16000 warm-up frames still climb 46 -> 77 C. Pass
+# SOH_BENCH_SOAK_C to hold warm-up until the die reaches a temperature, so every run
+# starts measuring at the same one:
+#
+#   ./scripts/pyra/bench.sh ab <cvar> 0 3 SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000
+#
+# The soak is free on a device that is already hot, so a back-to-back sequence of runs
+# pays it once. Every result line now carries temp_c=start->end; two runs whose
+# temperatures do not overlap are not comparable in absolute terms however tight their
+# individual error bars are.
 set -euo pipefail
 
 HOST="${PYRA_HOST:?set PYRA_HOST to user@device}"

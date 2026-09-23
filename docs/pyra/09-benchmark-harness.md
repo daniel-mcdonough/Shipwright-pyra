@@ -122,7 +122,10 @@ last arm persisted into the saved config.
 | `SOH_BENCH_AT` | unset | `x,y,z` camera target; required with `EYE` |
 | `SOH_BENCH_STATIC` | `1` | freeze game logic |
 | `SOH_BENCH_SETTLE` | `240` | frames before freezing |
-| `SOH_BENCH_WARMUP` | `600` | frames discarded before the first segment |
+| `SOH_BENCH_WARMUP` | `600` | frames discarded before the first segment — a floor, not the whole warm-up when a soak is set |
+| `SOH_BENCH_SOAK_C` | `0` (off) | hold warm-up until the CPU thermal zone reads this many °C, so every run starts measuring at one temperature (§9.10) |
+| `SOH_BENCH_WARMUP_MAX` | `12000` | frames after which the soak gives up and says so |
+| `SOH_BENCH_TEMP_PATH` | auto | thermal zone to read; resolved by looking for a zone whose `type` starts `cpu` |
 | `SOH_BENCH_SEG_WARMUP` | `180` | frames discarded after each arm switch |
 | `SOH_BENCH_FRAMES` | `600` | measured frames per segment |
 | `SOH_BENCH_REPS` | `5` | A/B pairs (counterbalanced ABBA) |
@@ -141,7 +144,8 @@ BENCH config entrance=0x00EE age=1 dayTime=0x8000 night=0
 BENCH config settle=240 warmup=600 measure=600 static=1 targetFps=240
 BENCH config window=1280x720 game_fb=640x360 fullscreen=1
 BENCH config abCVar=gSettings.TextureFilter reps=5
-BENCH segment 0 arm=0 frames=600 mean_us=... median_us=... p95_us=... mean_fps=...
+BENCH config soak_target_c=76 warmup_max=20000 temp_now_c=79.3
+BENCH segment 0 arm=0 frames=600 mean_us=... median_us=... p95_us=... mean_fps=... temp_c=76.1->78.4
 ...
 BENCH pair 0 a_us=... b_us=... delta_us=... delta_pct=...
 BENCH paired n=5 mean_delta_us=... sd_us=... t=... df=4
@@ -391,3 +395,37 @@ geometry, characters and transparency in one frame — which is what the old fix
 
 **Numbers taken before this section are not comparable to numbers taken after it.** The viewpoint
 changed, so every percentage in report 8 §8.12 belongs to the old frame.
+
+## 9.10 The soak: making two runs comparable, not just two segments
+
+ABBA cancels thermal drift *inside* a run. Nothing made two runs start at the same temperature,
+and the harness did not record what temperature either one ran at — so a frame time from one run
+and a frame time from another were being compared as though they meant the same thing when the
+die could differ by 30 °C between them, on a part whose frame rate moves ~30% across that range
+(§7.1, §9.1).
+
+Two changes:
+
+- **`SOH_BENCH_SOAK_C` gates the end of warm-up on temperature**, not just on a frame count. Both
+  conditions have to hold — `SOH_BENCH_WARMUP` frames *and* the target — because the frame count
+  is the shader-compilation floor and skipping it on a part that is already hot would measure the
+  IMG compiler instead. `SOH_BENCH_WARMUP_MAX` bounds the wait and logs a warning rather than
+  hanging when the fixture is too light to ever reach the target.
+- **Every segment line carries `temp_c=start->end`**, and the config block carries the target.
+  Thermal state is now in the results rather than in someone's memory of the run.
+
+`76` is the recommended target: it is the bottom of the 73–79 °C equilibrium band report 7 §7.1
+measured, and §8.14 reached 76.8 °C in about 16000 frames from cold — hence
+`SOH_BENCH_WARMUP_MAX=20000`. Soaking to near the asymptote also shrinks the drift ABBA has to
+cancel, because the curve is flattest there: §9.7's pinned run climbed 65.7 → 81.1 °C and drifted
++1.3% across its segments, and most of that climb was the steep part below equilibrium.
+
+The cost is paid once per cold start, not once per run. A back-to-back sequence — the visual
+check, then `0 3`, then `0 1`, then `0 2` — soaks during the first and finds the target already
+met for the rest.
+
+**What it still does not fix:** the part keeps warming during the measurement. The soak sets a
+repeatable starting point; it does not hold a temperature. Ambient is also unrecorded and
+uncontrolled, so a run in a warm room and a run in a cold one reach 76 °C at different rates and
+sit at different equilibria. Comparing absolute frame times across sessions remains weaker than
+comparing arms within one.

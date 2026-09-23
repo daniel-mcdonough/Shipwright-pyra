@@ -52,8 +52,18 @@ struct Config {
 
     // Frame budget, all counted in rendered frames rather than game ticks.
     int settleFrames = 240;  // scene load, title card, actors reaching rest
-    int warmupFrames = 600;  // shader compilation and thermal settle
+    int warmupFrames = 600;  // shader compilation, and the minimum thermal soak
     int measureFrames = 600; // per segment
+    // Thermal soak. The warm-up frame count alone does not get this part anywhere near steady
+    // state - §8.14 watched the die go 46 -> 77 C across a run with 16000 warm-up frames, and
+    // §9.7 watched a pinned run go 65.7 -> 81.1 C. ABBA cancels that drift inside a run; what it
+    // cannot do is make two runs start at the same temperature, which is what makes one run's
+    // absolute frame time comparable with another's. Holding warm-up until the die reaches a
+    // target does. 0 disables it and restores the old fixed-frame behaviour.
+    int soakTargetC = 0;
+    // The soak cannot wait forever: on a cool day, or with the fixture light enough that the
+    // part never gets there, an unbounded wait is a hang that looks like a slow run.
+    int warmupMaxFrames = 12000;
     // Switching arms drops the shader cache, so the first frames of every segment after the
     // first pay recompilation. Discarding them is the difference between measuring the change
     // and measuring the IMG shader compiler.
@@ -159,6 +169,61 @@ bool ParseVec3(const char* name, float out[3]) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Die temperature
+// ---------------------------------------------------------------------------------------------
+
+// The thermal zone is resolved once by name rather than hard-coded by index: zone numbering is
+// not stable across kernels, and reading the wrong zone would report the PMIC or the battery and
+// look entirely plausible. SOH_BENCH_TEMP_PATH overrides it for a board that names its zone
+// something else.
+std::string ResolveTempPath() {
+    const char* override_path = getenv("SOH_BENCH_TEMP_PATH");
+    if (override_path != nullptr && override_path[0] != '\0') {
+        return override_path;
+    }
+    for (int i = 0; i < 32; i++) {
+        char typePath[64];
+        snprintf(typePath, sizeof(typePath), "/sys/class/thermal/thermal_zone%d/type", i);
+        FILE* f = fopen(typePath, "r");
+        if (f == nullptr) {
+            break; // zones are numbered contiguously; the first gap is the end
+        }
+        char type[64] = { 0 };
+        const bool read = fgets(type, sizeof(type), f) != nullptr;
+        fclose(f);
+        if (!read) {
+            continue;
+        }
+        if (strncmp(type, "cpu", 3) == 0) {
+            char tempPath[64];
+            snprintf(tempPath, sizeof(tempPath), "/sys/class/thermal/thermal_zone%d/temp", i);
+            return tempPath;
+        }
+    }
+    return "";
+}
+
+// Milli-degrees C, or -1 if there is nothing to read. Opened per call rather than held: this runs
+// once per segment boundary and once a second during the soak, so the syscall is free next to
+// being one more descriptor open for the whole run - see report 10 on descriptors in this process.
+int ReadTempMilliC() {
+    static const std::string path = ResolveTempPath();
+    if (path.empty()) {
+        return -1;
+    }
+    FILE* f = fopen(path.c_str(), "r");
+    if (f == nullptr) {
+        return -1;
+    }
+    int milli = -1;
+    if (fscanf(f, "%d", &milli) != 1) {
+        milli = -1;
+    }
+    fclose(f);
+    return milli;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Run state
 // ---------------------------------------------------------------------------------------------
 
@@ -174,6 +239,10 @@ enum class Phase {
 struct Segment {
     std::string arm;
     std::vector<uint32_t> frameMicros;
+    // Recorded for the same reason the window size is: it is a confound that moves the number a
+    // long way and otherwise differs between runs silently. Milli-degrees C, -1 when unreadable.
+    int tempStartMilliC = -1;
+    int tempEndMilliC = -1;
 };
 
 using Clock = std::chrono::steady_clock;
@@ -284,13 +353,21 @@ void WriteResults() {
              gCfg.abCVar.empty() ? "(none)" : gCfg.abCVar.c_str(), gCfg.reps);
     text += line;
 
+    // Without this a run's thermal state is not in its own results, and two runs taken at
+    // different temperatures compare as though they were taken at the same one.
+    snprintf(line, sizeof(line), "BENCH config soak_target_c=%d warmup_max=%d temp_now_c=%.1f\n",
+             gCfg.soakTargetC, gCfg.warmupMaxFrames, ReadTempMilliC() / 1000.0);
+    text += line;
+
     for (size_t i = 0; i < gRunSegments.size(); i++) {
         const Segment& seg = gRunSegments[i];
         snprintf(line, sizeof(line),
-                 "BENCH segment %zu arm=%s frames=%zu mean_us=%.1f median_us=%.1f p95_us=%.1f mean_fps=%.3f\n", i,
-                 seg.arm.c_str(), seg.frameMicros.size(), MeanMicros(seg.frameMicros),
+                 "BENCH segment %zu arm=%s frames=%zu mean_us=%.1f median_us=%.1f p95_us=%.1f mean_fps=%.3f "
+                 "temp_c=%.1f->%.1f\n",
+                 i, seg.arm.c_str(), seg.frameMicros.size(), MeanMicros(seg.frameMicros),
                  MedianMicros(seg.frameMicros), PercentileMicros(seg.frameMicros, 0.95),
-                 MeanMicros(seg.frameMicros) > 0.0 ? 1e6 / MeanMicros(seg.frameMicros) : 0.0);
+                 MeanMicros(seg.frameMicros) > 0.0 ? 1e6 / MeanMicros(seg.frameMicros) : 0.0,
+                 seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0);
         text += line;
     }
 
@@ -468,8 +545,13 @@ void EnterMeasuring() {
         // Same reasoning as AdvanceSegment: arm 0 may differ from whatever the config booted
         // with, so the first segment gets the same recompilation grace as the rest.
         gPhase = Phase::SegmentWarmup;
+    } else {
+        // No arm to apply and no cache to rebuild, so this one starts timing straight away and
+        // its start temperature is now rather than after a segment warm-up.
+        gRunSegments.back().tempStartMilliC = ReadTempMilliC();
     }
-    SPDLOG_INFO("Benchmark measuring: {} segments of {} frames", TotalSegments(), gCfg.measureFrames);
+    SPDLOG_INFO("Benchmark measuring: {} segments of {} frames, die {:.1f} C", TotalSegments(),
+                gCfg.measureFrames, ReadTempMilliC() / 1000.0);
 }
 
 void AdvanceSegment() {
@@ -517,6 +599,8 @@ extern "C" void Benchmark_Init(void) {
     gCfg.nightFlag = EnvInt("SOH_BENCH_NIGHT", gCfg.nightFlag);
     gCfg.settleFrames = EnvInt("SOH_BENCH_SETTLE", gCfg.settleFrames);
     gCfg.warmupFrames = EnvInt("SOH_BENCH_WARMUP", gCfg.warmupFrames);
+    gCfg.soakTargetC = EnvInt("SOH_BENCH_SOAK_C", gCfg.soakTargetC);
+    gCfg.warmupMaxFrames = EnvInt("SOH_BENCH_WARMUP_MAX", gCfg.warmupMaxFrames);
     gCfg.segmentWarmupFrames = EnvInt("SOH_BENCH_SEG_WARMUP", gCfg.segmentWarmupFrames);
     gCfg.measureFrames = EnvInt("SOH_BENCH_FRAMES", gCfg.measureFrames);
     gCfg.staticScene = EnvBool("SOH_BENCH_STATIC", gCfg.staticScene);
@@ -560,9 +644,16 @@ extern "C" void Benchmark_Init(void) {
                     gCfg.entrance);
     }
 
-    SPDLOG_INFO("Benchmark active: entrance=0x{:04X} age={} static={} settle={} warmup={} frames={} reps={} ab={}",
+    if (gCfg.soakTargetC > 0 && ReadTempMilliC() < 0) {
+        SPDLOG_ERROR("SOH_BENCH_SOAK_C is set but no CPU thermal zone could be read. The soak will not "
+                     "happen and this run will start at whatever temperature it starts at.");
+    }
+
+    SPDLOG_INFO("Benchmark active: entrance=0x{:04X} age={} static={} settle={} warmup={} soak={}C frames={} "
+                "reps={} ab={} die={:.1f}C",
                 gCfg.entrance, gCfg.linkAge, gCfg.staticScene, gCfg.settleFrames, gCfg.warmupFrames,
-                gCfg.measureFrames, gCfg.reps, gCfg.abCVar.empty() ? "(none)" : gCfg.abCVar);
+                gCfg.soakTargetC, gCfg.measureFrames, gCfg.reps,
+                gCfg.abCVar.empty() ? "(none)" : gCfg.abCVar, ReadTempMilliC() / 1000.0);
 }
 
 extern "C" void Benchmark_SetupDebugSave(void) {
@@ -698,17 +789,36 @@ extern "C" void Benchmark_FrameEnd(void) {
             }
             break;
 
-        case Phase::Warmup:
+        case Phase::Warmup: {
             ApplyCameraOverride();
-            if (++gPhaseFrames >= gCfg.warmupFrames) {
+            gPhaseFrames++;
+            const int milli = gCfg.soakTargetC > 0 ? ReadTempMilliC() : -1;
+            if (gCfg.soakTargetC > 0 && gPhaseFrames % 60 == 0) {
+                SPDLOG_INFO("Benchmark soak: frame {}/{}, die {:.1f} C, target {} C", gPhaseFrames,
+                            gCfg.warmupMaxFrames, milli / 1000.0, gCfg.soakTargetC);
+            }
+            // Both conditions, not either: the frame count is the shader-compilation floor and
+            // the temperature is the thermal one, and a run that skipped the first because the
+            // part happened to be hot would measure the IMG compiler instead.
+            const bool warmEnough = gCfg.soakTargetC <= 0 || milli < 0 || milli >= gCfg.soakTargetC * 1000;
+            if (gPhaseFrames >= gCfg.warmupFrames && warmEnough) {
+                EnterMeasuring();
+            } else if (gPhaseFrames >= gCfg.warmupMaxFrames) {
+                // Say so rather than measuring cold in silence. The results still carry the
+                // per-segment temperatures, so a run that ended up here is recognisable later.
+                SPDLOG_WARN("Benchmark soak: gave up after {} frames at {:.1f} C without reaching {} C. "
+                            "This run did NOT start at the same temperature as one that did.",
+                            gPhaseFrames, milli / 1000.0, gCfg.soakTargetC);
                 EnterMeasuring();
             }
             break;
+        }
 
         case Phase::SegmentWarmup:
             if (++gPhaseFrames >= gCfg.segmentWarmupFrames) {
                 gPhase = Phase::Measuring;
                 gPhaseFrames = 0;
+                gRunSegments.back().tempStartMilliC = ReadTempMilliC();
             }
             break;
 
@@ -716,6 +826,7 @@ extern "C" void Benchmark_FrameEnd(void) {
             ApplyCameraOverride();
             gRunSegments.back().frameMicros.push_back(micros);
             if (++gPhaseFrames >= gCfg.measureFrames) {
+                gRunSegments.back().tempEndMilliC = ReadTempMilliC();
                 AdvanceSegment();
             }
             break;

@@ -88,11 +88,21 @@ export PYRA_HOST=pyra@pyra.local PYRA_DIR=/home/pyra/soh-bench2
 ./scripts/pyra/bench.sh deploy
 ./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 \
     SOH_BENCH_ENTRANCE=0x00EE SOH_BENCH_POS=-592.8,0.0,-195.9 SOH_BENCH_YAW=0x369E \
-    SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400
+    SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400 \
+    SOH_BENCH_SOAK_C=76 SOH_BENCH_WARMUP_MAX=20000
 ```
 
 `reps` defaults to 5, which is the ten segments every other run in these documents used. Then
 `0 1` and `0 2` if the pair clears 0.57%, to find out which half earned it.
+
+**`SOH_BENCH_SOAK_C` is new and the sequence above needs it.** Warm-up holds until the die
+reaches that temperature rather than for a fixed number of frames, so all three runs start
+measuring at one temperature instead of at whatever the part happened to be when each launched.
+Without it the three runs are each internally valid and not comparable with each other — 76 °C is
+the bottom of the equilibrium band report 7 §7.1 measured, and §8.14 reached 76.8 °C in about
+16000 frames from cold, which is where `SOH_BENCH_WARMUP_MAX=20000` comes from. Runs two and
+three pay nothing: the device is already there. Every segment line now reports
+`temp_c=start->end`, so a run that gave up before reaching the target says so in its own results.
 
 **The visual check runs on the same harness**, before the benchmark, with three variables changed.
 `SOH_BENCH_EXIT=0` leaves the window up instead of closing it; the short segment lengths flip
@@ -103,6 +113,9 @@ segment boundaries:
 ```sh
 # EXIT=0 means the harness never closes the window, so the run ends at PYRA_TIMEOUT instead.
 # Four short pairs is about eighty seconds of flipping; the rest of the timeout is looking time.
+# No SOH_BENCH_SOAK_C here: this run is looking at colours, not timing anything, and soaking
+# first would only mean waiting six minutes to start looking. It does leave the part warm for
+# the benchmark that follows, which is the right way round.
 PYRA_TIMEOUT=240 ./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 \
     SOH_BENCH_ENTRANCE=0x00EE SOH_BENCH_POS=-592.8,0.0,-195.9 SOH_BENCH_YAW=0x369E \
     SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400 \
@@ -182,9 +195,13 @@ should have wrapped, which the harness cannot see and a screenshot can.
       host" line several documents repeat is wrong about the archive — but a full host link and a
       virtual display are still missing, and llvmpipe would answer "did the colours change" and
       nothing else. Worth an hour only if device time becomes the bottleneck.
-- [ ] **Re-baseline report 7's absolute FPS figures** on the report 9 harness. The fixture and the
-      CPU pinning landed; the absolutes themselves were never re-taken, so every number in report 7
-      is still stale and still quoted.
+- [ ] **Re-baseline report 7's absolute FPS figures** on the report 9 harness, **with
+      `SOH_BENCH_SOAK_C`**. The fixture and the CPU pinning landed; the absolutes themselves were
+      never re-taken, so every number in report 7 is still stale and still quoted. Absolutes are
+      exactly the measurement the soak exists for: until this rig started recording temperature
+      (§9.10) no absolute figure in any of these documents came with the die temperature it was
+      taken at, on a part whose frame rate moves ~30% across the range one run covers. That
+      includes the 33.9 FPS the `InterpolationFPS` decision below now rests on.
 - [ ] Add the **Hyrule Field** and **Market/Kakariko** fixtures. Easy now via `SOH_BENCH_WATCH`.
       One indoor fixture is not a workload.
 
@@ -195,7 +212,10 @@ should have wrapped, which the harness cannot see and a screenshot can.
       and the trade may have dissolved** — the fixture now runs 33.9 FPS on the shipped
       `FILTER_LINEAR` default (§8.14), which is above 30 and would make `InterpolationFPS = 30`
       correct speed *and* smoother. Do the re-baseline in section 3 before putting this to anyone;
-      it may already be a free choice rather than a trade.
+      it may already be a free choice rather than a trade. **33.9 is 3.9 FPS of margin over the
+      cap and was measured at an unrecorded temperature**, which is the one place where that
+      omission actually decides something: if it was taken early in a run it is a cold number and
+      the margin may not survive a soaked re-measurement.
 - [ ] **The staged `GfxSpVertex` hoist patch** — apply or drop. **Warning: it was staged in a
       session scratchpad and is not in the repo.** Nothing named `hoist.py` survives here, so this
       is "rewrite or forget", not "apply or drop". Treat it as forgotten unless someone has it.
