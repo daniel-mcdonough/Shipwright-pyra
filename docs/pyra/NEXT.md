@@ -77,7 +77,7 @@ to drop the shader cache when this is the A/B CVar, the same as the filtering mo
 
 ```sh
 ./scripts/pyra/build.sh build -j"$(nproc)"          # done
-cmake --build build-cmake --target GenerateSohOtr   # the shader lives in soh.o2r, not the binary
+cmake --build build-cmake --target GenerateSohOtr   # done - the shader lives in soh.o2r, not the binary
 
 # soh-bench2/soh.o2r is a symlink into soh-pyra. Writing through it would replace the real
 # install's assets with a benchmark build's. Break the link first, deliberately.
@@ -93,6 +93,33 @@ export PYRA_HOST=pyra@pyra.local PYRA_DIR=/home/pyra/soh-bench2
 
 `reps` defaults to 5, which is the ten segments every other run in these documents used. Then
 `0 1` and `0 2` if the pair clears 0.57%, to find out which half earned it.
+
+**The visual check runs on the same harness**, before the benchmark, with three variables changed.
+`SOH_BENCH_EXIT=0` leaves the window up instead of closing it; the short segment lengths flip
+between arms every few seconds instead of every twenty-five; and because the scene is frozen and
+the camera pinned, *the two arms should be the same picture*. Watch the screen across a few
+segment boundaries:
+
+```sh
+# EXIT=0 means the harness never closes the window, so the run ends at PYRA_TIMEOUT instead.
+# Four short pairs is about eighty seconds of flipping; the rest of the timeout is looking time.
+PYRA_TIMEOUT=240 ./scripts/pyra/bench.sh ab gSettings.ShaderOpts 0 3 \
+    SOH_BENCH_ENTRANCE=0x00EE SOH_BENCH_POS=-592.8,0.0,-195.9 SOH_BENCH_YAW=0x369E \
+    SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTLE=400 \
+    SOH_BENCH_FRAMES=150 SOH_BENCH_SEG_WARMUP=60 SOH_BENCH_REPS=4 SOH_BENCH_EXIT=0
+```
+
+A correct elision is invisible: `mod()` then `clamp()` and `clamp()` alone agree to within a
+float rounding on values that were already in range. A wrong one is not subtle — a channel that
+should have wrapped to near-zero saturates to full instead, so the failure is a patch of the
+scene changing colour in step with the arm, not a shade nobody can call. If nothing flickers,
+run the benchmark above.
+
+This is an eyeball test and it is deliberately not automated. A `glReadPixels` capture and a
+pixel diff would be stricter and would make it repeatable, but there is no capture path in the
+harness today and the swap happens inside `Fast3dWindow::DrawAndRunGraphicsCommands` — adding one
+means a hook before the swap, not a call from `Benchmark_FrameEnd`, where the back buffer is
+already undefined on a tile-based renderer. Worth building if shader changes become routine.
 
 **The shader is an asset, not part of the binary.** `default.shader.fs` is copied out of
 libultraship into `soh/assets/custom/shaders/` and packed into `soh.o2r` at build time, so
