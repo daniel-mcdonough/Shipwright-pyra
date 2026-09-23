@@ -459,9 +459,19 @@ rather than one launch quietly overwriting the other's frames and being compared
 ### The 1.25 GHz cap is a daemon, not luck
 
 §9.7 says every run before the pin "sat at 1.25 GHz by luck". It is not luck: `pyra-thermal.service`,
-the Pyra's own thermal daemon, holds `scaling_max_freq` there. Writing `cpuinfo_max_freq`
-(1,500,000) into `scaling_max_freq` takes effect and is reverted within three seconds, with the
-`thermal-cpufreq-0` cooling device still at state 0 — so this is the daemon's policy, not kernel
-thermal throttling. Two consequences: `bench.sh` pinning to exactly 1.25 GHz agrees with the
-device's own steady state rather than fighting it, which is part of why pinning worked so well;
-and a run is never leaving the device in an unusual state, because the daemon puts it back.
+the Pyra's own thermal daemon, moves `scaling_max_freq` **with die temperature**. Warm, it holds
+1.25 GHz — writing `cpuinfo_max_freq` (1,500,000) in takes effect and is reverted within three
+seconds, with the `thermal-cpufreq-0` cooling device still at state 0, so this is the daemon's
+policy and not kernel thermal throttling. Cooled to 65 °C it puts the ceiling back to 1.5 GHz on
+its own.
+
+Three consequences, and the third is the important one:
+
+- `bench.sh` pinning to exactly 1.25 GHz agrees with the device's own warm steady state rather
+  than fighting it, which is part of why pinning worked so well.
+- A run never leaves the device in an unusual state; the daemon puts it back.
+- **A cold, unpinned run starts with a 1.5 GHz ceiling and loses it part-way through as the part
+  warms.** That is a step change in the middle of a measurement, which is exactly the shape ABBA
+  does not cancel and exactly what §8.14 saw. It is a second, independent reason for the soak
+  (§9.10): reaching equilibrium before measuring puts the run entirely on one side of the
+  daemon's decision instead of straddling it.
