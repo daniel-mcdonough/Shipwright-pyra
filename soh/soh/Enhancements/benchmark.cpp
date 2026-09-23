@@ -231,6 +231,26 @@ int ReadTempMilliC() {
     return milli;
 }
 
+// kHz, or -1 if unreadable. The policy's current frequency for cpu0: bench.sh pins min == max, so
+// this only moves if something rewrites the limits underneath the pin - pyra-thermal.service or a
+// kernel cooling device. Same open-per-call reasoning as ReadTempMilliC.
+int ReadCpuKHz() {
+    FILE* f = fopen("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", "r");
+    if (f == nullptr) {
+        return -1;
+    }
+    int khz = -1;
+    if (fscanf(f, "%d", &khz) != 1) {
+        khz = -1;
+    }
+    fclose(f);
+    return khz;
+}
+
+// Mid-segment clock samples, every this many measured frames. Start and end alone cannot see a
+// throttle that recovers before the segment ends; one sysfs read per 30 frames is noise.
+constexpr int kCpuSampleEvery = 30;
+
 // ---------------------------------------------------------------------------------------------
 // Run state
 // ---------------------------------------------------------------------------------------------
@@ -251,6 +271,12 @@ struct Segment {
     // long way and otherwise differs between runs silently. Milli-degrees C, -1 when unreadable.
     int tempStartMilliC = -1;
     int tempEndMilliC = -1;
+    // cpu0's clock at the segment's start and end, and the lowest seen by sampling in between.
+    // One uncapped run at a pinned 1.25 GHz came out 15% slow with nothing to say why (report 8
+    // §8.19); a segment whose clock moved is discarded, not averaged. kHz, -1 when unreadable.
+    int cpuStartKHz = -1;
+    int cpuEndKHz = -1;
+    int cpuMinKHz = -1;
     // The game framebuffer as it actually was while this segment was timed, read at its first and
     // last measured frame. An arm that changes resolution and silently fails to looks exactly like
     // a scene that is not fill-bound, so the size is evidence rather than assumed from the CVar.
@@ -267,6 +293,23 @@ struct Segment {
 };
 
 using Clock = std::chrono::steady_clock;
+
+// Reads the clock and folds it into the segment's minimum; returns the reading.
+int SampleCpu(Segment& seg) {
+    const int khz = ReadCpuKHz();
+    if (khz >= 0 && (seg.cpuMinKHz < 0 || khz < seg.cpuMinKHz)) {
+        seg.cpuMinKHz = khz;
+    }
+    return khz;
+}
+
+void SampleCpuStart(Segment& seg) {
+    seg.cpuStartKHz = SampleCpu(seg);
+}
+
+int KHzToMHz(int khz) {
+    return khz < 0 ? -1 : khz / 1000;
+}
 
 Phase gPhase = Phase::WaitingForScene;
 int gPhaseFrames = 0;
@@ -417,11 +460,12 @@ void WriteResults() {
         const Segment& seg = gRunSegments[i];
         snprintf(line, sizeof(line),
                  "BENCH segment %zu arm=%s frames=%zu mean_us=%.1f median_us=%.1f p95_us=%.1f mean_fps=%.3f "
-                 "temp_c=%.1f->%.1f fb=%ux%u->%ux%u swap_us=%.1f finish_us=%.1f period_us=%.1f period_fps=%.2f\n",
+                 "temp_c=%.1f->%.1f cpu_mhz=%d->%d cpu_min_mhz=%d fb=%ux%u->%ux%u swap_us=%.1f finish_us=%.1f period_us=%.1f period_fps=%.2f\n",
                  i, seg.arm.c_str(), seg.frameMicros.size(), MeanMicros(seg.frameMicros),
                  MedianMicros(seg.frameMicros), PercentileMicros(seg.frameMicros, 0.95),
                  MeanMicros(seg.frameMicros) > 0.0 ? 1e6 / MeanMicros(seg.frameMicros) : 0.0,
-                 seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0, seg.fbStartW, seg.fbStartH,
+                 seg.tempStartMilliC / 1000.0, seg.tempEndMilliC / 1000.0, KHzToMHz(seg.cpuStartKHz),
+                 KHzToMHz(seg.cpuEndKHz), KHzToMHz(seg.cpuMinKHz), seg.fbStartW, seg.fbStartH,
                  seg.fbEndW, seg.fbEndH, PerFrame(seg, seg.swapMicros), PerFrame(seg, seg.finishMicros),
                  PerFrame(seg, seg.periodMicros),
                  PerFrame(seg, seg.periodMicros) > 0.0 ? 1e6 / PerFrame(seg, seg.periodMicros) : 0.0);
@@ -630,6 +674,7 @@ void EnterMeasuring() {
         // No arm to apply and no cache to rebuild, so this one starts timing straight away and
         // its start temperature is now rather than after a segment warm-up.
         gRunSegments.back().tempStartMilliC = ReadTempMilliC();
+        SampleCpuStart(gRunSegments.back());
     }
     SPDLOG_INFO("Benchmark measuring: {} segments of {} frames, die {:.1f} C", TotalSegments(),
                 gCfg.measureFrames, ReadTempMilliC() / 1000.0);
@@ -916,6 +961,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gPhase = Phase::Measuring;
                 gPhaseFrames = 0;
                 gRunSegments.back().tempStartMilliC = ReadTempMilliC();
+                SampleCpuStart(gRunSegments.back());
             }
             break;
 
@@ -932,7 +978,11 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
             }
+            if (gPhaseFrames > 0 && gPhaseFrames % kCpuSampleEvery == 0) {
+                SampleCpu(gRunSegments.back());
+            }
             if (++gPhaseFrames >= gCfg.measureFrames) {
+                gRunSegments.back().cpuEndKHz = SampleCpu(gRunSegments.back());
                 gRunSegments.back().fbEndW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbEndH = OTRGetGameRenderHeight();
                 gRunSegments.back().tempEndMilliC = ReadTempMilliC();
