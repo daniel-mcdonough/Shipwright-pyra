@@ -4,7 +4,7 @@ The numbered reports are a record of what happened. This file is the opposite: a
 rewritten as things land. If it disagrees with a report, this file is newer.
 
 Last revised **2026-09-24**, after re-measuring `ShaderOpts` uncapped and finding the CPU pin leaked
-(§8.20).
+(§8.20), and adding §2a — the probe ladder for the 65% of the frame nothing has ever attributed.
 
 ## Ground rules that keep being learned the hard way
 
@@ -22,7 +22,10 @@ Last revised **2026-09-24**, after re-measuring `ShaderOpts` uncapped and findin
    **Market and Hyrule Field** at minimum. (The example that taught this — the same shader change
    "worth −3.59%, −2.40% and nothing" by scene, §8.18 — turned out to be the frame cap; uncapped it
    is −4.9% and −4.6%, §8.20. The rule stands; its best example did not.)
-6. **Read every segment's `cpu_mhz`, `cpu_min_mhz`, `cpu_max_mhz`.** `pyra-thermal.service` moves
+6. **A sampling profiler cannot see waiting.** A blocked thread takes no samples and a spinning
+   driver looks like work, so `perf record` alone cannot tell "computing" from "waiting" — which
+   is the open question about 65% of the frame (§2a). Establish on-CPU time first, then profile.
+7. **Read every segment's `cpu_mhz`, `cpu_min_mhz`, `cpu_max_mhz`.** `pyra-thermal.service` moves
    the clock under the harness in both directions (§8.20, TESTING.md trap 12). A segment off the
    pin is discarded, and the report says so.
 
@@ -49,6 +52,10 @@ untested and not needed (section 3).
 Of the nine catalogued items: **2 measured and won** (5, 6 — together −4.9% / −4.6% of the frame
 uncapped, §8.20), **3 closed** (1, 2, 7), 1 implemented at no gain (4), 1 premise weakened (3). What is actually left:
 
+Read §2a before concluding the list is short. All nine items were aimed at the fragment pass,
+which is 16% of the Market frame; 65% of it has never been profiled at all, and the items below
+are ranked against a guess about that 65% until the probe ladder runs.
+
 ### Do this first
 
 ~~**Find out what Hyrule Field's 30 ms is actually spent on.**~~ **Closed 2026-09-23 (§8.19): it
@@ -67,14 +74,29 @@ In order:
 3. **What the non-swap timed work is waiting on — at the Market.** It is **20.7 ms** there and
    13.7 ms at Hyrule Field (§8.20; this line used to say "~13 ms", which is the Field's figure).
    The draw counts are modest (261 / 167). Candidates: driver synchronisation per draw, the
-   tiler, memory. A `perf` profile of the frozen Market fixture, uncapped and on the new pin, is
-   the next probe — split interpreter from driver time before estimating anything. Two things to
-   carry in: §8.19's "barely follows the CPU clock (+~2% for −20%)" was taken on the leaky pin and
-   is **unverified**; and the Market's frame period creeps +4% across a five-minute run at a fixed
-   clock, mostly in untimed work (§8.20) — the profile should cover the start and end of a run.
+   tiler, memory. Two things to carry in: §8.19's "barely follows the CPU clock (+~2% for −20%)"
+   was taken on the leaky pin and is **unverified**; and the Market's frame period creeps +4%
+   across a five-minute run at a fixed clock, mostly in untimed work (§8.20) — any profile should
+   cover the start and end of a run. **The probe ladder is section 2a below**; it is the largest
+   unattributed block in the project and everything else on this page is ranked against a guess
+   until it is opened.
 4. **The ~3.4 ms of the swap that does not scale with pixels** (extrapolated, §8.19). That is the
    playbook's open "does Present flip or copy" question (`~/git/dragonbox-pyra/docs/improvements.md`
    §6) showing up as frame time.
+5. **Is the frame pipelined with the GPU at all?** Never checked, in any report. On a tile-based
+   deferred renderer the CPU should be a frame ahead; if `SwapBuffersBegin` blocks until the tile
+   pass retires, the 5 ms swap is serialised dead time rather than overlapped work, and the EGL
+   buffer count and `EGL_SWAP_BEHAVIOR` decide which. Cheap to establish (buffer count, and
+   whether swap time tracks the *previous* frame's GPU work), and it is the one hypothesis on
+   this page that would make a large number available without changing what is rendered. The
+   comment at `interpreter.cpp:4505` already reads swap time as "waiting for the GPU to catch
+   up" — that is an assumption nobody has tested.
+6. **The 6.1 ms outside the timed window at the Market** (§8.20) — 19% of the frame, on a fixture
+   that *skips* `Play_Update`, so it is not game simulation. It also grows 5.67 → 6.55 ms across
+   five minutes at a fixed clock while the swap stays flat. In real play that block is strictly
+   larger, and report 7's real-play absolutes have never been re-taken on a trustworthy rig, so
+   the gap between the frozen 31.4 FPS and what the game actually does is itself unmeasured.
+   `period_us − mean_us` is already logged per segment; what is missing is any breakdown of it.
 
 ### Worth doing
 
@@ -89,11 +111,16 @@ In order:
 |---|---|---|---|
 | **D** | **Item 3 — sub-rect texture upload** (§8.4, §8.15) | ~1.5% ceiling | Upload a tile's sub-rectangle as its own texture so `tex_width2 == tex_width`, moving the remaining shader clamps to hardware. Capped by the non-mirror share of the 3.6% §8.15 found, so the ceiling is low and the work is not. **Prototype exactly one texture format** and measure before converting anything. |
 | **E** | **`GL_EXT_shader_framebuffer_fetch`** | unknown | Present, unexplored, and nearly free on a tile-based deferred renderer — `gpu-optimization.md` calls it the most interesting unexplored extension on the device. No Shipwright use case has been identified yet, which is the first thing to establish. Do not build machinery for it before finding one. |
+| **F** | **Present 640×360 and let the display controller scale** | unknown, ≤ the 3.4 ms of item 4 above | The game renders at 640×360 to `mGameFb` and then draws it as a 1280×720 quad. §8.7 calls that pass "inherent to the internal-resolution feature" — inherent to the *feature*, not to the hardware: the OMAP5 DSS can scale a plane in the display controller. It attacks the part of the swap that does not scale with pixels. Establish that a scaled plane is reachable through SDL/EGL on this stack **before** touching the renderer; if it is not, this is dead. |
+| **G** | **One `glBufferData` per frame with offsets** | 1.4–6.6%, uncertain by 4× | **Not the refuted ring buffer — see "Do not build".** Report 5 §5.3 measured this variant at 60 µs/draw against 68 for the code today, and it is the one row in that table nothing refutes. §8.6 dismissed the 12% as noise by computing it against the *scissored* 14.2 µs figure, which is a different measurement; against the 68 µs path it is 8 µs × 261 draws ≈ 2 ms ≈ 6% of the Market frame, larger than item A which shipped. Both readings clear the rig. **Gated on P2** (§2a): if draws are not the shape of the frame, this is worth nothing whatever the microbenchmark says. |
+| **H** | **Count redundant batch splits on texture change** | unknown; a counter, not yet a change | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
 
 ### Do not build
 
 - **Item 7, VBO ring buffer.** Measured at 221 µs/draw against 68 for the code today (§5.3, §8.6).
-  The comment at the call site in `gfx_opengl.cpp` says so; leave it alone.
+  The comment at the call site in `gfx_opengl.cpp` says so; leave it alone. This is
+  `glBufferSubData` into a persistent buffer, and it is **not** item G above — the same table that
+  refutes this one measured that one as the best of the four.
 - **Item 1, filtering into the shader key.** Already obtained by the `FILTER_LINEAR` default —
   `o_three_point_filtering` is a compile-time substitution, so the branch is not in the shipped
   shader at all (§8.16). The branch-flattening A/B that both documents wanted is moot with it.
@@ -127,6 +154,109 @@ One caveat survives: **the shader is an asset.** Shipping this means shipping a 
 `soh.o2r`; a binary that meets an old archive logs `soh.o2r is older than this binary` and falls
 back. The benchmark install's `soh.o2r` is a real file, deliberately, and the real install at
 `~/soh-pyra` is still on the old archive.
+
+## 2a — Opening the 65%: the probe ladder
+
+The frame at the Market, `ShaderOpts 3`, uncapped, split from §8.20's per-arm table:
+
+| block | time | share | what is known about it |
+|---|---|---|---|
+| non-swap timed window | **20.69 ms** | **65%** | nothing. Never profiled. |
+| swap | 5.05 ms | 16% | contains the tiler's fragment pass — 87% of the `ShaderOpts` saving landed here (§8.20) |
+| outside the timed window | 6.08 ms | 19% | nothing, on a fixture that *skips* `Play_Update` |
+
+Every code item in report 8 was aimed at the 16%. That is why the catalogue looks exhausted: it
+is exhausted *for that slice*. The two large slices have been sized three times and profiled
+zero times, and "there is nothing big left" is not a claim the evidence supports about a budget
+two thirds of which nobody has opened.
+
+One derived number, not a finding: non-swap work ÷ draws is **79.3 µs** at the Market
+(20.69 ms / 261) and **81.9 µs** at Hyrule Field (13.67 / 167) — two scenes 56% apart in draw
+count agreeing to 3%. Two points can be a coincidence; it is also the exact shape a large
+per-submission constant would have. P2 tests it directly and cheaply, so nothing should be built
+on it first.
+
+**The first question is not "where" but "doing what".** If that block is the thread *blocked*,
+a sampling profiler will show almost nothing, because a sleeping thread takes no samples and a
+spinning driver looks like work (`profiling-guide.md` §2.3 makes the same point about the 8.5%
+PowerVR share in report 7). P1 and P2 settle computing-versus-waiting before any profile is worth
+recording.
+
+### P1 — On-CPU time per segment *(code, ~10 lines, permanent)*
+
+Read `CLOCK_THREAD_CPUTIME_ID` for the render thread at each segment's first and last measured
+frame and print it next to `cpu_mhz=`, exactly as the temperature and clock fields already are
+(`benchmark.cpp`, the §8.20 change). Then every future run carries the diagnostic for free.
+
+Read it as: on-CPU ≈ `period_us` means the thread is **running**, and `perf stat -e cycles,instructions`
+then splits compute from memory stalls by IPC — with the interpreter back in play, since §8.20
+retracted the clock bracket that had ruled it out. On-CPU well below `period_us` means the rest is
+**blocked**, and P2/P3 find where. It must be per *thread*: audio is on core 1
+(`OTRGlobals.cpp:1113`) and a whole-process number folds it in.
+
+### P2 — ioctls per frame *(no code, one run)*
+
+The SGX DDK submits through ioctls on `/dev/pvrsrvkm`. Count them against `draws=` from the same
+run:
+
+```sh
+perf trace -e ioctl -p $(pidof soh.elf)          # or: strace -c -f -e trace=ioctl -p ...
+```
+
+~261 per frame at the Market is one per draw and the submission-shape work below becomes live.
+Two or three per frame means the driver batches, the 80 µs/draw ratio above is a coincidence, and
+that whole line of enquiry dies for the price of one run.
+
+### P3 — Where it blocks *(no code, if P1 says "blocked")*
+
+```sh
+perf list | grep sched:                      # confirm the tracepoints exist first
+perf sched record -p $(pidof soh.elf) -- sleep 20 && perf sched timehist
+```
+
+Off-CPU time with the stack that went to sleep, which names the call site rather than the
+symptom. `ftrace` is the fallback the playbook already uses for scheduler questions.
+
+### P4 — On-CPU profile of the frozen Market *(no code, if P1 says "running")*
+
+```sh
+perf record -F 499 -g -p $(pidof soh.elf) -- sleep 30 && perf report --sort dso,sym
+```
+
+Sort by DSO before symbols — `soh` against `libGLESv2` against the kernel is the split that
+decides the ranking. ARM32 call graphs need `-fno-omit-frame-pointer` in the profiling build (or
+`--call-graph dwarf` if this `perf` has libunwind). Report 7 §7.6's profile does not substitute:
+it was real gameplay, whole process, pre-DSP audio, three-point filtering on, capped.
+
+### P5 — In-frame accumulators *(code, mirrors an existing pattern)*
+
+`gBenchSwapMicros` already does exactly this around `SwapBuffersBegin`
+(`interpreter.cpp:4516-4524`, drained per segment). The same treatment around `glBufferData` and
+`glDrawArrays` separately (`gfx_opengl.cpp:974-975`), `LoadShader`/`SetPerDrawUniforms`
+(`:141-198`) and `SelectTexture` (`:827`) prices each part of a draw directly.
+
+Cost: ~522 `clock_gettime` calls per frame at the Market, roughly 25–50 µs, or 0.1–0.2% against
+an `mde_us` of 0.31%. Close enough to matter — gate it behind an env var as `SOH_BENCH_FINISH`
+already is, and price the instrumentation itself with one A/B of instrumented against not before
+trusting any split it produces.
+
+### P6 — The subtractive ladder *(code, crude, immune to the computing/waiting question)*
+
+Skip `glDrawArrays`; then `glBufferData` as well; then all GL inside `Flush()`; then the
+traversal. Each arm's wall-clock delta bounds one layer from above. The driver may short-circuit
+when nothing is drawn, so watch `swap_us` to catch the arms where GPU work changed rather than
+CPU work.
+
+### Not available, so do not plan around it
+
+There is **no GPU-side tracing on this part** — no PVRTune, no frame debugger, nothing beyond
+`GL_EXT_occlusion_query_boolean` and A/B (`~/git/dragonbox-pyra/docs/profiling-guide.md` §3.2,
+already established). `ls /proc/pvr /sys/kernel/debug/pvr` costs ten seconds if someone wants to
+be certain, but "attach a GPU profiler" is not a step any plan here can contain.
+
+**Order: P1 and P2 in one session.** Neither needs a theory, together they split the hypothesis
+space, and P1 leaves the harness permanently better instrumented. P3 or P4 follows from which way
+P1 went; P5 only once P2 says draws are worth pricing.
 
 ## 3 — Measurement debt
 
@@ -176,8 +306,14 @@ back. The benchmark install's `soh.o2r` is a real file, deliberately, and the re
       is "rewrite or forget", not "apply or drop". Treat it as forgotten unless someone has it.
 - [ ] **Raising the GPU OPP.** The SGX544MP2 runs at 425 MHz on the NOM rail; a higher OPP exists
       and is worth roughly 25% of GPU throughput. Voltage readback is unavailable on this board, so
-      the playbook classes this as research rather than a change. It is the single largest
-      available number on the list and the only one that is not a code change.
+      the playbook classes this as research rather than a change. It is the only item on the list
+      that is not a code change.
+      **No longer "the single largest available number", 2026-09-24.** That ranking dates from when
+      the workload was believed fragment-bound. The GPU time anyone can currently point at is the
+      5.05 ms swap (§8.20), and 25% of it is ~1.26 ms — about 4% of the Market frame. It is the
+      largest number again only if the 20.7 ms non-swap block turns out to be GPU-side waiting,
+      which is exactly what §2a's P1 and P2 decide. Voltage research on an unreadable rail before
+      that probe is the wrong order.
 
 ## 5 — Owed to other people
 

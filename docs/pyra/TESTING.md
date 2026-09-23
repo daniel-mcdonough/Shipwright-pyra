@@ -335,6 +335,32 @@ see anyway, if the bracket agrees with itself. §8.19 had one bracket that did n
 old `min == max` pin, which the thermal daemon could lift (trap 12), so re-take it before using it.
 Check `cpu_min_mhz`/`cpu_max_mhz` on every segment: at 1.0 GHz they must read 1000.
 
+**"Is the frame computing or waiting?"** — the open question about 65% of it (NEXT.md §2a), and
+nothing in this file answered it before 2026-09-24. A sampling profiler will not: a blocked thread
+takes no samples and a spinning driver looks like work. Compare **on-CPU time against wall time**
+for the render thread first — `perf stat --per-thread -p $(pidof soh.elf) -- sleep 30`, and read
+`task-clock` per thread against the elapsed time, remembering that audio has its own thread on
+core 1. On-CPU ≈ elapsed means it is running, and `-e cycles,instructions` then splits compute
+from memory stalls by IPC. On-CPU well below elapsed means it is blocked, and the next question is
+where:
+
+```sh
+perf trace -e ioctl -p $(pidof soh.elf)      # count them against draws= from the same run
+perf list | grep sched:                  # then, if the tracepoints exist:
+perf sched record -p $(pidof soh.elf) -- sleep 20 && perf sched timehist
+```
+
+The SGX DDK submits through ioctls on `/dev/pvrsrvkm`, so ioctls-per-frame against `draws=` is the
+direct test of whether the frame is shaped by draw calls. **None of these has been run on this
+device yet** — `perf` itself is known to work (report 7 §7.6 used `perf record`), the rest is
+standard tooling that should be there and has not been confirmed. There is no GPU-side profiler on
+this part at all (`~/git/dragonbox-pyra/docs/profiling-guide.md` §3.2), so do not plan around a
+frame capture.
+
+Run it on the frozen Market fixture, uncapped, on the userspace pin, after the soak — and cover
+both ends of a run, because the Market's frame period creeps +4% across five minutes at a fixed
+clock (§8.20).
+
 **"Did my new default actually take effect?"** — remove the CVar from the device's
 `shipofharkinian.json`, then `bench.sh run` one segment and compare the absolute against the known
 arm values. An A/B cannot answer this: it sets the CVar itself.
