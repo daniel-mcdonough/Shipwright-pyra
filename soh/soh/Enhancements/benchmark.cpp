@@ -557,6 +557,12 @@ void WriteResults() {
                  PerFrame(seg, seg.counters[BENCH_VTX_TEXGEN]), PerFrame(seg, seg.counters[BENCH_VTX_FOG]),
                  PerFrame(seg, seg.counters[BENCH_LIGHTS_RECALC]));
         text += line;
+        // Frame interpolation (§8.29): matrix loads, the ones replaced by an interpolated matrix,
+        // and the replacement map's size. gSettings.ProbeSkipInterp should zero the last two only.
+        snprintf(line, sizeof(line), "BENCH interp %zu mtx=%.1f mtx_repl=%.1f map=%.1f\n", i,
+                 PerFrame(seg, seg.counters[BENCH_MTX]), PerFrame(seg, seg.counters[BENCH_MTX_REPL]),
+                 PerFrame(seg, seg.counters[BENCH_MTX_MAP]));
+        text += line;
         // Calls per GL entry point per frame period, largest first, zeros left out.
         if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
             seg.frameMicros.size() > 1) {

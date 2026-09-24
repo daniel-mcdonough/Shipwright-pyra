@@ -456,6 +456,17 @@ void FrameInterpolation_StartRecord(void) {
     current_recording = {};
     current_path.clear();
     current_path.push_back(&current_recording.root_path);
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipInterp (§8.29), benchmark builds only, read once per game tick. Records
+    // nothing, so FrameInterpolation_Interpolate returns an empty map and GfxSpMatrix never finds a
+    // replacement - while InterpolationFPS, and with it the number of frames each tick emits, is
+    // untouched. In a frozen fixture the two recordings would be identical, so this prices
+    // interpolation without changing the picture - a premise the visual check has to confirm.
+    // Wrong in play: nothing moves between game ticks. Never ship it.
+    if (CVarGetInteger("gSettings.ProbeSkipInterp", 0) != 0) {
+        return;
+    }
+#endif
     if (OTRGlobals::Instance->GetInterpolationFPS() != 20) {
         is_recording = true;
     }
