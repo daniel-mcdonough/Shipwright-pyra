@@ -3,6 +3,10 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <memory>
+#include <memory_resource>
+#include <optional>
+#include <string.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -219,39 +223,206 @@ union Data {
     } open_child;
 };
 
-struct Path {
-    map<label, vector<Path>> children;
-    map<Op, vector<Data>> ops;
-    vector<pair<Op, size_t>> items;
+// The recording tree's containers. LeanInterp=0 is the original: every node and op vector is its
+// own heap allocation, and the whole older tree is freed node by node at the start of every tick
+// (~3600 operator new per tick at the Market, §8.30). LeanInterp=1 is the same tree, matched the
+// same way, in std::pmr containers on a per-recording monotonic buffer: the older recording's
+// buffer is reused wholesale and its tree is never destructed (every byte of it is in the buffer).
+struct StdFamily {
+    template <class T> using vec = vector<T>;
+    template <class K, class V> using dict = map<K, V>;
+};
+struct PmrFamily {
+    template <class T> using vec = std::pmr::vector<T>;
+    template <class K, class V> using dict = std::pmr::map<K, V>;
 };
 
-struct Recording {
-    Path root_path;
+template <class F> struct PathT {
+    typename F::template dict<label, typename F::template vec<PathT>> children;
+    typename F::template dict<Op, typename F::template vec<Data>> ops;
+    typename F::template vec<pair<Op, size_t>> items;
+};
+
+// Allocator-aware, so the containers nested in a node share the recording's buffer.
+template <> struct PathT<PmrFamily> {
+    using allocator_type = std::pmr::polymorphic_allocator<>;
+    std::pmr::map<label, std::pmr::vector<PathT>> children;
+    std::pmr::map<Op, std::pmr::vector<Data>> ops;
+    std::pmr::vector<pair<Op, size_t>> items;
+    explicit PathT(const allocator_type& a = {}) : children(a), ops(a), items(a) {
+    }
+    PathT(PathT&& o, const allocator_type& a)
+        : children(std::move(o.children), a), ops(std::move(o.ops), a), items(std::move(o.items), a) {
+    }
+    PathT(PathT&& o) noexcept = default;
+};
+
+// One recorder's state and record functions: the original globals and functions, per store.
+template <class F> struct Recorder {
+    typedef PathT<F> Path;
+
+    vector<Path*> current_path;
+    Path* current_root = nullptr;
+    Path* previous_root = nullptr;
+    bool next_is_actor_pos_rot_matrix = false;
+    bool has_inv_actor_mtx = false;
+    MtxF inv_actor_mtx;
+    size_t inv_actor_mtx_path_index = 0;
+
+    Data& append(Op op) {
+        auto& m = current_path.back()->ops[op];
+        current_path.back()->items.emplace_back(op, m.size());
+        return m.emplace_back();
+    }
+
+    void OpenChild(const void* a, int b) {
+        label key = { a, b };
+        auto& m = current_path.back()->children[key];
+        append(Op::OpenChild).open_child = { key, m.size() };
+        current_path.push_back(&m.emplace_back());
+    }
+
+    void CloseChild() {
+        // append(Op::CloseChild);
+        if (has_inv_actor_mtx && current_path.size() == inv_actor_mtx_path_index) {
+            has_inv_actor_mtx = false;
+        }
+        current_path.pop_back();
+    }
+
+    void SetTranslateRotateYXZ(f32 translateX, f32 translateY, f32 translateZ, Vec3s* rot) {
+        auto& d = append(Op::MatrixSetTranslateRotateYXZ).matrix_set_translate_rotate_yxz = { translateX, translateY,
+                                                                                              translateZ, *rot };
+        if (next_is_actor_pos_rot_matrix) {
+            d.has_mtx = true;
+            // d.mtx = *Matrix_GetCurrent();
+            invert_matrix((const float*)Matrix_GetCurrent()->mf, (float*)inv_actor_mtx.mf);
+            next_is_actor_pos_rot_matrix = false;
+            has_inv_actor_mtx = true;
+            inv_actor_mtx_path_index = current_path.size();
+        }
+    }
+
+    auto& ToMtx(Mtx* dest) {
+        auto& d = append(Op::MatrixToMtx).matrix_to_mtx = { dest };
+        if (has_inv_actor_mtx) {
+            d.has_adjusted = true;
+            SkinMatrix_MtxFMtxFMult(&inv_actor_mtx, Matrix_GetCurrent(), &d.src);
+        } else {
+            d.src = *Matrix_GetCurrent();
+        }
+        return d;
+    }
+
+    void BeginRecording() {
+        current_path.clear();
+        current_path.push_back(current_root);
+    }
+};
+
+struct StdRecorder : Recorder<StdFamily> {
+    struct Recording {
+        Path root_path;
+    };
+    Recording current_recording;
+    Recording previous_recording;
+
+    StdRecorder() {
+        current_root = &current_recording.root_path;
+        previous_root = &previous_recording.root_path;
+    }
+    void StartRecord() {
+        previous_recording = std::move(current_recording);
+        current_recording = {};
+        BeginRecording();
+    }
+    void Clear() {
+        previous_recording = {};
+        current_recording = {};
+    }
+};
+
+// Counts what a recording spilled past its buffer, so the next use of that buffer can be sized to fit.
+struct SpillCounter : std::pmr::memory_resource {
+    size_t bytes = 0;
+    void* do_allocate(size_t n, size_t align) override {
+        bytes += n;
+        return std::pmr::new_delete_resource()->allocate(n, align);
+    }
+    void do_deallocate(void* p, size_t n, size_t align) override {
+        std::pmr::new_delete_resource()->deallocate(p, n, align);
+    }
+    bool do_is_equal(const std::pmr::memory_resource& o) const noexcept override {
+        return this == &o;
+    }
+};
+
+struct PmrRecorder : Recorder<PmrFamily> {
+    struct Arena {
+        unique_ptr<std::byte[]> buf;
+        size_t size = 0;
+        SpillCounter spill;
+        optional<std::pmr::monotonic_buffer_resource> res;
+        alignas(Path) unsigned char root_storage[sizeof(Path)];
+
+        // Forget the tree (its memory is all in buf or in spill chunks res frees) and start an empty one.
+        Path* Reset() {
+            res.reset();
+            if (buf == nullptr || spill.bytes > 0) {
+                // The Market needs ~230 KB; grow to twice what the last recording used.
+                size = std::max<size_t>(256 * 1024, (size + spill.bytes) * 2);
+                buf.reset(new std::byte[size]);
+                spill.bytes = 0;
+            }
+            res.emplace(buf.get(), size, &spill);
+            return new (root_storage) Path(std::pmr::polymorphic_allocator<>(&*res));
+        }
+    };
+    Arena arena[2];
+    int cur = 0;
+
+    PmrRecorder() {
+        current_root = arena[0].Reset();
+        previous_root = arena[1].Reset();
+    }
+    void StartRecord() {
+        cur ^= 1;
+        previous_root = current_root;
+        current_root = arena[cur].Reset();
+        BeginRecording();
+    }
+    void Clear() {
+        current_root = arena[cur].Reset();
+        previous_root = arena[cur ^ 1].Reset();
+    }
 };
 
 bool is_recording;
-vector<Path*> current_path;
 uint32_t camera_epoch;
 uint32_t previous_camera_epoch;
-Recording current_recording;
-Recording previous_recording;
 
-bool next_is_actor_pos_rot_matrix;
-bool has_inv_actor_mtx;
-MtxF inv_actor_mtx;
-size_t inv_actor_mtx_path_index;
+// Which recorders run: bit 0 the original, bit 1 the pmr one. Read from gSettings.LeanInterp once
+// per tick; a change clears both, so a recorder never matches against a recording from before it
+// was switched off (for one tick nothing interpolates, as after a scene change).
+int active_stores = 0;
+StdRecorder std_recorder;
+PmrRecorder pmr_recorder;
 
-Data& append(Op op) {
+#define FOR_EACH_RECORDER(r, ...)            \
+    do {                                     \
+        if (active_stores & 1) {             \
+            auto& r = std_recorder;          \
+            __VA_ARGS__;                     \
+        }                                    \
+        if (active_stores & 2) {             \
+            auto& r = pmr_recorder;          \
+            __VA_ARGS__;                     \
+        }                                    \
+    } while (0)
+
 #ifdef SOH_BENCHMARK
-    gBenchInterpOps++;
+bool corrupt_pending;
 #endif
-    if (op != Op::OpenChild) {
-        INTERP_TRACE("o %d\n", (int)op);
-    }
-    auto& m = current_path.back()->ops[op];
-    current_path.back()->items.emplace_back(op, m.size());
-    return m.emplace_back();
-}
 
 struct InterpolateCtx {
     float step;
@@ -344,7 +515,7 @@ struct InterpolateCtx {
         res->z = interpolate_angle(o->z, n->z);
     }
 
-    void interpolate_branch(Path* old_path, Path* new_path) {
+    template <class Path> void interpolate_branch(Path* old_path, Path* new_path) {
         for (auto& item : new_path->items) {
             Data& new_op = new_path->ops[item.first][item.second];
 
@@ -493,6 +664,11 @@ struct InterpolateCtx {
 
 } // anonymous namespace
 
+#ifdef SOH_BENCHMARK
+uint64_t gBenchInterpCompared;
+uint64_t gBenchInterpMismatch;
+#endif
+
 unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
 #ifdef SOH_BENCHMARK
     // gSettings.ProbeSkipInterp=2: record as usual, but hand back no replacements. Against mode 1
@@ -504,16 +680,50 @@ unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
     InterpolateCtx ctx;
     ctx.step = step;
     ctx.w = 1.0f - step;
-    ctx.interpolate_branch(&previous_recording.root_path, &current_recording.root_path);
+    if (active_stores == 2) {
+        ctx.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
+        return ctx.mtx_replacements;
+    }
+    ctx.interpolate_branch(std_recorder.previous_root, std_recorder.current_root);
+#ifdef SOH_BENCHMARK
+    // LeanInterp=2: walk the pmr recording too and compare the two replacement maps entry by entry.
+    // The original's map is the one used.
+    if (active_stores == 3) {
+        InterpolateCtx lean;
+        lean.step = step;
+        lean.w = 1.0f - step;
+        lean.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
+        gBenchInterpCompared += ctx.mtx_replacements.size();
+        if (lean.mtx_replacements.size() != ctx.mtx_replacements.size()) {
+            gBenchInterpMismatch++;
+        }
+        for (auto& [dest, mf] : ctx.mtx_replacements) {
+            auto it = lean.mtx_replacements.find(dest);
+            if (it == lean.mtx_replacements.end() || memcmp(&it->second, &mf, sizeof(mf)) != 0) {
+                gBenchInterpMismatch++;
+            }
+        }
+    }
+#endif
     return ctx.mtx_replacements;
 }
 
 void FrameInterpolation_StartRecord(void) {
-    previous_recording = std::move(current_recording);
-    current_recording = {};
-    current_path.clear();
-    current_path.push_back(&current_recording.root_path);
+    int lean = CVarGetInteger("gSettings.LeanInterp", 0);
+#ifndef SOH_BENCHMARK
+    lean = lean == 2 ? 0 : lean;
+#endif
+    const int stores = lean == 1 ? 2 : lean == 2 ? 3 : 1;
+    if (stores != active_stores) {
+        std_recorder.Clear();
+        pmr_recorder.Clear();
+        active_stores = stores;
+    }
+    FOR_EACH_RECORDER(r, r.StartRecord());
 #ifdef SOH_BENCHMARK
+    // gSettings.ProbeInterpCorrupt=1, benchmark builds only: the positive control for LeanInterp=2.
+    // Perturbs the first ToMtx of each tick in the pmr recording.
+    corrupt_pending = CVarGetInteger("gSettings.ProbeInterpCorrupt", 0) != 0;
     // gSettings.ProbeSkipInterp=1 (§8.29), benchmark builds only, read once per game tick. Records
     // nothing, so FrameInterpolation_Interpolate returns an empty map and GfxSpMatrix never finds a
     // replacement - while InterpolationFPS, and with it the number of frames each tick emits, is
@@ -542,23 +752,17 @@ void FrameInterpolation_RecordOpenChild(const void* a, int b) {
         return;
 #ifdef SOH_BENCHMARK
     gBenchInterpChildren++;
+    gBenchInterpOps++;
 #endif
     INTERP_TRACE("O %p %d\n", a, b);
-    label key = { a, b };
-    auto& m = current_path.back()->children[key];
-    append(Op::OpenChild).open_child = { key, m.size() };
-    current_path.push_back(&m.emplace_back());
+    FOR_EACH_RECORDER(r, r.OpenChild(a, b));
 }
 
 void FrameInterpolation_RecordCloseChild(void) {
     if (!is_recording)
         return;
     INTERP_TRACE("C\n");
-    // append(Op::CloseChild);
-    if (has_inv_actor_mtx && current_path.size() == inv_actor_mtx_path_index) {
-        has_inv_actor_mtx = false;
-    }
-    current_path.pop_back();
+    FOR_EACH_RECORDER(r, r.CloseChild());
 }
 
 void FrameInterpolation_DontInterpolateCamera(void) {
@@ -572,108 +776,116 @@ int FrameInterpolation_GetCameraEpoch(void) {
 void FrameInterpolation_RecordActorPosRotMatrix(void) {
     if (!is_recording)
         return;
-    next_is_actor_pos_rot_matrix = true;
+    FOR_EACH_RECORDER(r, r.next_is_actor_pos_rot_matrix = true);
 }
 
+// Every op but OpenChild, ToMtx and SetTranslateRotateYXZ: count, trace, append to each recorder.
+#ifdef SOH_BENCHMARK
+#define RECORD_OP(op, ...)                         \
+    do {                                           \
+        if (!is_recording)                         \
+            return;                                \
+        gBenchInterpOps++;                         \
+        INTERP_TRACE("o %d\n", (int)(op));         \
+        FOR_EACH_RECORDER(r, r.append(op) __VA_ARGS__); \
+    } while (0)
+#else
+#define RECORD_OP(op, ...)                         \
+    do {                                           \
+        if (!is_recording)                         \
+            return;                                \
+        FOR_EACH_RECORDER(r, r.append(op) __VA_ARGS__); \
+    } while (0)
+#endif
+
 void FrameInterpolation_RecordMatrixPush(void) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixPush);
+    RECORD_OP(Op::MatrixPush);
 }
 
 void FrameInterpolation_RecordMatrixPop(void) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixPop);
+    RECORD_OP(Op::MatrixPop);
 }
 
 void FrameInterpolation_RecordMatrixPut(MtxF* src) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixPut).matrix_put = { *src };
+    RECORD_OP(Op::MatrixPut, .matrix_put = { *src });
 }
 
 void FrameInterpolation_RecordMatrixMult(MtxF* mf, u8 mode) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixMult).matrix_mult = { *mf, mode };
+    RECORD_OP(Op::MatrixMult, .matrix_mult = { *mf, mode });
 }
 
 void FrameInterpolation_RecordMatrixTranslate(f32 x, f32 y, f32 z, u8 mode) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixTranslate).matrix_translate = { x, y, z, mode };
+    RECORD_OP(Op::MatrixTranslate, .matrix_translate = { x, y, z, mode });
 }
 
 void FrameInterpolation_RecordMatrixScale(f32 x, f32 y, f32 z, u8 mode) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixScale).matrix_scale = { x, y, z, mode };
+    RECORD_OP(Op::MatrixScale, .matrix_scale = { x, y, z, mode });
 }
 
 void FrameInterpolation_RecordMatrixRotate1Coord(u32 coord, f32 value, u8 mode) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixRotate1Coord).matrix_rotate_1_coord = { coord, value, mode };
+    RECORD_OP(Op::MatrixRotate1Coord, .matrix_rotate_1_coord = { coord, value, mode });
 }
 
 void FrameInterpolation_RecordMatrixRotateZYX(s16 x, s16 y, s16 z, u8 mode) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixRotateZYX).matrix_rotate_zyx = { x, y, z, mode };
+    RECORD_OP(Op::MatrixRotateZYX, .matrix_rotate_zyx = { x, y, z, mode });
 }
 
 void FrameInterpolation_RecordMatrixTranslateRotateZYX(Vec3f* translation, Vec3s* rotation) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixTranslateRotateZYX).matrix_translate_rotate_zyx = { *translation, *rotation };
+    RECORD_OP(Op::MatrixTranslateRotateZYX, .matrix_translate_rotate_zyx = { *translation, *rotation });
 }
 
 void FrameInterpolation_RecordMatrixSetTranslateRotateYXZ(f32 translateX, f32 translateY, f32 translateZ, Vec3s* rot) {
     if (!is_recording)
         return;
-    auto& d = append(Op::MatrixSetTranslateRotateYXZ).matrix_set_translate_rotate_yxz = { translateX, translateY,
-                                                                                          translateZ, *rot };
-    if (next_is_actor_pos_rot_matrix) {
-        d.has_mtx = true;
+#ifdef SOH_BENCHMARK
+    gBenchInterpOps++;
+    INTERP_TRACE("o %d\n", (int)Op::MatrixSetTranslateRotateYXZ);
+    const bool traced_mtx = (active_stores & 1) ? std_recorder.next_is_actor_pos_rot_matrix
+                                                 : pmr_recorder.next_is_actor_pos_rot_matrix;
+    if (traced_mtx) {
         INTERP_TRACE("m\n");
-        // d.mtx = *Matrix_GetCurrent();
-        invert_matrix((const float*)Matrix_GetCurrent()->mf, (float*)inv_actor_mtx.mf);
-        next_is_actor_pos_rot_matrix = false;
-        has_inv_actor_mtx = true;
-        inv_actor_mtx_path_index = current_path.size();
     }
+#endif
+    FOR_EACH_RECORDER(r, r.SetTranslateRotateYXZ(translateX, translateY, translateZ, rot));
 }
 
 void FrameInterpolation_RecordMatrixMtxFToMtx(MtxF* src, Mtx* dest) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixMtxFToMtx).matrix_mtxf_to_mtx = { *src, dest };
+    RECORD_OP(Op::MatrixMtxFToMtx, .matrix_mtxf_to_mtx = { *src, dest });
 }
 
 void FrameInterpolation_RecordMatrixToMtx(Mtx* dest, char* file, s32 line) {
     if (!is_recording)
         return;
-    auto& d = append(Op::MatrixToMtx).matrix_to_mtx = { dest };
-    if (has_inv_actor_mtx) {
-        d.has_adjusted = true;
-        INTERP_TRACE("a\n");
-        SkinMatrix_MtxFMtxFMult(&inv_actor_mtx, Matrix_GetCurrent(), &d.src);
-    } else {
-        d.src = *Matrix_GetCurrent();
+#ifdef SOH_BENCHMARK
+    gBenchInterpOps++;
+    INTERP_TRACE("o %d\n", (int)Op::MatrixToMtx);
+#endif
+    if (active_stores & 1) {
+        auto& d = std_recorder.ToMtx(dest);
+        if (d.has_adjusted) {
+            INTERP_TRACE("a\n");
+        }
+    }
+    if (active_stores & 2) {
+        auto& d = pmr_recorder.ToMtx(dest);
+        if (d.has_adjusted && !(active_stores & 1)) {
+            INTERP_TRACE("a\n");
+        }
+#ifdef SOH_BENCHMARK
+        if (corrupt_pending) {
+            d.src.mf[1][2] += 1.0f;
+            corrupt_pending = false;
+        }
+#endif
     }
 }
 
 void FrameInterpolation_RecordMatrixReplaceRotation(MtxF* mf) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixReplaceRotation).matrix_replace_rotation = { *mf };
+    RECORD_OP(Op::MatrixReplaceRotation, .matrix_replace_rotation = { *mf });
 }
 
 void FrameInterpolation_RecordMatrixRotateAxis(f32 angle, Vec3f* axis, u8 mode) {
-    if (!is_recording)
-        return;
-    append(Op::MatrixRotateAxis).matrix_rotate_axis = { angle, *axis, mode };
+    RECORD_OP(Op::MatrixRotateAxis, .matrix_rotate_axis = { angle, *axis, mode });
 }
 
 void FrameInterpolation_RecordSkinMatrixMtxFToMtx(MtxF* src, Mtx* dest) {

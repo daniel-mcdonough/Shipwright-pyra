@@ -14,6 +14,8 @@ std::unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step);
 // ends rather than through the per-frame counters.
 extern uint64_t gBenchInterpChildren;
 extern uint64_t gBenchInterpOps;
+extern uint64_t gBenchInterpCompared;
+extern uint64_t gBenchInterpMismatch;
 #endif
 
 extern "C" {
