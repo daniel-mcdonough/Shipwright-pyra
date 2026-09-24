@@ -82,6 +82,11 @@ static bool invert_matrix(const float m[16], float invOut[16]);
 
 using namespace std;
 
+#ifdef SOH_BENCHMARK
+uint64_t gBenchInterpChildren;
+uint64_t gBenchInterpOps;
+#endif
+
 namespace {
 
 enum class Op {
@@ -198,6 +203,9 @@ MtxF inv_actor_mtx;
 size_t inv_actor_mtx_path_index;
 
 Data& append(Op op) {
+#ifdef SOH_BENCHMARK
+    gBenchInterpOps++;
+#endif
     auto& m = current_path.back()->ops[op];
     current_path.back()->items.emplace_back(op, m.size());
     return m.emplace_back();
@@ -444,6 +452,13 @@ struct InterpolateCtx {
 } // anonymous namespace
 
 unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipInterp=2: record as usual, but hand back no replacements. Against mode 1
+    // it splits the cost between building the recordings and walking them.
+    if (CVarGetInteger("gSettings.ProbeSkipInterp", 0) == 2) {
+        return {};
+    }
+#endif
     InterpolateCtx ctx;
     ctx.step = step;
     ctx.w = 1.0f - step;
@@ -457,13 +472,13 @@ void FrameInterpolation_StartRecord(void) {
     current_path.clear();
     current_path.push_back(&current_recording.root_path);
 #ifdef SOH_BENCHMARK
-    // gSettings.ProbeSkipInterp (§8.29), benchmark builds only, read once per game tick. Records
+    // gSettings.ProbeSkipInterp=1 (§8.29), benchmark builds only, read once per game tick. Records
     // nothing, so FrameInterpolation_Interpolate returns an empty map and GfxSpMatrix never finds a
     // replacement - while InterpolationFPS, and with it the number of frames each tick emits, is
     // untouched. In a frozen fixture the two recordings would be identical, so this prices
     // interpolation without changing the picture - a premise the visual check has to confirm.
     // Wrong in play: nothing moves between game ticks. Never ship it.
-    if (CVarGetInteger("gSettings.ProbeSkipInterp", 0) != 0) {
+    if (CVarGetInteger("gSettings.ProbeSkipInterp", 0) == 1) {
         return;
     }
 #endif
@@ -480,6 +495,9 @@ void FrameInterpolation_StopRecord(void) {
 void FrameInterpolation_RecordOpenChild(const void* a, int b) {
     if (!is_recording)
         return;
+#ifdef SOH_BENCHMARK
+    gBenchInterpChildren++;
+#endif
     label key = { a, b };
     auto& m = current_path.back()->children[key];
     append(Op::OpenChild).open_child = { key, m.size() };

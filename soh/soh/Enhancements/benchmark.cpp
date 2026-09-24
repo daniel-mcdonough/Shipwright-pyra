@@ -14,6 +14,7 @@
 #include <time.h>
 
 #include "soh/OTRGlobals.h"
+#include "soh/frame_interpolation.h"
 #include "soh/cvar_prefixes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -325,6 +326,8 @@ struct Segment {
     uint64_t threadCpuStart = 0, threadCpuEnd = 0, procCpuStart = 0, procCpuEnd = 0;
     // Ship::gBenchResourceLoads at the same two points: resource-manager loads per frame period.
     uint64_t resLoadsStart = 0, resLoadsEnd = 0;
+    // gBenchInterpChildren / gBenchInterpOps at the same two points: recording work per frame period.
+    uint64_t interpChildrenStart = 0, interpChildrenEnd = 0, interpOpsStart = 0, interpOpsEnd = 0;
     // gBenchGlFn at the same two points: calls per GL entry point per frame period.
     std::vector<uint64_t> glFnStart, glFnEnd;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
@@ -558,10 +561,14 @@ void WriteResults() {
                  PerFrame(seg, seg.counters[BENCH_LIGHTS_RECALC]));
         text += line;
         // Frame interpolation (§8.29): matrix loads, the ones replaced by an interpolated matrix,
-        // and the replacement map's size. gSettings.ProbeSkipInterp should zero the last two only.
-        snprintf(line, sizeof(line), "BENCH interp %zu mtx=%.1f mtx_repl=%.1f map=%.1f\n", i,
-                 PerFrame(seg, seg.counters[BENCH_MTX]), PerFrame(seg, seg.counters[BENCH_MTX_REPL]),
-                 PerFrame(seg, seg.counters[BENCH_MTX_MAP]));
+        // the replacement map's size, and the recording's child nodes and ops per frame period.
+        // gSettings.ProbeSkipInterp=1 should zero all but mtx; =2 only mtx_repl and map.
+        const double periods = seg.frameMicros.size() > 1 ? (double)(seg.frameMicros.size() - 1) : 1.0;
+        snprintf(line, sizeof(line), "BENCH interp %zu mtx=%.1f mtx_repl=%.1f map=%.1f children=%.1f ops=%.1f\n",
+                 i, PerFrame(seg, seg.counters[BENCH_MTX]), PerFrame(seg, seg.counters[BENCH_MTX_REPL]),
+                 PerFrame(seg, seg.counters[BENCH_MTX_MAP]),
+                 (double)(seg.interpChildrenEnd - seg.interpChildrenStart) / periods,
+                 (double)(seg.interpOpsEnd - seg.interpOpsStart) / periods);
         text += line;
         // Calls per GL entry point per frame period, largest first, zeros left out.
         if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
@@ -1177,6 +1184,8 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().procCpuStart = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
                 gRunSegments.back().wallStart = Clock::now();
                 gRunSegments.back().resLoadsStart = Ship::gBenchResourceLoads;
+                gRunSegments.back().interpChildrenStart = gBenchInterpChildren;
+                gRunSegments.back().interpOpsStart = gBenchInterpOps;
                 gRunSegments.back().glFnStart.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
@@ -1189,6 +1198,8 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().procCpuEnd = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
                 gRunSegments.back().wallEnd = Clock::now();
                 gRunSegments.back().resLoadsEnd = Ship::gBenchResourceLoads;
+                gRunSegments.back().interpChildrenEnd = gBenchInterpChildren;
+                gRunSegments.back().interpOpsEnd = gBenchInterpOps;
                 gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().cpuEndKHz = SampleCpu(gRunSegments.back());
                 gRunSegments.back().fbEndW = OTRGetGameRenderWidth();

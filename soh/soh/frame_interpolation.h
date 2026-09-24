@@ -8,6 +8,14 @@
 
 std::unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step);
 
+#ifdef SOH_BENCHMARK
+// Recording work since launch, monotonic (§8.29): child nodes opened and ops appended. Recording
+// happens in Play_Draw, outside the timed window, so the benchmark reads these at a segment's
+// ends rather than through the per-frame counters.
+extern uint64_t gBenchInterpChildren;
+extern uint64_t gBenchInterpOps;
+#endif
+
 extern "C" {
 
 #endif
