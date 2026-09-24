@@ -194,6 +194,76 @@ extern "C" bool ResourceMgr_IsAltAssetsEnabled() {
 
 // Unloads a resource if an alternate version exists when alt assets are enabled
 // The resource is only removed from the internal cache to prevent it from used in the next resource lookup
+// gSettings.LeanGameLookup (§8.31). The game names display lists, textures and arrays by path, and
+// each of the Market's ~110 lookups per frame builds several strings, takes the manager's mutex,
+// makes a promise and a future and tries an "alt/" name first, to return a cached resource. 1 keeps
+// the answers in front of the manager, keyed by the path's address and checked against the whole
+// path, like LeanResLookup's mode 3 for G_SETTIMG.
+//
+// A cached answer is used only while everything it depends on is unchanged: the manager's cache
+// generation and the archive manager's (see ResourceManager::GetCacheGeneration), the extension
+// table FileAltExists reads, the alt-asset toggle, whether the scene is Master Quest (the path is
+// rewritten for MQ), and the resource not being dirty. A path that has an alt/ version is never
+// answered from the cache, so ResourceMgr_LoadGfxByName still unloads its original each call.
+// Failed lookups are not cached. Read once per game tick in Graph_ProcessGfxCommands.
+uint32_t gExtensionCacheGeneration = 0;
+static int sLeanGameLookup = 0;
+#ifdef SOH_BENCHMARK
+// Modes 2 and 3 (benchmark builds) answer from the cache and also look up without it, counting
+// answers that differ in gBenchMemoMismatch: 2 against the same path, which must count 0; 3, the
+// positive control, against the previous distinct path, which must count nearly every hit.
+extern uint64_t gBenchMemoMismatch;
+static std::string sPreviousPath;
+#endif
+
+extern "C" void ResourceMgr_RefreshLeanLookup() {
+    sLeanGameLookup = CVarGetInteger("gSettings.LeanGameLookup", 0);
+}
+
+namespace {
+struct GameLookup {
+    std::string path;
+    std::shared_ptr<Ship::IResource> resource;
+    bool masterQuest;
+    int8_t altExists; // -1 not yet asked, else ResourceMgr_FileAltExists(path)
+};
+struct GameLookupCache {
+    uint32_t rmGeneration = UINT32_MAX;
+    uint32_t amGeneration = UINT32_MAX;
+    uint32_t extGeneration = UINT32_MAX;
+    bool altEnabled = false;
+    std::unordered_map<const char*, GameLookup> byAddress;
+};
+thread_local GameLookupCache tGameLookup;
+
+GameLookupCache& ValidGameLookupCache() {
+    auto rm = Ship::Context::GetInstance()->GetResourceManager();
+    const uint32_t rmGen = rm->GetCacheGeneration();
+    const uint32_t amGen = rm->GetArchiveManager()->GetGeneration();
+    const bool altEnabled = rm->IsAltAssetsEnabled();
+    GameLookupCache& c = tGameLookup;
+    if (rmGen != c.rmGeneration || amGen != c.amGeneration || gExtensionCacheGeneration != c.extGeneration ||
+        altEnabled != c.altEnabled) {
+        c.byAddress.clear();
+        c.rmGeneration = rmGen;
+        c.amGeneration = amGen;
+        c.extGeneration = gExtensionCacheGeneration;
+        c.altEnabled = altEnabled;
+    }
+    return c;
+}
+
+// The cached entry for path if it is still the answer, else nullptr.
+GameLookup* FindGameLookup(GameLookupCache& c, const char* path) {
+    auto it = c.byAddress.find(path);
+    if (it == c.byAddress.end() || it->second.path != path ||
+        it->second.masterQuest != (ResourceMgr_IsGameMasterQuest() != 0) || it->second.resource->IsDirty()) {
+        return nullptr;
+    }
+    return &it->second;
+}
+} // namespace
+
 extern "C" void ResourceMgr_UnloadOriginalWhenAltExists(const char* resName) {
     BENCH_LOOKUP_SCOPE("ResourceMgr_UnloadOriginalWhenAltExists");
     if (ResourceMgr_IsAltAssetsEnabled() && ResourceMgr_FileAltExists((char*)resName)) {
@@ -212,7 +282,35 @@ uint32_t gBenchProbeMemoGeneration = 0;
 uint64_t gBenchMemoMismatch = 0;
 #endif
 
+static std::shared_ptr<Ship::IResource> GetResourceByNameHandlingMQUncached(const char* path);
+
 std::shared_ptr<Ship::IResource> ResourceMgr_GetResourceByNameHandlingMQ(const char* path) {
+    if (sLeanGameLookup == 0) {
+        return GetResourceByNameHandlingMQUncached(path);
+    }
+    GameLookupCache& c = ValidGameLookupCache();
+    if (GameLookup* hit = FindGameLookup(c, path)) {
+#ifdef SOH_BENCHMARK
+        if (sLeanGameLookup >= 2) {
+            const std::string against = sLeanGameLookup == 3 && !sPreviousPath.empty() ? sPreviousPath : std::string(path);
+            if (GetResourceByNameHandlingMQUncached(against.c_str()) != hit->resource) {
+                gBenchMemoMismatch++;
+            }
+            if (sPreviousPath != path) {
+                sPreviousPath = path;
+            }
+        }
+#endif
+        return hit->resource;
+    }
+    auto resource = GetResourceByNameHandlingMQUncached(path);
+    if (resource != nullptr) {
+        c.byAddress[path] = GameLookup{ path, resource, ResourceMgr_IsGameMasterQuest() != 0, -1 };
+    }
+    return resource;
+}
+
+static std::shared_ptr<Ship::IResource> GetResourceByNameHandlingMQUncached(const char* path) {
 #ifdef SOH_BENCHMARK
     struct Memo {
         uint32_t generation = 0;
@@ -352,6 +450,18 @@ extern "C" Gfx* ResourceMgr_LoadGfxByName(const char* path) {
     // When an alt resource exists for the DL, we need to unload the original asset
     // to clear the cache so the alt asset will be loaded instead
     // OTRTODO: If Alt loading over original cache is fixed, this line can most likely be removed
+    if (sLeanGameLookup != 0) {
+        // Only a path with no alt/ version can skip the unload: for it the unload is a no-op.
+        GameLookupCache& c = ValidGameLookupCache();
+        GameLookup* hit = FindGameLookup(c, path);
+        if (hit != nullptr && hit->altExists < 0) {
+            hit->altExists = c.altEnabled && ResourceMgr_FileAltExists(path) ? 1 : 0;
+        }
+        // The verifying modes go on to ResourceMgr_GetResourceByNameHandlingMQ, which checks the hit.
+        if (hit != nullptr && hit->altExists == 0 && sLeanGameLookup < 2) {
+            return (Gfx*)&std::static_pointer_cast<Fast::DisplayList>(hit->resource)->Instructions[0];
+        }
+    }
     ResourceMgr_UnloadOriginalWhenAltExists(path);
 
     auto res = std::static_pointer_cast<Fast::DisplayList>(ResourceMgr_GetResourceByNameHandlingMQ(path));
@@ -565,7 +675,6 @@ extern "C" SoundFont* ResourceMgr_LoadAudioSoundFontByName(const char* path) {
 }
 
 extern "C" int ResourceMgr_OTRSigCheck(char* imgData) {
-    BENCH_LOOKUP_SCOPE("ResourceMgr_OTRSigCheck");
     uintptr_t i = (uintptr_t)(imgData);
 
     // if (i == 0xD9000000 || i == 0xE7000000 || (i & 1) == 1)

@@ -1468,6 +1468,9 @@ extern "C" void OTRExtScanner() {
 
         ExtensionCache[nPath] = { rPath, ext };
     }
+    // ResourceMgr_FileAltExists reads this table, and LeanGameLookup caches its answers (§8.31).
+    extern uint32_t gExtensionCacheGeneration;
+    gExtensionCacheGeneration++;
 }
 
 // Read the port version from an OTR file
@@ -1796,7 +1799,10 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 }
 
 // C->C++ Bridge
+extern "C" void ResourceMgr_RefreshLeanLookup();
+
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
+    ResourceMgr_RefreshLeanLookup();
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
         audio.processing = true;
