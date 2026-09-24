@@ -3,14 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (morning)**, after §8.24: **client-side vertex arrays
-(`gSettings.LeanGLState=3`, default still 0) are −13.4% of the frozen Market frame (27.5 → 23.8 ms,
-36.3 → 42.0 FPS) and −7.3% at Hyrule Field**, same picture in-process — waiting on a real-play
-session before it becomes a default. The same section refuted "the driver is paid per GL call":
-removing 43% of GL calls saved 0.5%. Before that, §8.22-8.23: the asset-lookup cache
-(`gSettings.LeanResLookup`, **default 3**) is −12.1% of the Market frame and −15.1% at Hyrule Field
-(now measured at 1250 MHz), −11.7% of render-thread CPU in real play. §8.21: the frame is the render
-thread *computing*, not waiting on the GPU.
+Last revised **2026-09-24 (afternoon)**, after §8.25: **client-side vertex arrays
+(`gSettings.LeanGLState`) now default to 3 in GLES2 builds**. The gains: −13.4% of the frozen
+Market frame (27.5 → 23.8 ms, 36.3 → 42.0 FPS), −7.3% at Hyrule Field, and −13.6% of render-thread
+CPU in real play (t −4.7), with nothing visibly wrong. §8.24 refuted "the driver is paid per GL
+call": removing 43% of GL calls saved 0.5%. Before that, §8.22–8.23: the asset-lookup cache
+(`gSettings.LeanResLookup`, **default 3**) is −12.1% of the Market frame and −15.1% at Hyrule Field,
+and −11.7% of render-thread CPU in real play. §8.21: the frame is the render thread *computing*, not
+waiting on the GPU.
 
 ## Ground rules that keep being learned the hard way
 
@@ -64,15 +64,16 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
 
 ### Do this first
 
-00. **Real-play A/B of `gSettings.LeanGLState` 0 vs 3, then default it** (§8.24). −3685 µs at the
-    Market, −1309 µs at Hyrule Field, identical in-process. It shadows global GL state, so it needs
-    the paths the fixture never takes: pause menu (framebuffer copy/blit), scene changes, the ImGui
-    menu open. Watch mode, `SOH_BENCH_AB_CVAR=gSettings.LeanGLState SOH_BENCH_AB_VALUES=0,3`,
-    `PYRA_WATCH_PIN=1 SOH_BENCH_UNCAP=0`, owner playing; compare `thread_cpu_us`. Then Kokiri.
+00. ~~**Real-play A/B of `gSettings.LeanGLState` 0 vs 3, then default it.**~~ **Done (§8.25):
+    −2020 µs (−13.6%) of render-thread CPU over 25 real-play pairs, t −4.7. No GL errors and no
+    visible glitches. Now the GLES2 default; desktop GL keeps 0 because a core profile rejects
+    client arrays.** Still open:
+    - Kokiri, and scenes with pre-rendered backgrounds.
+    - Whether the pause menu and the ImGui menu were exercised is unrecorded.
     - At Hyrule Field a quarter of the CPU saving came back as swap time. If the GPU is now the
       next limit there, the "is the frame pipelined" question (item 5 below) is live again.
     - Modes 1-2 alone are ~0.1 ms. Kept because mode 3's pointer handling is built on the shadow.
-    - **Next profile:** re-take the flat profile with mode 3 on; the driver's 23.7% should have
+    - **Next profile:** re-take the flat profile with mode 3 on (now the default); the driver's 23.7% should have
       moved, and the interpreter's geometry (16.2%) is the largest named item left.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at

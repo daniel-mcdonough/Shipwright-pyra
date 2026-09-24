@@ -1597,3 +1597,54 @@ same-arm control at the same spacing (TESTING.md).
 - Whether the CPU saving at Hyrule Field survives in play, where the frame is capped at 30 FPS and
   the GPU has more slack than the uncapped fixture.
 - Kokiri, and anything with pre-rendered backgrounds.
+
+## 8.25 Client-side arrays in real play: −13.6% of the render thread, and the new GLES2 default
+
+Measured 2026-09-24 afternoon, with the device's owner playing, the same way as §8.23. The device
+started cold (~54 °C). Cold is fine here because the arms alternate every ~10 s, so warming affects
+both equally. §8.24 left one question: mode 3 keeps a copy of global GL state, and the frozen
+fixture never exercises the paths that can disturb it: the pause-menu framebuffer copy, scene
+changes and ImGui.
+
+Watch mode, `SOH_BENCH_AB_CVAR=gSettings.LeanGLState SOH_BENCH_AB_VALUES=0,3`,
+`PYRA_WATCH_PIN=1 SOH_BENCH_UNCAP=0`, entered at the Market. The owner played ~9 minutes through
+four scenes: 32 (Market), 80 (House of Skulltula), 81 (Hyrule Field) and 82 (Kakariko). That gave
+55 blocks of 290 frames, 1250 MHz in every one, at 63–76 °C. 27 ABBA pairs, of which 2 were
+dropped because a scene change fell inside the pair, leaving 25.
+
+| 25 ABBA pairs, 0 → 3 | Δ | t | ≈ MDE |
+|---|---|---|---|
+| render-thread CPU per frame | **−2020 µs (−13.6%)** | −4.7 | 890 µs |
+| … inside the timed window | −1923 µs (−18.1%) | −6.2 | 640 µs |
+| frame period | +103 µs (+0.3%) | +0.7 | 300 µs |
+
+(MDE is t₀.₉₇₅,₂₄·se. The pair sd is 2.2 ms because every block is different play.)
+
+The result is half the planned ~50 pairs, and still more than four standard errors out. It matches
+the frozen result: −3435 µs of render-thread CPU at the Market (−17.2%) and −1648 µs at Hyrule Field
+(−14.4%). The period is the 30 FPS cap, so the saving shows up as headroom, not frame rate. Blocks
+that averaged slower than the cap were 2 and 2, which is no signal.
+
+By scene, crude (few pairs each): Market −11.6% (6 pairs), House of Skulltula −19.0% (8),
+Kakariko −8.0% (9), Hyrule Field −19.0% (2).
+
+**Correctness:** nothing appeared in the game log (no GL errors, no aborts). The owner saw no
+flickering with mode 3 switching on and off every ~10 s. A broken attribute or buffer shadow would
+have shown up as garbage geometry on that rhythm. The session did cover scene changes and interiors.
+Which menus the owner opened was not recorded. The pause-menu framebuffer copy and the ImGui menu
+count as covered only as far as the owner reported no problems.
+
+### Decision
+
+**`gSettings.LeanGLState` now defaults to 3 in GLES2 builds and 0 elsewhere.** Client-side vertex
+arrays are core GLES2, but a desktop GL core profile rejects them (`glVertexAttribPointer` with no
+buffer bound is `GL_INVALID_OPERATION`), so the default is `#ifdef USE_OPENGLES2`. The default was
+checked on device with a short run at the frozen Market fixture and no CVar set:
+- `vbo_uploads=0`
+- 1116 GL calls per frame, down from 2410
+- frame period 24.1 ms, unsoaked, against 23.8 ms soaked in §8.24
+
+The orphaning comment in `DrawTriangles` that told readers to leave it alone was rewritten. It
+cited report 5's microbenchmark, which this section and §8.24 contradict for the real game.
+
+Still untested: Kokiri and pre-rendered backgrounds, as in §8.24.
