@@ -294,6 +294,13 @@ BENCH period mde_us=...
   recomputes). Both fixtures run exactly two directional lights per lit vertex.
 - `gSettings.ProbeSkipLight` (benchmark builds only) skips vertex work for a ceiling A/B: 1 =
   lighting + texgen + fog, 2 = lighting + texgen, 3 = fog. **Wrong picture by design.**
+- `BENCH interp <seg>` (§8.29): `mtx` (`GfxSpMatrix` calls per frame), `mtx_repl` (answered by an
+  interpolated matrix), `map` (replacement map size), and `children`/`ops`, the frame-interpolation
+  recording's nodes and ops per frame period (recorded in `Play_Draw`, outside the window).
+- `gSettings.ProbeSkipInterp` (benchmark builds only) skips frame interpolation with
+  `InterpolationFPS` untouched: 1 = record nothing, 2 = record but do not interpolate. **Pixel-exact
+  in a frozen fixture** (§8.29), wrong in play. Do not A/B `InterpolationFPS` 30 vs 20 instead: that
+  changes how many frames each tick emits.
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
@@ -396,7 +403,11 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     `echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor` puts it back.
 13. **`bench.sh`'s output file can carry the results block twice, the second copy interleaved
     mid-line with other output** (seen 2026-09-24 in `ab` runs). Parse the first occurrence of each
-    `BENCH segment`/`BENCH oncpu` line and ignore the rest, or read `$PYRA_DIR/bench.txt`.
+    `BENCH segment`/`BENCH oncpu` line and ignore the rest. ~~or read `$PYRA_DIR/bench.txt`~~ —
+    §8.29's first run had a log line spliced into the *first* copy of `BENCH segment 11`, **in
+    `bench.txt` too**. `run.log` held it intact: `ssh -n "$PYRA_HOST" "grep -o 'BENCH .*'
+    $PYRA_DIR/run.log"` is the clean source. The harness's own `paired` lines are computed
+    in-process and are not affected.
 14. **Back-to-back soaked A/Bs push the Market past 82 °C.** Two in a row (Hyrule Field then Market,
     2026-09-24) capped six of the Market's twelve segments to 1000 MHz, leaving three clean pairs.
     Let the die fall to ~65 °C between runs, or run the Market first. Cooling is not always enough:

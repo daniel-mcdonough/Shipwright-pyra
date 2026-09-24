@@ -1944,3 +1944,103 @@ would then have gained, and it did not. Nothing here measures it.
   directions. Size each with a skip-it probe before choosing.
 - **Method:** a microbenchmark on the device took seconds and predicted the in-game null. When a
   hypothesis is about how the core executes a loop, try it there before a 10-minute soaked A/B.
+
+## 8.29 Frame interpolation is 2.7 ms, three times its sampled size; most of it is building the recording
+
+Measured 2026-09-24 night, frozen fixtures, 1250 MHz, soaked to 70 °C, the die let down to
+~63–65 °C between runs. First of the skip-it probes NEXT.md 00000 asked for.
+
+### The probe
+
+`gSettings.ProbeSkipInterp` (**benchmark builds only**, read per game tick):
+
+- **1** — `FrameInterpolation_StartRecord` returns before setting `is_recording`, so `Play_Draw`
+  records nothing, `FrameInterpolation_Interpolate` walks two empty trees and returns an empty map,
+  and `GfxSpMatrix` never finds a replacement. `InterpolationFPS` is untouched, so every tick still
+  emits 1.5 frames. Nothing else in the tree reads `is_recording`.
+- **2** — record as usual, but `FrameInterpolation_Interpolate` returns an empty map at once. Mode
+  1 minus mode 2 is the recording; mode 2 is the walk and the interpreter's map lookups.
+
+New counters on a `BENCH interp` line: `GfxSpMatrix` calls (`mtx`), the ones answered from the
+replacement map (`mtx_repl`), the map's size (`map`), and child nodes and ops recorded per frame
+period (`children`, `ops`; recording happens in `Play_Draw`, outside the timed window, so these are
+read at a segment's ends like `res_loads`).
+
+| per frame period | Market | Hyrule Field |
+|---|---|---|
+| `GfxSpMatrix` calls | 366 | 81 |
+| answered by an interpolated matrix | 233 (2 of 3 frames interpolate) | 42 |
+| replacement map size | 110 | 24 |
+| recorded child nodes | 313 | 93 |
+| recorded ops | 820 | 199 |
+
+Mode 1 zeroed the last four and nothing else. Draws, triangles and every `geom` counter were
+identical between arms at the Market; at Hyrule Field `tris` moved 757.9 → 757.8, the scrolling
+sky.
+
+### Visual check: pixel-exact
+
+In-process, Market, `SOH_BENCH_FRAMES=2400 SOH_BENCH_REPS=2`, two grabs in each of segment 0
+(off), 1 (on) and 3 (off, the same-arm control). A-2, B-1, B-2, C-1 and C-2 are identical in every
+pixel. A-1 differs from all of them, **including A-2 of its own arm**, in one pixel by 2/255 in one
+channel. In a frozen scene the two recordings are the same, so the interpolated matrices are the
+current ones, and the fixed-point round trip in `GfxSpMatrix` lands on the same value. The skip
+changes the cost and not the picture, so the A/B below prices interpolation and nothing else.
+
+### The size
+
+Mode 0 → 1, 6 pairs each. Every segment was at 1250 MHz, none discarded:
+
+| mode 1 (no interpolation) | Δ render-thread CPU | t | MDE | Δ period | Δ timed window |
+|---|---|---|---|---|---|
+| Market | **−2700 µs (−15.9%)** | −142 | 49 | −2697 µs (−11.0%), t −20.8 | +45 µs, t 0.6 (MDE 208) |
+| Hyrule Field | **−647 µs (−6.6%)** | −34.3 | 48 | −582 µs (−3.5%), t −6.2 | −59 µs, t −0.6 (MDE 263) |
+
+Mode 0 → 2, Market. Segments 9–11 fell to 1000 MHz (pyra-thermal) and are discarded, leaving 4
+pairs:
+
+| mode 2 (record, don't interpolate) | Δ render-thread CPU | t | MDE | Δ period |
+|---|---|---|---|---|
+| Market | −550 µs (−3.3%) | −21.2 | 83 | −657 µs, t −9.5 |
+
+So at the Market: **recording ≈ 2.15 ms, the interpolate walk ≈ 0.55 ms, the interpreter's
+replacement lookups below the MDE** (the timed window did not move in any run). All of it is
+game-thread work between frames, which is why the period moves and the window does not.
+
+The cost follows what is recorded. The Market records 3.9× Hyrule Field's items (1133 vs 292) and
+costs 4.2× as much. Both come to **~2.3 µs per recorded item per frame period**, or ~2900 cycles.
+Per game tick, ~470 child nodes and ~1230 ops cost ~3.2 ms to record at the Market. That is not
+matrix arithmetic. Each child node is a `Path` holding a `std::map<label, vector<Path>>`, a
+`std::map<Op, vector<Data>>` and a `vector`, and each op is a map lookup plus two `emplace_back`s of
+a ~72-byte union. The whole tree is freed and rebuilt every tick (`previous_recording =
+std::move(current_recording)` destroys the older one). *Reasoning, not measured:* allocation, frees
+and pointer-chasing are the likely cost. The next step is to find out.
+
+### This contradicts the §8.26 table, in the same direction as §8.27
+
+§8.26 sampled interpolation at 925 µs. It measures 2700 µs, **2.9× more**, the largest miss of the
+four sections. *Likely cause, from reading `tools/perfgroup.py`, not checked against the samples:*
+the grouping is flat self time by symbol. The `malloc`/`free`, `memcpy` of `MtxF`s and `Matrix_*`
+calls that interpolation makes land in the malloc/free, memcpy and unmatched-game rows, and only
+code inside `frame_interpolation.cpp` is booked to it. So **the sampled malloc/free (0.8 ms) and
+memcmp/memset (0.75 ms) blocks partly overlap this one.** Re-rank them after any change here, not
+before.
+
+### What this leaves
+
+Interpolation is now the largest measured block after the two defaults: 16% of the Market's
+render-thread CPU, 7% of Hyrule Field's. It ships on (`InterpolationFPS=30` is the Pyra default),
+so it is paid in real play too, once per game tick.
+
+- **An exact rewrite of the recording's storage** is the obvious candidate: the same tree, matched
+  the same way, with its nodes and op vectors in a per-recording arena (`std::pmr` or a flat vector
+  with indices) released wholesale each tick instead of freed node by node. The output would be
+  the same replacement maps by construction. **Unproven:** allocation vs traversal is not
+  separated, so microbenchmark it first (§8.28's method). Replay a recorded op stream of the
+  Market's shape through both stores on the device.
+- **Equivalence has to be checked in motion.** In a frozen fixture the two recordings are
+  identical, so almost any bug in matching old to new would still produce the right matrices.
+  The in-process check has to run with `SOH_BENCH_STATIC=0` or in watch mode, comparing the maps
+  from both implementations.
+- The ceiling of any storage fix is under 2.15 ms (Market) and ~0.5 ms (Hyrule Field, by the
+  per-item rate). The walk's 0.55 ms mostly replays `Matrix_*` calls and is a separate question.

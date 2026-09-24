@@ -3,7 +3,10 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (night)**, after §8.28: interleaving the lighting across vertices is
+Last revised **2026-09-24 (late night)**, after §8.29: **frame interpolation costs 2.7 ms of
+render-thread CPU per frame at the Market (−15.9%, t −142) and 0.65 ms at Hyrule Field (−6.6%)**,
+measured by a pixel-exact skip. That is 2.9× its sampled size. ~2.15 ms of it is building and
+freeing the recording tree (~2.3 µs per recorded item), ~0.55 ms the interpolate walk. Before that, §8.28: interleaving the lighting across vertices is
 exact (0 mismatches at three fixtures) and worth nothing (+43 µs, t 1.9); a microbenchmark shows the
 A15 already overlaps the chains. Lighting alone measures −740 µs at the Market (t −27.6), about
 twice what the isolated loop predicts, which is unexplained. After §8.27: the ceiling of lazy vertex lighting is
@@ -104,12 +107,20 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     by name 1.2 ms, interpolation 0.9 ms, malloc/free 0.8 ms. For each, find a skip that leaves the
     frame drawable (even if wrong) and A/B it, as `ProbeSkipLight` did. For a question about how the
     core runs a loop, a microbenchmark on the device first.
-    - **Interpolation first:** keep `is_recording` false with `InterpolationFPS` untouched. A/Bing
-      the FPS 30 vs 20 changes frames per tick, not just cost. In a frozen fixture interpolation is
-      a no-op, so the skip should be pixel-exact.
+    - ~~**Interpolation first.**~~ **Done (§8.29): −2700 µs Market (t −142, MDE 49), −647 µs
+      Hyrule Field (t −34, MDE 48), pixel-exact.** `gSettings.ProbeSkipInterp=2` split it:
+      recording ≈ 2.15 ms, the walk ≈ 0.55 ms, the interpreter's lookups below the MDE.
+      **Next for it: microbenchmark an arena-backed recording store** (same tree, same matching,
+      freed wholesale per tick) against the shipped one on the device, replaying a Market-shaped op
+      stream (~470 child nodes, ~1230 ops per tick). Build it only if the microbenchmark shows most
+      of the 2.3 µs per item going away. Check equivalence in motion (`SOH_BENCH_STATIC=0` or watch
+      mode), because a frozen fixture's two recordings are identical and hide matching bugs.
     - Lookups by name: count per entry point, then a frozen-only memo on the name pointer.
-    - malloc/free: count with a `perf probe` uprobe (untried here; unwinding does not work, counting should).
-    - Interpreter rest: count commands per opcode first, re-rank after interpolation.
+    - malloc/free: count with a `perf probe` uprobe (untried here; unwinding does not work, counting
+      should). **Partly the same time as interpolation** (§8.29): its tree allocates per node, so
+      size this after any interpolation change, or subtract.
+    - Interpreter rest: count commands per opcode first. §8.29 found the replacement-map lookup in
+      `GfxSpMatrix` below the MDE, so interpolation does not account for any of this block.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**
