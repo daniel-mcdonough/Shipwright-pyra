@@ -31,7 +31,9 @@
 set -euo pipefail
 
 HOST="${PYRA_HOST:?set PYRA_HOST to user@device}"
-REMOTE_DIR="${PYRA_DIR:-/home/$(echo "$HOST" | cut -d@ -f1)/soh}"
+# The benchmark install (TESTING.md §0). The old default, ~/soh, holds a stale binary with no
+# archives beside it: a run that forgot PYRA_DIR launched that and stopped at a missing-o2r dialog.
+REMOTE_DIR="${PYRA_DIR:-/home/$(echo "$HOST" | cut -d@ -f1)/soh-bench2}"
 # Without these SDL loads libGLESv2.so.2, which resolves through glvnd to Mesa and
 # renders in software on llvmpipe. It still runs, it still reports a frame rate, and
 # the frame rate is meaningless - see docs/pyra/00-EXECUTIVE-SUMMARY.md finding 3.

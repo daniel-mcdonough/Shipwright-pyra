@@ -1,3 +1,4 @@
+#include <ship/resource/BenchLookup.h>
 #include "ResourceManagerHelpers.h"
 #include "OTRGlobals.h"
 #include "variables.h"
@@ -127,14 +128,17 @@ extern "C" uint32_t ResourceMgr_IsGameMasterQuest() {
 }
 
 extern "C" void ResourceMgr_LoadDirectory(const char* resName) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadDirectory");
     Ship::Context::GetInstance()->GetResourceManager()->LoadResources(resName);
 }
 
 extern "C" void ResourceMgr_DirtyDirectory(const char* resName) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_DirtyDirectory");
     Ship::Context::GetInstance()->GetResourceManager()->DirtyResources(resName);
 }
 
 extern "C" void ResourceMgr_UnloadResource(const char* resName) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_UnloadResource");
     std::string path = resName;
     if (path.substr(0, 7) == "__OTR__") {
         path = path.substr(7);
@@ -145,6 +149,7 @@ extern "C" void ResourceMgr_UnloadResource(const char* resName) {
 // OTRTODO: There is probably a more elegant way to go about this...
 // Caller must free each string and the array itself when done.
 extern "C" char** ResourceMgr_ListFiles(const char* searchMask, int* resultSize) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_ListFiles");
     auto lst = Ship::Context::GetInstance()->GetResourceManager()->GetArchiveManager()->ListFiles(searchMask);
     char** result = (char**)malloc(lst->size() * sizeof(char*));
 
@@ -160,6 +165,7 @@ extern "C" char** ResourceMgr_ListFiles(const char* searchMask, int* resultSize)
 }
 
 extern "C" uint8_t ResourceMgr_FileExists(const char* filePath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_FileExists");
     std::string path = filePath;
     if (path.substr(0, 7) == "__OTR__") {
         path = path.substr(7);
@@ -169,6 +175,7 @@ extern "C" uint8_t ResourceMgr_FileExists(const char* filePath) {
 }
 
 extern "C" uint8_t ResourceMgr_FileAltExists(const char* filePath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_FileAltExists");
     std::string path = filePath;
     if (path.substr(0, 7) == "__OTR__") {
         path = path.substr(7);
@@ -188,6 +195,7 @@ extern "C" bool ResourceMgr_IsAltAssetsEnabled() {
 // Unloads a resource if an alternate version exists when alt assets are enabled
 // The resource is only removed from the internal cache to prevent it from used in the next resource lookup
 extern "C" void ResourceMgr_UnloadOriginalWhenAltExists(const char* resName) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_UnloadOriginalWhenAltExists");
     if (ResourceMgr_IsAltAssetsEnabled() && ResourceMgr_FileAltExists((char*)resName)) {
         ResourceMgr_UnloadResource((char*)resName);
     }
@@ -205,6 +213,7 @@ std::shared_ptr<Ship::IResource> ResourceMgr_GetResourceByNameHandlingMQ(const c
 }
 
 extern "C" char* ResourceMgr_GetResourceDataByNameHandlingMQ(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_GetResourceDataByNameHandlingMQ");
     auto res = ResourceMgr_GetResourceByNameHandlingMQ(path);
 
     if (res == nullptr) {
@@ -215,11 +224,13 @@ extern "C" char* ResourceMgr_GetResourceDataByNameHandlingMQ(const char* path) {
 }
 
 extern "C" uint8_t ResourceMgr_TexIsRaw(const char* texPath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_TexIsRaw");
     auto res = std::static_pointer_cast<Fast::Texture>(ResourceMgr_GetResourceByNameHandlingMQ(texPath));
     return res->Flags & TEX_FLAG_LOAD_AS_RAW;
 }
 
 extern "C" uint8_t ResourceMgr_ResourceIsBackground(char* texPath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_ResourceIsBackground");
     auto res = ResourceMgr_GetResourceByNameHandlingMQ(texPath);
     return res->GetInitData()->Type == static_cast<uint32_t>(SOH::ResourceType::SOH_Background);
 }
@@ -263,6 +274,7 @@ extern "C" char* ResourceMgr_LoadJPEG(char* data, size_t dataSize) {
 }
 
 extern "C" char* ResourceMgr_LoadTexOrDListByName(const char* filePath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadTexOrDListByName");
     auto res = ResourceMgr_GetResourceByNameHandlingMQ(filePath);
 
     if (res->GetInitData()->Type == static_cast<uint32_t>(Fast::ResourceType::DisplayList)) {
@@ -277,6 +289,7 @@ extern "C" char* ResourceMgr_LoadTexOrDListByName(const char* filePath) {
 }
 
 extern "C" char* ResourceMgr_LoadIfDListByName(const char* filePath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadIfDListByName");
     auto res = ResourceMgr_GetResourceByNameHandlingMQ(filePath);
 
     if (res->GetInitData()->Type == static_cast<uint32_t>(Fast::ResourceType::DisplayList)) {
@@ -287,6 +300,7 @@ extern "C" char* ResourceMgr_LoadIfDListByName(const char* filePath) {
 }
 
 extern "C" char* ResourceMgr_LoadPlayerAnimByName(const char* animPath) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadPlayerAnimByName");
     auto anim = std::static_pointer_cast<SOH::PlayerAnimation>(ResourceMgr_GetResourceByNameHandlingMQ(animPath));
 
     return (char*)&anim->limbRotData[0];
@@ -297,6 +311,7 @@ extern "C" void ResourceMgr_PushCurrentDirectory(char* path) {
 }
 
 extern "C" Gfx* ResourceMgr_LoadGfxByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadGfxByName");
     // When an alt resource exists for the DL, we need to unload the original asset
     // to clear the cache so the alt asset will be loaded instead
     // OTRTODO: If Alt loading over original cache is fixed, this line can most likely be removed
@@ -307,6 +322,7 @@ extern "C" Gfx* ResourceMgr_LoadGfxByName(const char* path) {
 }
 
 extern "C" uint8_t ResourceMgr_FileIsCustomByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_FileIsCustomByName");
     auto res = std::static_pointer_cast<Fast::DisplayList>(ResourceMgr_GetResourceByNameHandlingMQ(path));
     return res->GetInitData()->IsCustom;
 }
@@ -324,6 +340,7 @@ std::unordered_map<std::string, std::unordered_map<std::string, GfxPatch>> origi
 // Attention! This is primarily for cosmetics & bug fixes. For things like mods and model replacement you should be
 // using OTRs instead (When that is available). Index can be found using the commented out section below.
 extern "C" void ResourceMgr_PatchGfxByName(const char* path, const char* patchName, int index, Gfx instruction) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_PatchGfxByName");
     auto res = std::static_pointer_cast<Fast::DisplayList>(
         Ship::Context::GetInstance()->GetResourceManager()->LoadResource(path));
 
@@ -367,6 +384,7 @@ extern "C" void ResourceMgr_PatchGfxByName(const char* path, const char* patchNa
 
 extern "C" void ResourceMgr_PatchGfxCopyCommandByName(const char* path, const char* patchName, int destinationIndex,
                                                       int sourceIndex) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_PatchGfxCopyCommandByName");
     auto res = std::static_pointer_cast<Fast::DisplayList>(
         Ship::Context::GetInstance()->GetResourceManager()->LoadResource(path));
 
@@ -392,6 +410,7 @@ extern "C" void ResourceMgr_PatchGfxCopyCommandByName(const char* path, const ch
 }
 
 extern "C" void ResourceMgr_PatchCustomGfxByName(const char* path, const char* patchName, int index, Gfx instruction) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_PatchCustomGfxByName");
     auto res = std::static_pointer_cast<Fast::DisplayList>(
         Ship::Context::GetInstance()->GetResourceManager()->LoadResource(path));
 
@@ -410,6 +429,7 @@ extern "C" void ResourceMgr_PatchCustomGfxByName(const char* path, const char* p
 }
 
 extern "C" void ResourceMgr_UnpatchGfxByName(const char* path, const char* patchName) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_UnpatchGfxByName");
     if (originalGfx.contains(path) && originalGfx[path].contains(patchName)) {
         auto res = std::static_pointer_cast<Fast::DisplayList>(
             Ship::Context::GetInstance()->GetResourceManager()->LoadResource(path));
@@ -446,6 +466,7 @@ extern "C" void ResourceMgr_UnpatchGfxByName(const char* path, const char* patch
 }
 
 extern "C" char* ResourceMgr_LoadArrayByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadArrayByName");
     auto res = std::static_pointer_cast<SOH::Array>(ResourceMgr_GetResourceByNameHandlingMQ(path));
 
     return (char*)res->Scalars.data();
@@ -453,6 +474,7 @@ extern "C" char* ResourceMgr_LoadArrayByName(const char* path) {
 
 // Return of LoadArrayByNameAsVec3s must be freed by the caller
 extern "C" char* ResourceMgr_LoadArrayByNameAsVec3s(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadArrayByNameAsVec3s");
     auto res = std::static_pointer_cast<SOH::Array>(ResourceMgr_GetResourceByNameHandlingMQ(path));
 
     // if (res->CachedGameAsset != nullptr)
@@ -474,32 +496,39 @@ extern "C" char* ResourceMgr_LoadArrayByNameAsVec3s(const char* path) {
 }
 
 extern "C" CollisionHeader* ResourceMgr_LoadColByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadColByName");
     return (CollisionHeader*)ResourceGetDataByName(path);
 }
 
 extern "C" Vtx* ResourceMgr_LoadVtxByName(char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadVtxByName");
     return (Vtx*)ResourceGetDataByName(path);
 }
 
 extern "C" SequenceData ResourceMgr_LoadSeqByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadSeqByName");
     SequenceData* sequence = (SequenceData*)ResourceGetDataByName(path);
     return *sequence;
 }
 
 extern "C" SequenceData* ResourceMgr_LoadSeqPtrByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadSeqPtrByName");
     SequenceData* sequence = (SequenceData*)ResourceGetDataByName(path);
     return sequence;
 }
 
 extern "C" SoundFontSample* ResourceMgr_LoadAudioSample(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadAudioSample");
     return (SoundFontSample*)ResourceGetDataByName(path);
 }
 
 extern "C" SoundFont* ResourceMgr_LoadAudioSoundFontByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadAudioSoundFontByName");
     return (SoundFont*)ResourceGetDataByName(path);
 }
 
 extern "C" int ResourceMgr_OTRSigCheck(char* imgData) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_OTRSigCheck");
     uintptr_t i = (uintptr_t)(imgData);
 
     // if (i == 0xD9000000 || i == 0xE7000000 || (i & 1) == 1)
@@ -521,6 +550,7 @@ extern "C" int ResourceMgr_OTRSigCheck(char* imgData) {
 // When Alt Assets is OFF: use original path directly (O2R or vanilla)
 // When Alt Assets is ON: try alt/ prefix first, fall back to regular path if not found or invalid
 extern "C" AnimationHeaderCommon* ResourceMgr_LoadAnimByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadAnimByName");
     bool isAlt = ResourceMgr_IsAltAssetsEnabled();
 
     if (isAlt) {
@@ -562,6 +592,7 @@ extern "C" AnimationHeaderCommon* ResourceMgr_LoadAnimByName(const char* path) {
 }
 
 extern "C" SkeletonHeader* ResourceMgr_LoadSkeletonByName(const char* path, SkelAnime* skelAnime) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadSkeletonByName");
     std::string pathStr = std::string(path);
     static const std::string sOtr = "__OTR__";
 
@@ -603,5 +634,6 @@ extern "C" void ResourceMgr_ClearSkeletons() {
 }
 
 extern "C" s32* ResourceMgr_LoadCSByName(const char* path) {
+    BENCH_LOOKUP_SCOPE("ResourceMgr_LoadCSByName");
     return (s32*)ResourceMgr_GetResourceDataByNameHandlingMQ(path);
 }

@@ -17,7 +17,9 @@ export PYRA_HOST=pyra@pyra.local
 export PYRA_DIR=/home/pyra/soh-bench2
 ```
 
-`pyra.local` — the `<pyra-ip>` in the hardware repo is stale. Two install directories:
+`pyra.local` — the `<pyra-ip>` in the hardware repo is stale. `bench.sh` defaults `PYRA_DIR` to
+`~/soh-bench2` since 2026-09-24; before that it defaulted to `~/soh`, a stale binary with no
+archives, and a run that forgot the export stopped at a missing-o2r dialog. Two install directories:
 
 | | |
 |---|---|
@@ -311,6 +313,21 @@ BENCH period mde_us=...
   `InterpolationFPS` untouched: 1 = record nothing, 2 = record but do not interpolate. **Pixel-exact
   in a frozen fixture** (§8.29), wrong in play. Do not A/B `InterpolationFPS` 30 vs 20 instead: that
   changes how many frames each tick emits.
+- `BENCH lookup <seg>` (§8.31): `calls` is resource lookups by name or CRC made by the render thread,
+  counted once each at their outermost entry (a `ResourceMgr_*` helper, a bridge function or a
+  `ResourceManager` method). `ResourceMgr_OTRSigCheck` is scoped too and is a prefix check, not a
+  lookup: subtract it using the site table. `cvar` is CVar reads by name. Neither is visible to
+  `res_loads`, which only counts cache misses.
+- `BENCH ops <seg>` (§8.31): display-list commands per frame per opcode, largest first, named for
+  the ucode loaded when the results are written.
+- `BENCH alloc <seg>` (§8.31), only with `LD_PRELOAD=$PYRA_DIR/allocshim.so`: heap calls per frame
+  period on the render thread. `new`/`delete` are every `operator new`/`delete`; `malloc` includes
+  calloc, the memalign family and strdup. The shim costs time: **count with it, never time with it.**
+- `SOH_BENCH_SITES=<dir on the device>` writes `lookup-sites-N.txt` per segment, and with the shim
+  `alloc-sites-N.txt`: counts per frame binned by the immediate caller (its return address, so no
+  unwinding is involved). Copy them back and run
+  `python3 docs/pyra/tools/sites.py build-pyra/soh/soh.elf <files of one arm>`, against the binary that
+  ran.
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
@@ -486,6 +503,11 @@ sudo perf record -F 499 -t $PID -o rec.data -- sleep 25
 sudo perf report -i rec.data --no-children --sort dso,sym --stdio
 ```
 
+- **Uprobes do not exist on the `5.6.19-m4` kernel** (`CONFIG_UPROBE_EVENTS` is off), so
+  `perf probe -x libc.so.6 malloc` fails, quietly with `-q`. `5.6.19-m4-uprobe` (hardware repo,
+  `pc/pyra-crossbuild.sh kernel-m4-uprobe`) is m4 plus that option; it is installed in the test
+  slot `l1` but is not the default. For counting heap calls `scripts/pyra/allocshim.so` needs no
+  kernel change (§8.31).
 - **Call graphs do not work here.** No `.debug_frame` in the shipping build; a `-g1` build adds it
   but the unwinder still stops at the stripped DDK and invents callers inside `soh.elf` (§8.21).
   Price call sites with `BENCH_` counters and A/Bs.

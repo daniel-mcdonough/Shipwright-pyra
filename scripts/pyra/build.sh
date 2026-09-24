@@ -54,9 +54,15 @@ case "${1:-build}" in
         -o "/src/$BUILD_DIR/fdguard.so" /src/scripts/pyra/fdguard.c -ldl
     echo "built $BUILD_DIR/fdguard.so"
     ;;
+  allocshim)
+    # LD_PRELOAD allocation counter and call-site binner. Report 8 section 8.31.
+    run arm-linux-gnueabihf-gcc -shared -fPIC -O2 -Wall \
+        -o "/src/$BUILD_DIR/allocshim.so" /src/scripts/pyra/allocshim.c -ldl
+    echo "built $BUILD_DIR/allocshim.so"
+    ;;
   shell)
     docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp \
       -v "$REPO:/src" -v "$DDK:/opt/omap5-sgx-ddk-um-linux:ro" -w /src "$IMAGE" bash
     ;;
-  *) echo "usage: $0 {image|configure|build|fdguard|shell}" >&2; exit 1 ;;
+  *) echo "usage: $0 {image|configure|build|fdguard|allocshim|shell}" >&2; exit 1 ;;
 esac

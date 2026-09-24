@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <time.h>
+#include <dlfcn.h>
 
 #include "soh/OTRGlobals.h"
 #include "soh/frame_interpolation.h"
@@ -19,6 +20,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
 #include <ship/Context.h>
+#include <ship/resource/BenchLookup.h>
 #include <ship/window/Window.h>
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
@@ -127,9 +129,33 @@ struct Config {
     // a good spot with the controls, read the last line out of the log, and pin those numbers.
     // Picking a fixture any other way means picking it blind - see report 9 §9.9.
     bool watch = false;
+
+    // Directory for per-segment call-site tables (§8.31): alloc-sites-N.txt from
+    // scripts/pyra/allocshim.so, lookup-sites-N.txt from the resource manager. Empty: none.
+    std::string sitesDir;
 };
 
 Config gCfg;
+
+// scripts/pyra/allocshim.so, when it is preloaded (§8.31): heap allocations counted per thread,
+// and binned by call site on request. Looked up once; without the shim the alloc line is left out.
+constexpr int kAllocFields = 6; // malloc, realloc, new, free, delete, bytes - the shim's order
+struct AllocShim {
+    int (*read)(uint64_t*, int) = nullptr;
+    void (*sitesBegin)() = nullptr;
+    void (*sitesEnd)(const char*, double) = nullptr;
+    bool looked = false;
+} gAllocShim;
+
+AllocShim& Shim() {
+    if (!gAllocShim.looked) {
+        gAllocShim.looked = true;
+        gAllocShim.read = (int (*)(uint64_t*, int))dlsym(RTLD_DEFAULT, "allocshim_read");
+        gAllocShim.sitesBegin = (void (*)())dlsym(RTLD_DEFAULT, "allocshim_sites_begin");
+        gAllocShim.sitesEnd = (void (*)(const char*, double))dlsym(RTLD_DEFAULT, "allocshim_sites_end");
+    }
+    return gAllocShim;
+}
 
 const char* EnvOr(const char* name, const char* fallback) {
     const char* v = getenv(name);
@@ -332,6 +358,15 @@ struct Segment {
     uint64_t interpCmpStart = 0, interpCmpEnd = 0, interpBadStart = 0, interpBadEnd = 0;
     // gBenchGlFn at the same two points: calls per GL entry point per frame period.
     std::vector<uint64_t> glFnStart, glFnEnd;
+    // allocshim's counters for the render thread at the same two points (§8.31).
+    uint64_t allocStart[kAllocFields] = {}, allocEnd[kAllocFields] = {};
+    bool haveAlloc = false;
+    // Resource lookups by name or CRC made by the render thread, outermost entries only (§8.31).
+    uint64_t lookupsStart = 0, lookupsEnd = 0;
+    // CVar reads by name made by the render thread, outermost entries only (§8.31).
+    uint64_t cvarStart = 0, cvarEnd = 0;
+    // gBenchOpcodes at the same two points: display-list commands per opcode per frame.
+    std::vector<uint64_t> opStart, opEnd;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
 };
 
@@ -576,6 +611,43 @@ void WriteResults() {
                  (unsigned long long)(seg.interpCmpEnd - seg.interpCmpStart),
                  (unsigned long long)(seg.interpBadEnd - seg.interpBadStart));
         text += line;
+        // Heap traffic on the render thread per frame period, from allocshim (§8.31). malloc
+        // includes calloc, the memalign family and strdup; new is every operator new.
+        if (seg.haveAlloc) {
+            double a[kAllocFields];
+            for (int k = 0; k < kAllocFields; k++) {
+                a[k] = (double)(seg.allocEnd[k] - seg.allocStart[k]) / periods;
+            }
+            snprintf(line, sizeof(line), "BENCH alloc %zu malloc=%.1f realloc=%.1f new=%.1f free=%.1f delete=%.1f kb=%.1f\n",
+                     i, a[0], a[1], a[2], a[3], a[4], a[5] / 1024.0);
+            text += line;
+        }
+        snprintf(line, sizeof(line), "BENCH lookup %zu calls=%.1f cvar=%.1f\n", i,
+                 (double)(seg.lookupsEnd - seg.lookupsStart) / periods,
+                 (double)(seg.cvarEnd - seg.cvarStart) / periods);
+        text += line;
+        // Display-list commands per opcode per frame period, largest first (§8.31). Names are the
+        // ucode loaded when the results are written; the game draws with F3DEX2 throughout.
+        if (seg.opStart.size() == 256 && seg.opEnd.size() == 256) {
+            std::vector<std::pair<double, int>> ops;
+            double total = 0.0;
+            for (int op = 0; op < 256; op++) {
+                const double n = (double)(seg.opEnd[op] - seg.opStart[op]) / periods;
+                if (n > 0.0) {
+                    ops.emplace_back(n, op);
+                    total += n;
+                }
+            }
+            std::sort(ops.begin(), ops.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            snprintf(line, sizeof(line), "BENCH ops %zu total=%.1f", i, total);
+            text += line;
+            for (const auto& [n, op] : ops) {
+                const char* name = Fast::GfxGetOpcodeName((int8_t)op);
+                snprintf(line, sizeof(line), " %s/%02X=%.1f", name != nullptr ? name : "?", op, n);
+                text += line;
+            }
+            text += "\n";
+        }
         // Calls per GL entry point per frame period, largest first, zeros left out.
         if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
             seg.frameMicros.size() > 1) {
@@ -945,6 +1017,7 @@ extern "C" void Benchmark_Init(void) {
     gCfg.targetFps = EnvInt("SOH_BENCH_TARGET_FPS", gCfg.targetFps);
     gBenchFinish = EnvInt("SOH_BENCH_FINISH", 0);
     gCfg.uncap = EnvBool("SOH_BENCH_UNCAP", gCfg.uncap);
+    gCfg.sitesDir = EnvOr("SOH_BENCH_SITES", "");
 
     gCfg.havePos = ParseVec3("SOH_BENCH_POS", gCfg.pos);
     gCfg.haveEye = ParseVec3("SOH_BENCH_EYE", gCfg.eye);
@@ -1197,6 +1270,19 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().glFnStart.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
+                gRunSegments.back().lookupsStart = Ship::BenchLookupsThisThread();
+                gRunSegments.back().cvarStart = Ship::BenchLookupsThisThread(Ship::BENCH_LOOKUP_CVAR);
+                gRunSegments.back().opStart.assign(gBenchOpcodes, gBenchOpcodes + 256);
+                if (!gCfg.sitesDir.empty()) {
+                    Ship::BenchLookupSitesBegin();
+                }
+                if (Shim().read != nullptr) {
+                    Shim().read(gRunSegments.back().allocStart, kAllocFields);
+                    gRunSegments.back().haveAlloc = true;
+                    if (!gCfg.sitesDir.empty() && Shim().sitesBegin != nullptr) {
+                        Shim().sitesBegin();
+                    }
+                }
             }
             if (gPhaseFrames > 0 && gPhaseFrames % kCpuSampleEvery == 0) {
                 SampleCpu(gRunSegments.back());
@@ -1211,6 +1297,22 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpCmpEnd = gBenchInterpCompared;
                 gRunSegments.back().interpBadEnd = gBenchInterpMismatch;
                 gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
+                gRunSegments.back().lookupsEnd = Ship::BenchLookupsThisThread();
+                gRunSegments.back().cvarEnd = Ship::BenchLookupsThisThread(Ship::BENCH_LOOKUP_CVAR);
+                gRunSegments.back().opEnd.assign(gBenchOpcodes, gBenchOpcodes + 256);
+                if (!gCfg.sitesDir.empty()) {
+                    const std::string path =
+                        gCfg.sitesDir + "/lookup-sites-" + std::to_string(gRunSegments.size() - 1) + ".txt";
+                    Ship::BenchLookupSitesEnd(path.c_str(), (double)(gRunSegments.back().frameMicros.size() - 1));
+                }
+                if (gRunSegments.back().haveAlloc) {
+                    Shim().read(gRunSegments.back().allocEnd, kAllocFields);
+                    if (!gCfg.sitesDir.empty() && Shim().sitesEnd != nullptr) {
+                        const std::string path =
+                            gCfg.sitesDir + "/alloc-sites-" + std::to_string(gRunSegments.size() - 1) + ".txt";
+                        Shim().sitesEnd(path.c_str(), (double)(gRunSegments.back().frameMicros.size() - 1));
+                    }
+                }
                 gRunSegments.back().cpuEndKHz = SampleCpu(gRunSegments.back());
                 gRunSegments.back().fbEndW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbEndH = OTRGetGameRenderHeight();
