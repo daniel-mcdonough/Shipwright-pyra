@@ -442,7 +442,17 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     `pyra-thermal` has hysteresis, so segments stay at 1000 MHz while the die reads 78 °C. Pairs
     whose two halves share a clock are still valid pairs. Analyse them per clock, and say so.
 
-15. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
+15. **The first segments can still be settling after the soak** (2026-09-24, §8.31). A Market A/B
+    that reached 70 °C within seconds of the default 600-frame warmup read 17.98, 17.88 and 16.97
+    ms of render-thread CPU in segments 0-2, then 15.8-15.9 ms flat for the other nine, at the pin
+    throughout. That curve is not linear, so ABBA leaves it in the first two pairs. Pass
+    `SOH_BENCH_WARMUP=2400`, and check the per-segment `thread_us` before believing the paired line.
+
+16. **`SOH_BENCH_OPTIME=1` costs ~0.6 µs per display-list command** (two `clock_gettime` calls, not
+    vDSO here): the Market's window goes from ~19 to ~32 ms. The no-op sync commands read the floor
+    (~630-680 ns). Subtract it; use the result to choose a handler to skip-probe, never as a size.
+
+17. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
     teardown, seen every run 2026-09-24, with or without that day's changes). The results are
     already written by then. Ignore it, or fix it separately; it is not a benchmark problem.
 

@@ -373,7 +373,7 @@ struct Segment {
     // CVar writes (they empty LeanCVar=2's memo) and ProbeMemoLookup=2's mismatches, same points.
     uint64_t cvarWritesStart = 0, cvarWritesEnd = 0, memoBadStart = 0, memoBadEnd = 0;
     // gBenchOpcodes at the same two points: display-list commands per opcode per frame.
-    std::vector<uint64_t> opStart, opEnd;
+    std::vector<uint64_t> opStart, opEnd, opNsStart, opNsEnd;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
 };
 
@@ -662,6 +662,30 @@ void WriteResults() {
                 text += line;
             }
             text += "\n";
+            // SOH_BENCH_OPTIME=1: microseconds per frame per opcode, and ns per command, largest
+            // total first. Includes the clock's own cost; read the sync commands for that floor.
+            if (gBenchOpTime && seg.opNsStart.size() == 256 && seg.opNsEnd.size() == 256) {
+                std::vector<std::pair<double, int>> times;
+                double totalUs = 0.0;
+                for (int op = 0; op < 256; op++) {
+                    const double us = (double)(seg.opNsEnd[op] - seg.opNsStart[op]) / 1000.0 / periods;
+                    if (us > 0.0) {
+                        times.emplace_back(us, op);
+                        totalUs += us;
+                    }
+                }
+                std::sort(times.begin(), times.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+                snprintf(line, sizeof(line), "BENCH optime %zu total_us=%.1f", i, totalUs);
+                text += line;
+                for (const auto& [us, op] : times) {
+                    const double n = (double)(seg.opEnd[op] - seg.opStart[op]) / periods;
+                    const char* name = Fast::GfxGetOpcodeName((int8_t)op);
+                    snprintf(line, sizeof(line), " %s/%02X=%.1fus@%.0fns", name != nullptr ? name : "?", op, us,
+                             n > 0.0 ? us * 1000.0 / n : 0.0);
+                    text += line;
+                }
+                text += "\n";
+            }
         }
         // Calls per GL entry point per frame period, largest first, zeros left out.
         if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
@@ -1033,6 +1057,7 @@ extern "C" void Benchmark_Init(void) {
     gBenchFinish = EnvInt("SOH_BENCH_FINISH", 0);
     gCfg.uncap = EnvBool("SOH_BENCH_UNCAP", gCfg.uncap);
     gCfg.sitesDir = EnvOr("SOH_BENCH_SITES", "");
+    gBenchOpTime = EnvInt("SOH_BENCH_OPTIME", 0);
 
     gCfg.havePos = ParseVec3("SOH_BENCH_POS", gCfg.pos);
     gCfg.haveEye = ParseVec3("SOH_BENCH_EYE", gCfg.eye);
@@ -1290,6 +1315,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().cvarWritesStart = Ship::gBenchCVarChanges;
                 gRunSegments.back().memoBadStart = gBenchMemoMismatch;
                 gRunSegments.back().opStart.assign(gBenchOpcodes, gBenchOpcodes + 256);
+                gRunSegments.back().opNsStart.assign(gBenchOpNanos, gBenchOpNanos + 256);
                 if (!gCfg.sitesDir.empty()) {
                     Ship::BenchLookupSitesBegin();
                 }
@@ -1319,6 +1345,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().cvarWritesEnd = Ship::gBenchCVarChanges;
                 gRunSegments.back().memoBadEnd = gBenchMemoMismatch;
                 gRunSegments.back().opEnd.assign(gBenchOpcodes, gBenchOpcodes + 256);
+                gRunSegments.back().opNsEnd.assign(gBenchOpNanos, gBenchOpNanos + 256);
                 if (!gCfg.sitesDir.empty()) {
                     const std::string path =
                         gCfg.sitesDir + "/lookup-sites-" + std::to_string(gRunSegments.size() - 1) + ".txt";
