@@ -104,6 +104,12 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     by name 1.2 ms, interpolation 0.9 ms, malloc/free 0.8 ms. For each, find a skip that leaves the
     frame drawable (even if wrong) and A/B it, as `ProbeSkipLight` did. For a question about how the
     core runs a loop, a microbenchmark on the device first.
+    - **Interpolation first:** keep `is_recording` false with `InterpolationFPS` untouched. A/Bing
+      the FPS 30 vs 20 changes frames per tick, not just cost. In a frozen fixture interpolation is
+      a no-op, so the skip should be pixel-exact.
+    - Lookups by name: count per entry point, then a frozen-only memo on the name pointer.
+    - malloc/free: count with a `perf probe` uprobe (untried here; unwinding does not work, counting should).
+    - Interpreter rest: count commands per opcode first, re-rank after interpolation.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**
