@@ -285,6 +285,10 @@ BENCH period mde_us=...
   `BENCH glfn <seg>` line lists calls per GL entry point per frame, largest first. **GL call count
   is not a cost proxy on this driver**: removing 43% of them saved 0.5% (§8.24). Draws and uploads
   are what cost.
+- `BENCH geom <seg>` (§8.26) counts geometry per frame: `vtx` transformed, `vtx_lit`, `vtx_unused`
+  (overwritten before any drawn triangle used them; a lower bound), `tri_in` (`GfxSpTri1` calls),
+  `tri_rect`, `tri_clipped`, `tri_culled`, and `tris` drawn. `tri_in = tri_clipped + tri_culled +
+  tris`. At the Market 38% of submitted triangles are drawn.
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
@@ -390,7 +394,10 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     `BENCH segment`/`BENCH oncpu` line and ignore the rest, or read `$PYRA_DIR/bench.txt`.
 14. **Back-to-back soaked A/Bs push the Market past 82 °C.** Two in a row (Hyrule Field then Market,
     2026-09-24) capped six of the Market's twelve segments to 1000 MHz, leaving three clean pairs.
-    Let the die fall to ~65 °C between runs, or run the Market first.
+    Let the die fall to ~65 °C between runs, or run the Market first. Cooling is not always enough:
+    §8.26's Hyrule Field run started at 61 °C, after a Market run, and still capped pairs 3–6.
+    `pyra-thermal` has hysteresis, so segments stay at 1000 MHz while the die reads 78 °C. Pairs
+    whose two halves share a clock are still valid pairs. Analyse them per clock, and say so.
 
 ## 6. Recipes
 
@@ -444,6 +451,13 @@ sudo perf report -i rec.data --no-children --sort dso,sym --stdio
   debug-info build pass `--no-inline`, or `addr2line` runs for half an hour.
 - Attach to the middle segments of a `bench.sh ab <cvar> X X` run and keep clean ones either side,
   so the harness shows which segments the profiler disturbed.
+- **Where inside a function** (§8.26): release builds have no line tables, and `perf annotate`
+  finds no samples once a newer `soh.elf` is deployed over the recorded one. Take the IPs with
+  `perf script -F ip,dso --show-mmap-events`, subtract the `soh.elf` mmap base, pull the binary
+  from `/root/.debug/<path>/<build-id>/elf`, and bin by 16-byte region against `llvm-objdump
+  --triple=thumbv7a-linux-gnueabihf`. The PCs skid onto the instructions after a `VDIV` or `VMRS`,
+  and the counts **overstate** what removing that instruction saves, by ~3× in §8.26. Use the
+  result to pick a candidate, and an A/B to size it.
 - No GPU-side profiler is known to work on this part (`~/git/dragonbox-pyra/docs/profiling-guide.md`
   §3.2). The DDK does ship `libPVRScopeServices.so`, which is PowerVR's counter library; untried.
 

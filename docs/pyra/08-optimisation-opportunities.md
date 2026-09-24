@@ -1631,8 +1631,8 @@ Kakariko −8.0% (9), Hyrule Field −19.0% (2).
 **Correctness:** nothing appeared in the game log (no GL errors, no aborts). The owner saw no
 flickering with mode 3 switching on and off every ~10 s. A broken attribute or buffer shadow would
 have shown up as garbage geometry on that rhythm. The session did cover scene changes and interiors.
-Which menus the owner opened was not recorded. The pause-menu framebuffer copy and the ImGui menu
-count as covered only as far as the owner reported no problems.
+The owner confirmed afterwards that they opened the pause menu, which exercises the framebuffer
+copy (the blit path). Whether they opened the ImGui menu was not recorded.
 
 ### Decision
 
@@ -1648,3 +1648,137 @@ The orphaning comment in `DrawTriangles` that told readers to leave it alone was
 cited report 5's microbenchmark, which this section and §8.24 contradict for the real game.
 
 Still untested: Kokiri and pre-rendered backgrounds, as in §8.24.
+
+## 8.26 Re-profile with client arrays on; the geometry is mostly discarded, and its cost is divides
+
+Measured 2026-09-24 afternoon, frozen fixtures, 1250 MHz.
+
+### The re-profile
+
+Same method as §8.24: `bench.sh ab gSettings.ShaderOpts 3 3 $MARKET SOH_BENCH_REPS=5`, ten identical
+segments, all at 1250 MHz, 74–82 °C, with `tools/prof.sh` attached (9,980 samples). `LeanGLState=3`
+is now the default. The frame period was 23.9–24.3 ms before `perf` attached. The render thread ran
+at **0.70 CPUs, IPC 0.54, ~30 context switches per frame**, against 0.74, 0.50 and ~27 in §8.24.
+
+Percentages alone would mislead here, because the total shrank and every other item's share rose.
+The table below converts each share to µs per frame, using the render thread's measured on-CPU time
+over the profiled segments: **21,103 µs in §8.24, 17,454 µs now, −3650 µs.** The frozen A/B in §8.24
+measured −3435 µs, so the profile accounts for the saving.
+
+| DSO | §8.24 µs/frame | now | Δ |
+|---|---|---|---|
+| `soh.elf` | 9927 | 9840 | **−87** |
+| `libc.so.6` | 3583 | 2662 | −922 |
+| `libGLESv2` | 2931 | 2576 | −355 |
+| kernel | 1655 | 831 | −824 |
+| `libsrv_um` | 1420 | 602 | −818 |
+| `pvrsrvkm` | 658 | 94 | −564 |
+
+The whole saving came out of the driver, the kernel and libc. The game side did not move. The
+driver's CPU share by DSO (`libGLESv2` + `libsrv_um` + `pvrsrvkm`) fell from 23.7% to **18.8%**,
+5.0 → 3.3 ms. The PVR user-space mutex fell from 1330 to 623 µs, with 40% of GL calls gone at ~0.1 µs
+each, so it too was paid per upload, not per call.
+
+| group (self time) | share now | µs/frame §8.24 → now |
+|---|---|---|
+| interpreter: `GfxSpVertex`, `GfxSpTri1`, tri handlers, matrix | **19.1%** | 3425 → 3339 |
+| interpreter: everything else | 12.8% | 2153 → 2229 |
+| resource lookup | 6.7% | 1190 → 1173 |
+| frame interpolation | 5.3% | 914 → 925 |
+| malloc / free | 4.8% | 1028 → 838 |
+| kernel | 4.8% | 1680 → 831 |
+| memcmp / memset / hash / string | 4.3% | 829 → 754 |
+| PVR user-space mutex | 3.6% | 1330 → 623 |
+| `shared_ptr` refcount | 2.2% | 441 → 386 |
+| unresolved (stripped DDK / libc) | 23.5% | 5305 → 4098 |
+
+`GfxSpVertex` (7.5%) and `GfxSpTri1` (7.5%) are the top two symbols, about 1.3 ms per frame each.
+
+### The probe: how much of the geometry is drawn
+
+New counters (`BENCH geom` line, benchmark builds only): vertices transformed, how many were lit,
+how many were overwritten by a later vertex load with no drawn triangle having used them, and
+triangles submitted, trivially clip-rejected (all three vertices outside one plane) and
+face-culled. `tris=` is the number drawn.
+
+| per frame | Market | Hyrule Field |
+|---|---|---|
+| vertices transformed | 6561 | 3498 |
+| … lit | 6075 (93%) | 3010 (86%) |
+| … never used by a drawn triangle | **3816 (58%)** | **2218 (63%)** |
+| triangles submitted (`GfxSpTri1`) | 4333 | 2100 |
+| … texture rectangles | 42 | 46 |
+| … clip-rejected | 1473 (34%) | 980 (47%) |
+| … face-culled | 1196 (28%) | 344 (16%) |
+| … drawn | **1664 (38%)** | **776 (37%)** |
+
+"Never used" is a lower bound: vertices still loaded at the end of the frame are not counted.
+**Most of the geometry work is thrown away.** The game submits whole room and actor meshes, and
+the interpreter transforms and lights every vertex before a triangle decides whether it is visible.
+A NEON rewrite of the transform would mostly speed up work that is then discarded, so it is not the
+next step.
+
+### Where the time goes inside the two functions
+
+Release builds have no line tables, so the samples inside each function were mapped to their
+instructions in the disassembly of the build-id-cached binary (`perf script -F ip` plus the mmap
+base, then `llvm-objdump`). The sample PCs land mid-instruction next to long-latency instructions,
+which is skid, so they were binned by 16-byte region.
+
+**`GfxSpVertex`** (532 samples):
+- **~34%** in the fog block: `fabsf(w)` compare, `1/w` divide and an out-of-line
+  `Ship::Math::clamp` call.
+- **~38%** at `AdjXForAspectRatio`: `x * 4/3 / (width / height)`, two dependent divides per
+  vertex. `width / height` is constant for the whole frame, but the compiler reloads it every
+  iteration because the stores through `d` may alias `mCurDimensions`.
+- The transform, lighting and clip flags together are about a quarter.
+
+**`GfxSpTri1`** (595 samples): spread wider. The hottest regions are the per-vertex output loop,
+which divides every color channel by 255.0f: 3–4 channels × 1–3 combiner inputs, plus four for fog,
+per vertex, three vertices per drawn triangle. The compiler must emit these as `VDIV`, because
+`1/255` is inexact and a multiply by it rounds differently. On the Cortex-A15, `VDIV.F32` takes
+about 14 cycles and is not pipelined.
+
+So the geometry's cost is not the arithmetic a NEON rewrite would target. It is divides the code
+repeats needlessly: once per vertex for a per-frame constant, and once per channel for a conversion
+a 256-entry table gives exactly.
+
+### Taking the repeated divides out: −1.1%, a third of what the profile implied
+
+`gSettings.LeanGeom=1` (libultraship):
+- a 256-entry table of `n / 255.0f` for every color, fog and grayscale channel in `GfxSpTri1`;
+- `width / height` computed once per `GfxSpVertex` call rather than once per vertex.
+
+Both are **bit-exact by construction**: the same operations on the same operands, in the same order,
+and a table filled with the same `i / 255.0f` expression. No in-process pixel check was taken. The
+per-vertex `x * 4/3 / aspect` divide and the fog's `1/w` stay, because a reciprocal multiply would
+round differently.
+
+| LeanGeom 0 → 1 | Δ render-thread CPU | t | MDE | Δ period |
+|---|---|---|---|---|
+| Market, 6 pairs, all 1250 MHz | **−193 µs (−1.1%)** | −9.7 | 51 µs | −117 µs, t −0.8, MDE 371 — not resolved |
+| Hyrule Field, 2 pairs at 1250 MHz | −119 µs (−1.2%) | −103 | 15 µs | — |
+| Hyrule Field, 3 pairs at 1000 MHz | −187 µs (−1.6%) | −16 | — | — |
+
+Hyrule Field hit the thermal cap from pair 3, even starting at 61 °C (TESTING.md trap 14). Pairs whose
+two halves ran at the same clock are analysed per clock; the pair that straddled the cap is dropped.
+
+**This contradicts the attribution above.** The attribution put ~38% of `GfxSpVertex` on the aspect
+divides and most of `GfxSpTri1`'s hot regions on `/255` divides, about 0.9 ms between them. Removing
+roughly 40,000 divides a frame saved 0.19 ms, about 6 cycles each rather than 14. The A15 runs other
+work under a divide, and sampling skid piles samples onto the instructions around it. **Sample
+counts next to a long-latency instruction on this core overstate what removing it saves; treat
+in-function attribution as a pointer, not a size.**
+
+**Decision:** `LeanGeom` defaults to 1. It is small, but it is exact and costs a table.
+
+### What this leaves
+
+- The geometry's real lever is the **62% of triangles and ≥58% of vertices that are discarded**.
+  Lighting and fog run for every vertex before visibility is known. Deferring them to the first
+  drawn triangle that uses a vertex is exact if the lighting state is captured at load, but it is
+  stateful. Measure its ceiling first with a throwaway A/B that skips lighting and fog outright (a
+  wrong picture): if that is under ~0.5 ms, lazy vertices are not worth their complexity.
+- By µs per frame, the largest blocks left are unresolved driver/libc addresses (4.1 ms), the rest
+  of the interpreter (2.2 ms: `Run`'s dispatch, tri2 and tile handlers, the texture-hash handler)
+  and the game-side resource lookups by name (1.2 ms).

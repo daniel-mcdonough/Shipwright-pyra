@@ -3,8 +3,12 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (afternoon)**, after §8.25: **client-side vertex arrays
-(`gSettings.LeanGLState`) now default to 3 in GLES2 builds**. The gains: −13.4% of the frozen
+Last revised **2026-09-24 (evening)**, after §8.26: re-profiled with client arrays on. The driver's
+CPU fell 5.0 → 3.3 ms per frame and the game side did not move. The interpreter's geometry is now
+the top named item (3.3 ms), and **62% of the triangles it processes are discarded**.
+`gSettings.LeanGLState=3` (§8.25) and `gSettings.LeanGeom=1` (§8.26, bit-exact, −1.1%) are defaults.
+Before that, §8.25: **client-side vertex arrays (`gSettings.LeanGLState`) default to 3 in GLES2
+builds**. The gains: −13.4% of the frozen
 Market frame (27.5 → 23.8 ms, 36.3 → 42.0 FPS), −7.3% at Hyrule Field, and −13.6% of render-thread
 CPU in real play (t −4.7), with nothing visibly wrong. §8.24 refuted "the driver is paid per GL
 call": removing 43% of GL calls saved 0.5%. Before that, §8.22–8.23: the asset-lookup cache
@@ -69,12 +73,21 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     visible glitches. Now the GLES2 default; desktop GL keeps 0 because a core profile rejects
     client arrays.** Still open:
     - Kokiri, and scenes with pre-rendered backgrounds.
-    - Whether the pause menu and the ImGui menu were exercised is unrecorded.
+    - The pause menu was exercised in play; the ImGui menu is unrecorded.
     - At Hyrule Field a quarter of the CPU saving came back as swap time. If the GPU is now the
       next limit there, the "is the frame pipelined" question (item 5 below) is live again.
     - Modes 1-2 alone are ~0.1 ms. Kept because mode 3's pointer handling is built on the shadow.
-    - **Next profile:** re-take the flat profile with mode 3 on (now the default); the driver's 23.7% should have
-      moved, and the interpreter's geometry (16.2%) is the largest named item left.
+    - ~~**Next profile** with mode 3 on.~~ **Done (§8.26).**
+
+000. **Price lazy vertices before building them** (§8.26). ≥58% of transformed vertices and 62%
+    of submitted triangles are never drawn, yet lighting and fog run for every vertex. First a
+    throwaway A/B that skips lighting and fog outright (a wrong picture, never shipped) gives the
+    ceiling. Build deferred per-vertex lighting only if that ceiling is over ~0.5 ms: exact if the
+    light state is captured at load, but stateful, so it needs the full ladder. No NEON rewrite
+    until then; `LeanGeom` showed the arithmetic is not where the time is.
+    - Other blocks by µs/frame: rest of the interpreter 2.2 ms (`Run` dispatch, tri2/tile
+      handlers, texture-hash handler), game-side lookups by name 1.2 ms, interpolation 0.9 ms,
+      malloc/free 0.8 ms.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**

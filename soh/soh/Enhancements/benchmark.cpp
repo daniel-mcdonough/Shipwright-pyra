@@ -538,6 +538,17 @@ void WriteResults() {
                  PerFrame(seg, seg.counters[BENCH_GL_CALLS]), PerFrame(seg, seg.counters[BENCH_GL_UNIFORMS]),
                  PerFrame(seg, seg.counters[BENCH_VBO_UPLOADS]), PerFrame(seg, seg.counters[BENCH_VBO_BYTES]) / 1024.0);
         text += line;
+        // Geometry work per frame (§8.26): vertices transformed / lit / never used by a drawn
+        // triangle, and triangles submitted / texture rectangles / trivially rejected / culled.
+        // Drawn triangles are tris= on the work line.
+        snprintf(line, sizeof(line),
+                 "BENCH geom %zu vtx=%.1f vtx_lit=%.1f vtx_unused=%.1f tri_in=%.1f tri_rect=%.1f "
+                 "tri_clipped=%.1f tri_culled=%.1f tris=%.1f\n",
+                 i, PerFrame(seg, seg.counters[BENCH_VTX_XFORM]), PerFrame(seg, seg.counters[BENCH_VTX_LIT]),
+                 PerFrame(seg, seg.counters[BENCH_VTX_UNUSED]), PerFrame(seg, seg.counters[BENCH_TRI_IN]),
+                 PerFrame(seg, seg.counters[BENCH_TRI_RECT]), PerFrame(seg, seg.counters[BENCH_TRI_CLIPREJ]),
+                 PerFrame(seg, seg.counters[BENCH_TRI_CULLED]), PerFrame(seg, seg.counters[BENCH_TRIS]));
+        text += line;
         // Calls per GL entry point per frame period, largest first, zeros left out.
         if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
             seg.frameMicros.size() > 1) {
