@@ -43,6 +43,11 @@ namespace Ship {
 extern uint64_t gBenchResourceLoads;
 }
 
+// gSettings.ProbeMemoLookup, in ResourceManagerHelpers.cpp (§8.31).
+extern int gBenchProbeMemoLookup;
+extern uint32_t gBenchProbeMemoGeneration;
+extern uint64_t gBenchMemoMismatch;
+
 // Cumulative calls per GL entry point, from the OpenGL backend (gfx_opengl.cpp).
 extern "C" {
 extern uint64_t gBenchGlFn[];
@@ -365,6 +370,8 @@ struct Segment {
     uint64_t lookupsStart = 0, lookupsEnd = 0;
     // CVar reads by name made by the render thread, outermost entries only (§8.31).
     uint64_t cvarStart = 0, cvarEnd = 0;
+    // CVar writes (they empty LeanCVar=2's memo) and ProbeMemoLookup=2's mismatches, same points.
+    uint64_t cvarWritesStart = 0, cvarWritesEnd = 0, memoBadStart = 0, memoBadEnd = 0;
     // gBenchOpcodes at the same two points: display-list commands per opcode per frame.
     std::vector<uint64_t> opStart, opEnd;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
@@ -444,6 +451,12 @@ void ApplyArm(const std::string& value) {
         CVarSetFloat(gCfg.abCVar.c_str(), strtof(value.c_str(), nullptr));
     } else {
         CVarSetInteger(gCfg.abCVar.c_str(), (int)strtol(value.c_str(), nullptr, 0));
+    }
+    // Read here rather than per lookup, so the probe's own flag costs nothing (§8.31).
+    const int memoLookup = CVarGetInteger("gSettings.ProbeMemoLookup", 0);
+    if (memoLookup != gBenchProbeMemoLookup) {
+        gBenchProbeMemoLookup = memoLookup;
+        gBenchProbeMemoGeneration++;
     }
 
     auto wnd = std::dynamic_pointer_cast<Fast::Fast3dWindow>(Ship::Context::GetInstance()->GetWindow());
@@ -622,9 +635,11 @@ void WriteResults() {
                      i, a[0], a[1], a[2], a[3], a[4], a[5] / 1024.0);
             text += line;
         }
-        snprintf(line, sizeof(line), "BENCH lookup %zu calls=%.1f cvar=%.1f\n", i,
+        snprintf(line, sizeof(line), "BENCH lookup %zu calls=%.1f cvar=%.1f cvar_writes=%.2f memo_mismatch=%llu\n", i,
                  (double)(seg.lookupsEnd - seg.lookupsStart) / periods,
-                 (double)(seg.cvarEnd - seg.cvarStart) / periods);
+                 (double)(seg.cvarEnd - seg.cvarStart) / periods,
+                 (double)(seg.cvarWritesEnd - seg.cvarWritesStart) / periods,
+                 (unsigned long long)(seg.memoBadEnd - seg.memoBadStart));
         text += line;
         // Display-list commands per opcode per frame period, largest first (§8.31). Names are the
         // ucode loaded when the results are written; the game draws with F3DEX2 throughout.
@@ -1272,6 +1287,8 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
                 gRunSegments.back().lookupsStart = Ship::BenchLookupsThisThread();
                 gRunSegments.back().cvarStart = Ship::BenchLookupsThisThread(Ship::BENCH_LOOKUP_CVAR);
+                gRunSegments.back().cvarWritesStart = Ship::gBenchCVarChanges;
+                gRunSegments.back().memoBadStart = gBenchMemoMismatch;
                 gRunSegments.back().opStart.assign(gBenchOpcodes, gBenchOpcodes + 256);
                 if (!gCfg.sitesDir.empty()) {
                     Ship::BenchLookupSitesBegin();
@@ -1299,6 +1316,8 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().lookupsEnd = Ship::BenchLookupsThisThread();
                 gRunSegments.back().cvarEnd = Ship::BenchLookupsThisThread(Ship::BENCH_LOOKUP_CVAR);
+                gRunSegments.back().cvarWritesEnd = Ship::gBenchCVarChanges;
+                gRunSegments.back().memoBadEnd = gBenchMemoMismatch;
                 gRunSegments.back().opEnd.assign(gBenchOpcodes, gBenchOpcodes + 256);
                 if (!gCfg.sitesDir.empty()) {
                     const std::string path =

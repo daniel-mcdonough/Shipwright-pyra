@@ -201,7 +201,38 @@ extern "C" void ResourceMgr_UnloadOriginalWhenAltExists(const char* resName) {
     }
 }
 
+#ifdef SOH_BENCHMARK
+// gSettings.ProbeMemoLookup (§8.31), set by the benchmark when it applies an arm: 1 answers repeated
+// lookups from a per-thread memo keyed on the path pointer, a skip-it probe for the frozen fixtures
+// only - never ship it, a pointer can later hold a different name. 2 is the same memo checking each
+// hit against the name it was stored under, counting the ones that differ in gBenchMemoMismatch.
+// The memo is emptied whenever the mode changes.
+int gBenchProbeMemoLookup = 0;
+uint32_t gBenchProbeMemoGeneration = 0;
+uint64_t gBenchMemoMismatch = 0;
+#endif
+
 std::shared_ptr<Ship::IResource> ResourceMgr_GetResourceByNameHandlingMQ(const char* path) {
+#ifdef SOH_BENCHMARK
+    struct Memo {
+        uint32_t generation = 0;
+        std::unordered_map<const char*, std::pair<std::string, std::shared_ptr<Ship::IResource>>> byPath;
+    };
+    thread_local Memo memo;
+    if (gBenchProbeMemoLookup != 0) {
+        if (memo.generation != gBenchProbeMemoGeneration) {
+            memo.byPath.clear();
+            memo.generation = gBenchProbeMemoGeneration;
+        }
+        auto hit = memo.byPath.find(path);
+        if (hit != memo.byPath.end()) {
+            if (gBenchProbeMemoLookup == 2 && hit->second.first != path) {
+                gBenchMemoMismatch++;
+            }
+            return hit->second.second;
+        }
+    }
+#endif
     std::string Path = path;
     if (ResourceMgr_IsGameMasterQuest()) {
         size_t pos = 0;
@@ -209,7 +240,13 @@ std::shared_ptr<Ship::IResource> ResourceMgr_GetResourceByNameHandlingMQ(const c
             Path.replace(pos, 7, "/mq/");
         }
     }
-    return Ship::Context::GetInstance()->GetResourceManager()->LoadResource(Path.c_str());
+    auto resource = Ship::Context::GetInstance()->GetResourceManager()->LoadResource(Path.c_str());
+#ifdef SOH_BENCHMARK
+    if (gBenchProbeMemoLookup != 0) {
+        memo.byPath.emplace(path, std::make_pair(std::string(path), resource));
+    }
+#endif
+    return resource;
 }
 
 extern "C" char* ResourceMgr_GetResourceDataByNameHandlingMQ(const char* path) {
