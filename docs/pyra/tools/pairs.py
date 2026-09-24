@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # Paired A/B stats from a bench run.log: render-thread CPU, period, window. Segments pair as (0,1),(2,3)...
-# A pair is dropped if either segment left the 1250 MHz pin.
+# A pair is dropped if either segment left the pin: 1250 MHz, or the clock given as a third argument.
+# Pass 1000 to analyse the pairs pyra-thermal capped whole (TESTING.md trap 14): usage run.log <arm A> [MHz]
 import re, sys, math
+PIN = sys.argv[3] if len(sys.argv) > 3 else '1250'
 T = {1:12.706,2:4.303,3:3.182,4:2.776,5:2.571,6:2.447,7:2.365,8:2.306,9:2.262,10:2.228,11:2.201}
 seg = {}
 for line in open(sys.argv[1], errors='replace'):
@@ -13,7 +15,7 @@ for line in open(sys.argv[1], errors='replace'):
 def ok(s):
     k = s['segment']
     a, b = k['cpu_mhz'].split('->')
-    return all(v == '1250' for v in (a, b, k['cpu_min_mhz'], k['cpu_max_mhz']))
+    return all(v == PIN for v in (a, b, k['cpu_min_mhz'], k['cpu_max_mhz']))
 arms = {}
 pairs = []
 for i in range(0, max(seg) + 1, 2):
