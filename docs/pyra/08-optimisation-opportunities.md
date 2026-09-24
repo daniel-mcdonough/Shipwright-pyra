@@ -2044,3 +2044,131 @@ so it is paid in real play too, once per game tick.
   from both implementations.
 - The ceiling of any storage fix is under 2.15 ms (Market) and ~0.5 ms (Hyrule Field, by the
   per-item rate). The walk's 0.55 ms mostly replays `Matrix_*` calls and is a separate question.
+
+## 8.30 The recording in an arena: −8.0% of the Market's render thread, exact, now the default
+
+Measured 2026-09-24 night, the device free for the session, frozen fixtures at 1250 MHz soaked to
+70 °C, the die let down to ~65 °C between runs. §8.29's next step: microbenchmark an arena-backed
+recording store, then build it only if it removes most of the per-item cost.
+
+### The shape, from the game
+
+`SOH_BENCH_INTERP_TRACE=<path>` (benchmark builds) writes two consecutive ticks' recording calls:
+children opened and closed with their keys, each op, and the two flags that drive the actor-matrix
+path. The Market was traced **on the host**, from the native benchmark build (`build-cmake`) with
+the device's `oot.o2r` and the device's gameplay CVars at 800×480. Its `BENCH` counters matched the
+device's (children 314.4 vs 313.2, ops 824.1 vs 820.0, identical geometry counters), so the shape
+is the game's. Per tick at the Market:
+
+| | |
+|---|---|
+| child nodes | 470, nested up to 14 deep, under a single root child |
+| ops | 762: 162 TranslateRotateZYX, 161 ToMtx (157 on the actor-matrix path), 159 Push, 159 Pop, 31 Scale, 31 Rotate1Coord, 25 Translate, 17 SetTranslateRotateYXZ, … |
+| recorded items | **1232** |
+
+**Correction to §8.29.** Its `ops` counter counted every `append`, and `OpenChild` appends too, so
+`ops` already included the children. The Market records ~820 items per frame period, not 1133;
+per tick, 1232 items, not ~1700. The recording's 2.15 ms per frame period is 3.2 ms per tick, or
+**~2.6 µs per item**, not 2.3. The TESTING.md description of the counter now says so.
+
+### The microbenchmark
+
+`tools/interpbench.cpp` replays the trace through three stores and times the reset, the recording
+and the walk separately. It compares every replacement map entry by entry against A's, and has a
+corrupt-one-entry positive control (2 mismatches per corrupted tick, as expected).
+
+- **A** — the shipped `Path` of `std::map`/`std::vector`, copied verbatim.
+- **B** — the same tree in `std::pmr` containers on a monotonic buffer per recording. The next tick
+  but one reuses the buffer; the tree is never destructed.
+- **C** — the same tree in `std` containers on a static bump allocator, dropped the same way.
+
+The device, 1.25 GHz pinned, record + reset per item:
+
+| ns per item | warm, 1 thread | warm, 2 threads | cold (256 KB touched per event), 1 thread | cold, 2 threads |
+|---|---|---|---|---|
+| A (shipped) | 852 | 1200 | 1149 | 1633 |
+| B (pmr) | 277 | 283 | 471 | 501 |
+| C (bump) | 255 | 247 | 437 | 552 |
+| **B vs A** | −67% | −76% | −59% | −69% |
+
+- **A allocates 3552 times per tick** (2.9 per item); B and C, never.
+- **glibc takes its arena locks once a second thread exists.** A single-threaded benchmark reads A
+  29% low on this core (852 against 1200 ns). The game has a dozen threads.
+- **The benchmark does not fully model the game.** Its best model of A reaches ~1.6 µs per item
+  against the game's ~2.6. Heap fragmentation and the real cache state are the untested remainder.
+  What it did show is that the arena's share of the saving holds across every condition tried.
+- The walk barely moves (449 → 416 µs per walk warm). Its cost is the result `unordered_map` and
+  the matrix arithmetic, not the store.
+- Arena high-water per recording: 226 KB on the device (336 KB on x86-64).
+
+### The change
+
+`gSettings.LeanInterp` (`soh/soh/frame_interpolation.cpp`, libultraship untouched):
+
+- **0** — the original recorder.
+- **1** — the pmr recorder: store B.
+- **2** (benchmark builds) — both record every call, both are walked, and the replacement maps are
+  compared entry by entry; the original's map is the one used. The comparison is counted on the
+  `BENCH interp` line (`cmp`, `mismatch`). `gSettings.ProbeInterpCorrupt=1` perturbs the first ToMtx
+  of each tick in the pmr recording, as the positive control.
+
+Each buffer starts at 256 KB and, if a recording spills past it, grows to twice what that
+recording used. Changing the mode clears both recorders, so one tick interpolates nothing, as
+after a scene change.
+
+### Equivalence, in motion
+
+A frozen fixture's two recordings are identical and would hide a matching bug, so this ran with
+`SOH_BENCH_STATIC=0` (the Market's NPCs walking; `ops` 907 per period against 820 frozen):
+
+| run | entries compared | mismatches |
+|---|---|---|
+| device, Market, 2 × 600 frames | 139,324 | **0** |
+| host, Market, 1500 frames | 178,480 | **0** |
+| host, Market, `ProbeInterpCorrupt=1`, 2 × 600 frames | 139,844 | 399 + 399 |
+
+### The result
+
+`LeanInterp` 0 → 1, 6 pairs each, all 24 segments at 1250 MHz, none discarded:
+
+| | Δ render-thread CPU | t | MDE | Δ period | Δ timed window |
+|---|---|---|---|---|---|
+| Market | **−1365 µs (−8.0%)** | −110 | 32 | −1343 µs (−5.5%), t −9.6 | **+143 µs (+0.8%), t 3.2, MDE 116** |
+| Hyrule Field | **−266 µs (−2.7%)** | −13.1 | 52 | −257 µs (−1.5%), t −6.0 | −40 µs, t −1.1, MDE 94 |
+
+At the Market that is **64% of the recording's 2.15 ms**, inside the 59–76% the microbenchmark
+predicted. *Reasoning, not measured:* the remaining ~0.8 ms is the map lookups and the copying of
+72-byte `Data` unions, which the arena does not touch.
+
+**The Market's timed window got slower**, +143 µs, just past its MDE. The recording runs outside
+the window, so the arena cannot be doing extra work there. *Guess, not tested:* two buffers of
+~230 KB resident, where the old tree was freed back into the heap's hot free lists, cost the
+interpreter some L2. Hyrule Field, with a quarter of the tree, shows nothing (−40 µs, t −1.1). The
+net is −1.37 ms either way. **Not explained.**
+
+### Visual check: within the same-arm control
+
+In-process, Market, `LeanInterp` 0 1, `SOH_BENCH_FRAMES=2400 SOH_BENCH_REPS=2`, two grabs each in
+segment 0 (0), 1 (1) and 3 (0, the control). A-1 = A-2 = C-1, and B-1 = B-2 = C-2. The only
+difference anywhere is 8 pixels by 2/255 in rows 545–548, and **C-1 and C-2 differ by it too**:
+the same arm, 2 s apart. The scene flickers between two states on its own. That is the §8.29 kind
+of residue, larger here, and not caused by the change.
+
+### Default
+
+The change is exact by construction, verified entry by entry in motion, and a clear win at both
+fixtures, so **`gSettings.LeanInterp` defaults to 1** (`2c4b3d4`). A single segment with the CVar
+absent from the device's config read 15,600 µs render-thread CPU, the arm-1 value (15,692; arm 0
+was 17,057). It was not real-play A/B'd. The recording is stateful across ticks, but the in-motion
+map comparison checks the output directly, which a timing A/B could not.
+
+### What this leaves
+
+- **Interpolation now costs ~1.3 ms at the Market** (2.7 − 1.37, by subtraction): the rest of
+  the recording (~0.8 ms) and the walk (~0.55 ms). Keying ops by position instead of by `(op, index)`
+  maps would take the rest of the recording, but changes the matching rule and is no longer exact
+  by construction. Not worth it before the unmeasured blocks are sized.
+- **The malloc/free block is smaller now.** The recording made ~3550 of its allocations per tick
+  (~2400 per frame period). Size malloc/free after this change, not before.
+- **Method:** trace the game natively on the host when the question is the game's data shape.
+  The host build runs the fixtures, and its counters matched the device's exactly.

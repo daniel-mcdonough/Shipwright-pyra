@@ -297,6 +297,14 @@ BENCH period mde_us=...
 - `BENCH interp <seg>` (§8.29): `mtx` (`GfxSpMatrix` calls per frame), `mtx_repl` (answered by an
   interpolated matrix), `map` (replacement map size), and `children`/`ops`, the frame-interpolation
   recording's nodes and ops per frame period (recorded in `Play_Draw`, outside the window).
+  **`ops` counts every recorded item, child nodes included** (§8.30 corrected §8.29 on this):
+  recorded items = `ops`, not `children + ops`. `cmp`/`mismatch` are segment totals, non-zero only
+  with `gSettings.LeanInterp=2`: replacement-map entries compared between the original and the
+  arena recorder, and the ones that differed. `mismatch` must be 0;
+  `gSettings.ProbeInterpCorrupt=1` is its positive control (~1 per frame).
+- **Since 2026-09-24 the interpolation recording lives in an arena** (`gSettings.LeanInterp`
+  defaults to 1, §8.30): the frozen Market's render thread reads ~15.6 ms, not ~17.1. Set it to 0
+  only to A/B against the original.
 - `gSettings.ProbeSkipInterp` (benchmark builds only) skips frame interpolation with
   `InterpolationFPS` untouched: 1 = record nothing, 2 = record but do not interpolate. **Pixel-exact
   in a frozen fixture** (§8.29), wrong in play. Do not A/B `InterpolationFPS` 30 vs 20 instead: that
@@ -415,7 +423,24 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     `pyra-thermal` has hysteresis, so segments stay at 1000 MHz while the die reads 78 °C. Pairs
     whose two halves share a clock are still valid pairs. Analyse them per clock, and say so.
 
+15. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
+    teardown, seen every run 2026-09-24, with or without that day's changes). The results are
+    already written by then. Ignore it, or fix it separately; it is not a benchmark problem.
+
 ## 6. Recipes
+
+**"What shape is the game's data?"** — run the fixture **natively on the host** (§8.30). The host
+benchmark build (`cmake --build build-cmake --target soh`) runs the same fixtures, and its `BENCH`
+counters matched the device's exactly. Put the device's `oot.o2r` (copy it; the host's other copies
+are different versions) and a `shipofharkinian.json` with the device's gameplay CVars and an
+800×480 window in a scratch directory, and run
+`SOH_BENCH=1 $MARKET SOH_BENCH_EXIT=1 ... build-cmake/soh/soh.elf` from there. The interpolation
+recording's call stream is written with
+`SOH_BENCH_INTERP_TRACE=<file> SOH_BENCH_INTERP_TRACE_TICK=600`.
+
+**"Render-thread CPU, paired, with t and MDE"** — `bench.sh` pairs only the window and the period.
+`python3 docs/pyra/tools/pairs.py run.log <arm A value>` pairs `thread_us`, `period_us` and the
+window from `run.log`, and drops any pair with a segment off the 1250 MHz pin.
 
 **"Is this change worth anything?"** — A/B it at Market *and* Hyrule Field, 5–6 pairs each, with
 the soak. Two numbers, not one.
@@ -486,6 +511,9 @@ clock (§8.20).
 the game (§8.28). Compile with the cross container and the game's flags, pin the clock, check the
 outputs are identical, compare ns per element. `docs/pyra/tools/lightbench.cpp` is the template;
 its header has the commands. It took seconds and predicted a null that a soaked A/B then confirmed.
+`tools/interpbench.cpp` (§8.30) is the template for **allocation-heavy** code. A single-threaded
+benchmark reads glibc's malloc ~30% cheap (it skips its locks until a second thread exists), so
+pass `mt`, and a thrash size to model the game's cold caches.
 
 **"Did my new default actually take effect?"** — remove the CVar from the device's
 `shipofharkinian.json`, then `bench.sh run` one segment and compare the absolute against the known

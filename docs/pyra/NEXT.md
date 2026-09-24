@@ -3,10 +3,16 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (late night)**, after §8.29: **frame interpolation costs 2.7 ms of
+Last revised **2026-09-24 (night, later)**, after §8.30: **the interpolation recording now lives
+in a per-recording arena (`gSettings.LeanInterp=1`, the default)**: −1365 µs render-thread CPU at
+the Market (−8.0%, t −110, MDE 32), −266 µs at Hyrule Field (−2.7%, t −13.1). It is exact: 0 of
+139,324 replacement-map entries differ in motion on the device, and the positive control fires.
+A microbenchmark replaying the game's traced tick predicted 59–76% of the recording's cost would go;
+64% did. Unexplained: the Market's timed window got +143 µs slower (t 3.2, MDE 116).
+Before that, §8.29: **frame interpolation costs 2.7 ms of
 render-thread CPU per frame at the Market (−15.9%, t −142) and 0.65 ms at Hyrule Field (−6.6%)**,
 measured by a pixel-exact skip. That is 2.9× its sampled size. ~2.15 ms of it is building and
-freeing the recording tree (~2.3 µs per recorded item), ~0.55 ms the interpolate walk. Before that, §8.28: interleaving the lighting across vertices is
+freeing the recording tree (~2.6 µs per recorded item, §8.30's correction), ~0.55 ms the interpolate walk. Before that, §8.28: interleaving the lighting across vertices is
 exact (0 mismatches at three fixtures) and worth nothing (+43 µs, t 1.9); a microbenchmark shows the
 A15 already overlaps the chains. Lighting alone measures −740 µs at the Market (t −27.6), about
 twice what the isolated loop predicts, which is unexplained. After §8.27: the ceiling of lazy vertex lighting is
@@ -110,15 +116,15 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - ~~**Interpolation first.**~~ **Done (§8.29): −2700 µs Market (t −142, MDE 49), −647 µs
       Hyrule Field (t −34, MDE 48), pixel-exact.** `gSettings.ProbeSkipInterp=2` split it:
       recording ≈ 2.15 ms, the walk ≈ 0.55 ms, the interpreter's lookups below the MDE.
-      **Next for it: microbenchmark an arena-backed recording store** (same tree, same matching,
-      freed wholesale per tick) against the shipped one on the device, replaying a Market-shaped op
-      stream (~470 child nodes, ~1230 ops per tick). Build it only if the microbenchmark shows most
-      of the 2.3 µs per item going away. Check equivalence in motion (`SOH_BENCH_STATIC=0` or watch
-      mode), because a frozen fixture's two recordings are identical and hide matching bugs.
+      ~~**Next for it: microbenchmark an arena-backed recording store.**~~ **Done and shipped
+      (§8.30): `LeanInterp=1`, −1365 µs Market, −266 µs Hyrule Field, exact in motion.**
+      What is left of interpolation is ~1.3 ms at the Market: the record-side map lookups and
+      `Data` copies (~0.8 ms) and the walk (~0.55 ms). Taking the rest means keying ops by
+      position, which changes the matching rule. Size the other blocks first.
     - Lookups by name: count per entry point, then a frozen-only memo on the name pointer.
     - malloc/free: count with a `perf probe` uprobe (untried here; unwinding does not work, counting
-      should). **Partly the same time as interpolation** (§8.29): its tree allocates per node, so
-      size this after any interpolation change, or subtract.
+      should). The recording's ~3550 allocations per tick are gone since §8.30, so size this with
+      the new default, and `LeanInterp=0` to see what the recording used to add.
     - Interpreter rest: count commands per opcode first. §8.29 found the replacement-map lookup in
       `GfxSpMatrix` below the MDE, so interpolation does not account for any of this block.
 
