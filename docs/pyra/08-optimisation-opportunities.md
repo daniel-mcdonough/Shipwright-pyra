@@ -1365,3 +1365,72 @@ recipe.
 - Hyrule Field at 1250 MHz for modes 2 → 3 and 0 → 3.
 - Kokiri, and anything with pre-rendered backgrounds (`Gfxs2dexBg*` have their own path lookups,
   not cached).
+
+## 8.23 The lookup cache in real play: −11.7% of the render thread, zero flushes, and the new default
+
+Measured 2026-09-24, 04:18–04:36 device time, with the device's owner playing. §8.22 measured the
+cache on a frozen frame, which never loads anything. The question left was whether real play —
+moving, loading new assets, changing scenes — would keep flushing it.
+
+### A narrower invalidation rule first
+
+§8.22 flushed the whole cache on *any* insert into the resource manager. SoH loads assets lazily, the
+first time something references them, so walking into view of a new model would have flushed it.
+That rule was stricter than correctness needs: once a lookup has filled the cache, the manager
+already holds entries for both `path` and `alt/path`, and a `NotFound` cached for `alt/path` is never
+overwritten (the lookup returns early). Only an erase, the alt-asset toggle, or a newly loaded `alt/`
+asset — which overrides its base — can change a cached answer. The generation now moves on those
+alone (libultraship `2170510b`). A texture pack streaming `alt/` assets would still flush, once per
+new pack asset rather than once per frame.
+
+### A real-play A/B
+
+Watch mode now takes `SOH_BENCH_AB_CVAR`: the game runs normally — capped, game logic live —
+while the arms alternate in ABBA blocks of 300 frames, and each block logs render-thread CPU time,
+the timed window and the cache's hits, misses and flushes. Under the frame cap the period is the
+cap, so the metric is **render-thread CPU per frame**, which measures work whatever the limiter
+does with the time left over. CPU pinned at 1250 MHz (`PYRA_WATCH_PIN=1`); under ondemand the
+lighter arm would get a lower clock and more CPU time per frame.
+
+The owner played for ~17 minutes from the Market through Hyrule Field and on through nine scenes
+(32, 81, 99, 82, 62, 80, 96, 1, 18), including scene transitions and interiors. 101 blocks, 1250 MHz
+in every one, 69–80 °C.
+
+| | |
+|---|---|
+| cache flushes, all 50 mode-3 blocks | **0** |
+| hit rate | **99.97%** — ~418 hits/frame, misses 0.14/frame mean, 0.54 max |
+
+| 50 ABBA pairs, 0 → 3 | Δ | t | ≈ MDE |
+|---|---|---|---|
+| render-thread CPU per frame | **−2145 µs (−11.7%)** | −6.0 | 720 µs |
+| … inside the timed window | −2283 µs (−16.9%) | −7.4 | 620 µs |
+| frame period | −229 µs (−0.6%) | −2.6 | 178 µs |
+
+(MDE here is 2·se at df=49. The pair sd is large, 2.5 ms, because every block is different play; the
+effect is still six standard errors out.)
+
+The period barely moves because it is the cap: under 30 FPS play the saving is headroom, not frame
+rate. The one place the headroom shows is how often a block ran slower than the cap on average
+(period > 34 ms): 9 blocks of 50 with the cache off, 5 with it on — suggestive, not a measurement.
+
+By scene, crude (each block is a different stretch of play): the Market −16% (25.4 → 21.4 ms),
+Hyrule Field −13% (16.3 → 14.2), scene 1 −19%, 82 −17%, 96 −20%, 80 −18%, 18 −10%, and scene 99
+only −2% on 4 and 6 blocks. The window saving in play (−16.9%) matches the frozen Market's
+(18.8 → 15.0 ms of window CPU, about −20%).
+
+**Visual:** the owner saw no graphical change at any point, with the cache toggling every ~10
+seconds — a stale or wrong texture would have appeared and corrected itself on that rhythm. Together
+with §8.22's in-process check, that is the evidence the default rests on.
+
+### Decision
+
+**`gSettings.LeanResLookup` now defaults to 3.** Setting it to 0 restores upstream behaviour. No
+archive change goes with it — it is code only, unlike `ShaderOpts`.
+
+Still untested: a texture pack (upstream #989's failure case). With the narrowed rule the expected
+cost is one flush per newly loaded pack asset, which should be rare after the first minutes in a
+scene — but "should" is reasoning, and the watch-block log would show it in one session with a pack.
+
+Consequence for the rig: **every baseline taken from now on includes the cache.** A frozen Market
+`bench.sh run` should now read ~27.5 ms, not ~31.4 ms, and `res_loads` should be 0.

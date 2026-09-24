@@ -3,10 +3,10 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (night)**, after §8.22: caching the per-frame asset lookups
-(`gSettings.LeanResLookup=3`) is **−12.1% of the Market frame** (31.3 → 27.5 ms at 1250 MHz) and
-−14.6% at Hyrule Field (at 1000 MHz), visually identical in-process. Default still 0 pending real
-play (§4). Before that, §8.21: the 65% is the render thread *computing* (≈ 90%
+Last revised **2026-09-24 (early morning)**, after §8.23: the asset-lookup cache
+(`gSettings.LeanResLookup`, **now default 3**) is −12.1% of the frozen Market frame (31.3 → 27.5 ms
+at 1250 MHz) and **−11.7% of the render thread's CPU in 17 minutes of real play**, 99.97% hit rate,
+zero flushes, no visual change. Every baseline from now on includes it. Before that, §8.21: the 65% is the render thread *computing* (≈ 90%
 on-CPU), not waiting on the GPU, and ~10–15% of its CPU time is per-frame resource lookups at one
 call site. Earlier the same day: `ShaderOpts` re-measured uncapped and the CPU pin fixed (§8.20).
 
@@ -66,8 +66,9 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**
    Every `LoadResourceProcess` in a frozen frame was the interpreter's, and mode 3 takes them from
    1364 to 0. What is left of it:
-   - **Real play before it becomes the default** (§4). The fixture never loads a scene, which is
-     when the cache's invalidation runs.
+   - ~~Real play before it becomes the default.~~ Done (§8.23): −11.7% render-thread CPU over 50
+     real-play pairs, 0 flushes across nine scenes, no visual change. Default is now 3.
+   - A session with a texture pack, reading `bench.sh watch blocks` for `lookup_flush`.
    - Hyrule Field 0 → 3 at 1250 MHz (both runs there were thermally capped to 1000).
    - The `Gfxs2dexBg*` path lookups (pre-rendered backgrounds) are not cached; check with a fixture
      that has one before assuming they matter.
@@ -312,7 +313,8 @@ P1 went; P5 only once P2 says draws are worth pricing.
 
 ## 4 — Decisions waiting on the device's owner
 
-- [ ] **Default `gSettings.LeanResLookup` to 3** (§8.22). −12.1% of the Market frame, −14.6% at
+- [x] **Default `gSettings.LeanResLookup` to 3** — done 2026-09-24 after the owner's real-play
+      session (§8.23). Original entry, for the record: (§8.22). −12.1% of the Market frame, −14.6% at
       Hyrule Field, identical picture in-process. Needs, before it is a default: a real-play session
       with `gSettings.LeanResLookup=3` across scene loads, the pause and equipment menus, and the
       alt-asset toggle — watching for a wrong or stale texture, which is what a broken invalidation

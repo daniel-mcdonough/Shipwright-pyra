@@ -143,6 +143,24 @@ testing. **`run` measures exactly one segment** — `SOH_BENCH_REPS` only counts
 attach a profiler to the middle ones and keep clean ones either side, A/B a CVar against itself:
 `bench.sh ab gSettings.ShaderOpts 3 3 ... SOH_BENCH_REPS=5` is ten segments of the shipped arm. **Never quote an absolute taken without `SOH_BENCH_SOAK_C`** (trap 1).
 
+### Real-play A/B — needs the owner holding the device
+
+The frozen fixtures cannot see anything that happens only in play: lazy asset loads, scene
+changes, game logic. Watch mode can alternate a CVar during normal play and log one line per
+300-frame block (§8.23):
+
+```sh
+PYRA_WATCH_PIN=1 ./scripts/pyra/bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0 \
+    SOH_BENCH_AB_CVAR=gSettings.LeanResLookup SOH_BENCH_AB_VALUES=0,3
+./scripts/pyra/bench.sh watch blocks > blocks.txt      # while or after they play
+./scripts/pyra/bench.sh watch stop                     # also restores the governor
+```
+
+Keep `SOH_BENCH_UNCAP=0` — uncapped play runs the game too fast — and `PYRA_WATCH_PIN=1`. Under
+the cap the frame period is the cap, so compare **`thread_cpu_us`** (render-thread CPU per frame)
+across adjacent ABBA pairs; blocks differ a lot in content, so it takes ~50 pairs (~17 minutes) to
+resolve a ~10% effect. Every block line carries `scene=` and `cpu_min_mhz`/`cpu_max_mhz`.
+
 ### Author a new fixture — needs the owner holding the device
 
 ```sh
@@ -250,6 +268,9 @@ BENCH period mde_us=...
   `mean_us`. `proc_pct` is every thread in the process and can exceed 100 (audio is on its own
   thread). A thread near 100% is running and `perf record` will see where; well below 100% it is
   blocked and a sampling profiler will not — use `perf sched` (§6).
+- **Since 2026-09-24 every baseline includes the asset-lookup cache** (`gSettings.LeanResLookup`
+  defaults to 3): the frozen Market reads ~27.5 ms at 1250 MHz, not ~31.4. `lookup_hit`,
+  `lookup_miss` and `lookup_flush` on the work line show the cache at work.
 - `BENCH work` also counts asset lookups per frame (§8.22): `timg_hash`, `vtx_hash`, `dl_hash`
   (commands resolved by hash), `timg_path`/`vtx_path`/`dl_path` (by path), `timg_sig` (`G_SETTIMG`
   on an `__OTR__` string), `res_loads` (`LoadResourceProcess` entries over the whole period) and
