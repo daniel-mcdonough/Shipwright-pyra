@@ -36,6 +36,10 @@ uint32_t OTRGetGameRenderWidth(void);
 uint32_t OTRGetGameRenderHeight(void);
 }
 
+namespace Ship {
+extern uint64_t gBenchResourceLoads;
+}
+
 namespace {
 
 // ---------------------------------------------------------------------------------------------
@@ -312,6 +316,8 @@ struct Segment {
     // Over the same span these give the on-CPU share of the whole frame period, outside the
     // window included; the process figure folds in audio and every other thread.
     uint64_t threadCpuStart = 0, threadCpuEnd = 0, procCpuStart = 0, procCpuEnd = 0;
+    // Ship::gBenchResourceLoads at the same two points: resource-manager loads per frame period.
+    uint64_t resLoadsStart = 0, resLoadsEnd = 0;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
 };
 
@@ -502,12 +508,22 @@ void WriteResults() {
         // line stays readable; the counters matter when asking what a frame is spent on.
         snprintf(line, sizeof(line),
                  "BENCH work %zu draws=%.1f tris=%.1f tex_uploads=%.2f tex_upload_kb=%.1f fb_binds=%.1f "
-                 "clears=%.1f fb_copies=%.2f fb_readbacks=%.2f shader_loads=%.1f fb_reallocs=%.2f\n",
+                 "clears=%.1f fb_copies=%.2f fb_readbacks=%.2f shader_loads=%.1f fb_reallocs=%.2f "
+                 "timg_hash=%.1f vtx_hash=%.1f dl_hash=%.1f timg_path=%.1f vtx_path=%.1f dl_path=%.1f timg_sig=%.1f "
+                 "res_loads=%.1f res_loads_window=%.1f\n",
                  i, PerFrame(seg, seg.counters[BENCH_DRAWS]), PerFrame(seg, seg.counters[BENCH_TRIS]),
                  PerFrame(seg, seg.counters[BENCH_TEX_UPLOADS]), PerFrame(seg, seg.counters[BENCH_TEX_UPLOAD_KB]),
                  PerFrame(seg, seg.counters[BENCH_FB_BINDS]), PerFrame(seg, seg.counters[BENCH_CLEARS]),
                  PerFrame(seg, seg.counters[BENCH_FB_COPIES]), PerFrame(seg, seg.counters[BENCH_FB_READBACKS]),
-                 PerFrame(seg, seg.counters[BENCH_SHADER_LOADS]), PerFrame(seg, seg.counters[BENCH_FB_REALLOCS]));
+                 PerFrame(seg, seg.counters[BENCH_SHADER_LOADS]), PerFrame(seg, seg.counters[BENCH_FB_REALLOCS]),
+                 PerFrame(seg, seg.counters[BENCH_TIMG_HASH]), PerFrame(seg, seg.counters[BENCH_VTX_HASH]),
+                 PerFrame(seg, seg.counters[BENCH_DL_HASH]), PerFrame(seg, seg.counters[BENCH_TIMG_PATH]),
+                 PerFrame(seg, seg.counters[BENCH_VTX_PATH]), PerFrame(seg, seg.counters[BENCH_DL_PATH]),
+                 PerFrame(seg, seg.counters[BENCH_TIMG_SIG]),
+                 seg.frameMicros.size() > 1
+                     ? (double)(seg.resLoadsEnd - seg.resLoadsStart) / (double)(seg.frameMicros.size() - 1)
+                     : 0.0,
+                 PerFrame(seg, seg.counters[BENCH_RES_LOADS_WINDOW]));
         text += line;
         // On-CPU time: is the frame computing or waiting? thread_pct is the render thread's CPU
         // time over wall time for the segment; thread_us scales it to one frame period, so it
@@ -1027,6 +1043,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().threadCpuStart = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
                 gRunSegments.back().procCpuStart = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
                 gRunSegments.back().wallStart = Clock::now();
+                gRunSegments.back().resLoadsStart = Ship::gBenchResourceLoads;
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
             }
@@ -1037,6 +1054,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().threadCpuEnd = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
                 gRunSegments.back().procCpuEnd = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
                 gRunSegments.back().wallEnd = Clock::now();
+                gRunSegments.back().resLoadsEnd = Ship::gBenchResourceLoads;
                 gRunSegments.back().cpuEndKHz = SampleCpu(gRunSegments.back());
                 gRunSegments.back().fbEndW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbEndH = OTRGetGameRenderHeight();
