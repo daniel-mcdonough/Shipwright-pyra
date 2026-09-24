@@ -3,7 +3,10 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (late)**, after §8.21: the 65% is the render thread *computing* (≈ 90%
+Last revised **2026-09-24 (night)**, after §8.22: caching the per-frame asset lookups
+(`gSettings.LeanResLookup=3`) is **−12.1% of the Market frame** (31.3 → 27.5 ms at 1250 MHz) and
+−14.6% at Hyrule Field (at 1000 MHz), visually identical in-process. Default still 0 pending real
+play (§4). Before that, §8.21: the 65% is the render thread *computing* (≈ 90%
 on-CPU), not waiting on the GPU, and ~10–15% of its CPU time is per-frame resource lookups at one
 call site. Earlier the same day: `ShaderOpts` re-measured uncapped and the CPU pin fixed (§8.20).
 
@@ -59,17 +62,17 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
 
 ### Do this first
 
-0. **A/B the texture-by-hash lookup path** (§8.21, new). `gfx_set_timg_otr_hash_handler_custom`
-   (`interpreter.cpp:3453`) re-resolves every texture through the resource manager every frame:
-   eight `shared_ptr`-by-value getter calls, two `HashToCString`, a string, a `ResourceIdentifier`,
-   and with alt assets on a failing `"alt/"` lookup before the real one. The cluster is ~10–15% of
-   the render thread's self time at the Market. Two arms, in this order: **(a) the lean path** —
-   one `Context`/`ResourceManager` fetch held by reference, one `HashToCString`, no semantic change;
-   **(b) a per-hash cache** in front of it, which upstream removed for an HD-texture corruption
-   bug (see the `OTRTODO` at the call site) — so (b) needs an invalidation story (alt-asset toggle,
-   archive load, resource unload) before it ships, and (a) does not. Count calls per frame with a
-   `BENCH_` counter first; A/B each at Market and Hyrule Field. The same pattern probably exists
-   in the `G_DL_OTR_HASH` / `G_VTX_OTR_HASH` handlers — check with the counter, not by reading.
+0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
+   the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**
+   Every `LoadResourceProcess` in a frozen frame was the interpreter's, and mode 3 takes them from
+   1364 to 0. What is left of it:
+   - **Real play before it becomes the default** (§4). The fixture never loads a scene, which is
+     when the cache's invalidation runs.
+   - Hyrule Field 0 → 3 at 1250 MHz (both runs there were thermally capped to 1000).
+   - The `Gfxs2dexBg*` path lookups (pre-rendered backgrounds) are not cached; check with a fixture
+     that has one before assuming they matter.
+   - **Next profile:** re-take §8.21's flat profile with mode 3 on. The frame's composition has
+     changed by 12%, and the ranking below it was made against the old one.
 
 ~~**Find out what Hyrule Field's 30 ms is actually spent on.**~~ **Closed 2026-09-23 (§8.19): it
 was the frame cap.** The harness never uncapped — the game resets the target FPS every tick — so
@@ -308,6 +311,13 @@ P1 went; P5 only once P2 says draws are worth pricing.
       One indoor fixture is not a workload.
 
 ## 4 — Decisions waiting on the device's owner
+
+- [ ] **Default `gSettings.LeanResLookup` to 3** (§8.22). −12.1% of the Market frame, −14.6% at
+      Hyrule Field, identical picture in-process. Needs, before it is a default: a real-play session
+      with `gSettings.LeanResLookup=3` across scene loads, the pause and equipment menus, and the
+      alt-asset toggle — watching for a wrong or stale texture, which is what a broken invalidation
+      would look like. The known risk is a texture pack that streams assets during play (upstream
+      #989's failure case); on the stock assets it cannot arise. Ship no archive change with it.
 
 - [x] **Default `gSettings.ShaderOpts` to 3.** Done. Uncapped: −4.85% of the frame at the Market,
       −4.55% at Hyrule Field (§8.20); visually identical at all three fixtures and confirmed in

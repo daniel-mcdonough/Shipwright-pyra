@@ -1253,3 +1253,115 @@ is an exception constructed every frame. Not chased.
   allocation — and should count allocations, not only time.
 - `libPVRScopeServices.so` is present in the DDK. The playbook's "no GPU counters on this part"
   may be wrong; it has not been tried.
+
+## 8.22 Caching asset lookups: −12% of the Market frame, −15% at Hyrule Field
+
+Measured 2026-09-24, 02:30–04:10 device time. §8.21 found ~10–15% of the render thread's CPU in
+resource-manager lookups. This counts them, then removes them.
+
+### How many, and from where
+
+New `BENCH work` fields (per frame, identical in every segment of a fixture — the frozen scene
+issues the same display lists every frame):
+
+| per frame | Market | Hyrule Field |
+|---|---|---|
+| `G_SETTIMG_OTR_HASH` (texture by hash) | 430 | 287 |
+| `G_VTX_OTR_HASH` (vertices by hash) | 493 | 298 |
+| `G_DL_OTR_HASH` (display list by hash) | 19 | 0 |
+| `G_SETTIMG` on an `__OTR__` path string | 168 | 192 |
+| `*_OTR_FILEPATH` commands | 0 | 0 |
+| `ResourceManager::LoadResourceProcess` entries, whole period | **1364** | **1150** |
+| … of which inside the timed window | 1364 | 1150 |
+
+Every load is inside the timed window: the game side makes none in a frozen frame, so the lookups
+are all the interpreter's. Each texture-by-hash command enters `LoadResourceProcess` twice (the
+failed `"alt/"` attempt, then the real one — `AltAssets` defaults to on and the benchmark install
+has no mods); each `__OTR__` path enters three times (the prefix strip first). 430 × 2 + 168 × 3 =
+1364 exactly. Vertex and display-list lookups go through `LoadResource(crc)` and do not reach
+`LoadResourceProcess` at all, so they are not in that count, but each is still a `HashToString`, a
+string, a mutex and a hash-table find.
+
+### The change
+
+`gSettings.LeanResLookup`, in libultraship, read once per frame in `Interpreter::StartFrame`:
+
+- **1** — the texture-by-hash handler fetches `Context`/`ResourceManager`/`ArchiveManager` once and
+  calls `HashToCString` once (it did eight `shared_ptr`-by-value getter calls and two).
+- **2** — texture, vertex, display-list and `G_BRANCH_Z_OTR` hash lookups answered from a per-hash
+  cache in front of the resource manager.
+- **3** — 2, plus `G_SETTIMG` `__OTR__` path lookups cached by the string's address, and verified by
+  comparing the whole string, so a reused buffer holding a different path cannot hit.
+
+The cache must return exactly what the manager would. `ResourceManager` and `ArchiveManager` gain
+generation counters: the first is bumped on every write to the resource cache (the three inserts
+and the one erase in `ResourceManager.cpp`) and on an alt-asset toggle; the second on every change
+to the hash → path table (`AddArchive`, `WriteFile`, `ResetVirtualFileSystem`). The interpreter's
+cache flushes whenever either moves, so an entry is only ever served while the manager's state is
+identical to when it was filled. Generations are read before the manager is consulted, so a
+worker-thread insert racing a fill leaves the cache tagged stale and the next call flushes it. In a
+steady frame nothing is inserted and the cache stays hot; a scene load refills it once.
+
+Upstream history this is not a repeat of: libultraship #989 ("Improve ResourceManager cache lookup
+performance") changed the manager's internals and was reverted in #1028 for lag spikes with a
+texture pack (#1025), cause never identified. This change leaves the manager's lookup path alone
+and sits in front of it. **Its risk case is the same one, though**: a texture pack that streams
+assets in during play bumps the generation on every insert, and a cache flushed every frame is
+upstream's cost plus a refill. Not tested — there is no pack on the device.
+
+### Results
+
+All A/Bs: 6 ABBA pairs, uncapped, soaked to 70 °C, `delta` is B minus A.
+
+| A → B | fixture | clock | Δ frame period | t | MDE | Δ timed window | t |
+|---|---|---|---|---|---|---|---|
+| 0 → 1 | Market | 1250 all 12 | −406 µs (−1.3%) | −2.49 | 420 | −404 µs (−1.6%) | −4.87 |
+| 0 → 2 | Market | 1250 all 12 | **−2770 µs (−8.9%)** | −44.8 | 159 | −2771 µs (−10.9%) | −56.6 |
+| 0 → 2 | Hyrule Field | 1250 all 12 | **−2048 µs (−9.8%)** | −43.8 | 120 | −2100 µs (−11.5%) | −57.6 |
+| 2 → 3 | Market | 1250 all 12 | −630 µs (−2.3%) | −7.8 | 208 | −559 µs | −11.1 |
+| 2 → 3 | Hyrule Field | **1000 all 12** | −1026 µs | −9.9 | 266 | −1104 µs | −17.1 |
+| 0 → 3 | Market | 1250 in pairs 0, 1, 5 only | **−3787 µs (−12.1%)** | ≈ −123, n=3 | ≈ 132 | | |
+| 0 → 3 | Hyrule Field | **1000 all 12** | −3549 µs (−14.6%) | −42.9 | 213 | −3458 µs | −57.3 |
+
+Discards, stated: the 0 → 3 Market run had segments 4–9 capped to 1000 MHz by `pyra-thermal` (the
+die at 81 °C after back-to-back runs), so only its three pairs with both halves at 1250 are used;
+all six give −3931 µs, t=−7.4, and are not quoted. Both Hyrule Field runs after the Market ran
+every segment at 1000 MHz. Their deltas are internally consistent — both arms were at the same
+clock — but they are not at the rig's standard clock and are labelled so.
+
+Absolutes at the Market, 1250 MHz: **31.3 → 27.5 ms, 31.9 → 36.3 FPS** with mode 3. The render
+thread's on-CPU share falls 76% → 72.5%; the swap does not move (5.1–5.3 ms), as it should not for
+a change that draws the same thing. 0 → 2 → 3 steps (−2770, −630) sum to −3400 against −3787
+measured directly, in different runs at different temperatures — consistent, not exact.
+
+This is the largest single change in the project so far: about 2.3× the `ShaderOpts` win at the
+Market (−3787 against −1622 µs, §8.20), and it lands where §8.21 said the frame is actually spent.
+
+### Visual check, and a flaw in the visual check
+
+Market, mode 2, `shotcheck.sh`: **PASS**, 12,882 stable pixels against a control of 20,992;
+the difference is a plant and two NPCs placed differently per launch, textures identical.
+
+Hyrule Field, mode 3, `shotcheck.sh`: **DIFFER**, 8,617 against a control of 1,831, concentrated on
+Link. Examined: Link's textures are identical, his *pose* differs — the launch froze him at a
+different point of his idle. Re-checked **inside one process**: an A/B with `SOH_BENCH_FRAMES=2400`
+and frames grabbed with `xwd` during each segment, so the frozen pose cannot differ. Link's region
+differs in 0 pixels between arms. What remains is a band of sky/horizon pixels (y ≤ 272, ≤ 22/255)
+that differs as much between two grabs of the *same* arm 150 s apart (596 pixels) as between arms
+(556 and 254) — slow drift in the sky, not the change. **Mode 3 renders identically.**
+
+The flaw: `shotcheck.sh`'s control is launch-to-launch, and a launch that settles faster or slower
+freezes animated actors at a different phase. A change that alters frame time alters the pose, so
+for exactly the changes worth making, the three-launch check can fail on geometry that is not
+wrong. The in-process grab is the better test for anything that changes speed. TESTING.md has the
+recipe.
+
+### What is not yet known
+
+- **Real play.** The fixture never loads a scene mid-run, which is exactly when the generations
+  move and the cache refills. The invalidation logic has been reasoned about and not exercised.
+  Needs play across scene transitions, pause/equipment menus (which draw by path), the alt-asset
+  toggle, and ideally a texture pack.
+- Hyrule Field at 1250 MHz for modes 2 → 3 and 0 → 3.
+- Kokiri, and anything with pre-rendered backgrounds (`Gfxs2dexBg*` have their own path lookups,
+  not cached).

@@ -170,6 +170,12 @@ entrances loaded the wrong scene entirely (§9.9).
 
 ### Visual check — did the picture change?
 
+**If the change alters frame time, use the in-process check below as well** (§8.22).
+`shotcheck.sh`'s control is launch-to-launch, and a launch that settles faster freezes animated
+actors (Link's idle, NPCs) at a different pose. A faster arm can then fail on geometry that is not
+wrong — mode 3 of `LeanResLookup` read DIFFER at Hyrule Field for exactly this reason and was
+identical in-process.
+
 ```sh
 ./scripts/pyra/shotcheck.sh gSettings.ShaderOpts 0 3 $MARKET
 ```
@@ -177,6 +183,26 @@ entrances loaded the wrong scene entirely (§9.9).
 Three launches: arm A, arm B, then arm A again as an **in-session control**. Reports both numbers
 and passes only if the real comparison is near the control. The control is not optional — see
 trap 3.
+
+### In-process visual check — one frozen pose, both arms
+
+Run an A/B with long segments and grab frames during each, so the pose cannot differ between arms.
+Segment boundaries are not logged, so time the grabs from `Benchmark measuring` in `run.log`:
+segment 0 starts ~4 s after it (the recompilation grace) and lasts `FRAMES × period`.
+
+```sh
+# on the device, armed before the run: grab twice in segment 0 (arm A), twice in segment 1 (arm B)
+until grep -q 'Benchmark measuring' ~/soh-bench2/run.log; do sleep 1; done
+sleep 25; for i in 1 2; do DISPLAY=:0 xwd -root -silent > /tmp/g-A-$i.xwd; sleep 2; done
+sleep 55; for i in 1 2; do DISPLAY=:0 xwd -root -silent > /tmp/g-B-$i.xwd; sleep 2; done
+
+# on the host
+./scripts/pyra/bench.sh ab <cvar> A B $FIELD SOH_BENCH_FRAMES=2400 SOH_BENCH_REPS=1
+```
+
+Compare only pixels that are stable within each arm (A-1 = A-2 and B-1 = B-2), then look at where
+the A ≠ B pixels are. With `REPS=2` a third pair in segment 3 (arm A again) gives a same-arm
+control at a similar time distance: slow drift (the sky at Hyrule Field) shows up there too.
 
 ## 4. Reading the output
 
@@ -224,6 +250,11 @@ BENCH period mde_us=...
   `mean_us`. `proc_pct` is every thread in the process and can exceed 100 (audio is on its own
   thread). A thread near 100% is running and `perf record` will see where; well below 100% it is
   blocked and a sampling profiler will not — use `perf sched` (§6).
+- `BENCH work` also counts asset lookups per frame (§8.22): `timg_hash`, `vtx_hash`, `dl_hash`
+  (commands resolved by hash), `timg_path`/`vtx_path`/`dl_path` (by path), `timg_sig` (`G_SETTIMG`
+  on an `__OTR__` string), `res_loads` (`LoadResourceProcess` entries over the whole period) and
+  `res_loads_window` (inside the timed window). With `gSettings.LeanResLookup=3` `res_loads` should
+  read 0 in a frozen scene; if it does not, the cache is being flushed.
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
