@@ -3,8 +3,9 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24**, after re-measuring `ShaderOpts` uncapped and finding the CPU pin leaked
-(§8.20), and adding §2a — the probe ladder for the 65% of the frame nothing has ever attributed.
+Last revised **2026-09-24 (late)**, after §8.21: the 65% is the render thread *computing* (≈ 90%
+on-CPU), not waiting on the GPU, and ~10–15% of its CPU time is per-frame resource lookups at one
+call site. Earlier the same day: `ShaderOpts` re-measured uncapped and the CPU pin fixed (§8.20).
 
 ## Ground rules that keep being learned the hard way
 
@@ -52,11 +53,23 @@ untested and not needed (section 3).
 Of the nine catalogued items: **2 measured and won** (5, 6 — together −4.9% / −4.6% of the frame
 uncapped, §8.20), **3 closed** (1, 2, 7), 1 implemented at no gain (4), 1 premise weakened (3). What is actually left:
 
-Read §2a before concluding the list is short. All nine items were aimed at the fragment pass,
-which is 16% of the Market frame; 65% of it has never been profiled at all, and the items below
-are ranked against a guess about that 65% until the probe ladder runs.
+All nine catalogued items were aimed at the fragment pass, which is 16% of the Market frame. The
+other 65% was profiled for the first time in §8.21: it is CPU work — interpreter, resource lookups,
+allocation, and the GL driver's CPU side — so the list is no longer ranked against a guess.
 
 ### Do this first
+
+0. **A/B the texture-by-hash lookup path** (§8.21, new). `gfx_set_timg_otr_hash_handler_custom`
+   (`interpreter.cpp:3453`) re-resolves every texture through the resource manager every frame:
+   eight `shared_ptr`-by-value getter calls, two `HashToCString`, a string, a `ResourceIdentifier`,
+   and with alt assets on a failing `"alt/"` lookup before the real one. The cluster is ~10–15% of
+   the render thread's self time at the Market. Two arms, in this order: **(a) the lean path** —
+   one `Context`/`ResourceManager` fetch held by reference, one `HashToCString`, no semantic change;
+   **(b) a per-hash cache** in front of it, which upstream removed for an HD-texture corruption
+   bug (see the `OTRTODO` at the call site) — so (b) needs an invalidation story (alt-asset toggle,
+   archive load, resource unload) before it ships, and (a) does not. Count calls per frame with a
+   `BENCH_` counter first; A/B each at Market and Hyrule Field. The same pattern probably exists
+   in the `G_DL_OTR_HASH` / `G_VTX_OTR_HASH` handlers — check with the counter, not by reading.
 
 ~~**Find out what Hyrule Field's 30 ms is actually spent on.**~~ **Closed 2026-09-23 (§8.19): it
 was the frame cap.** The harness never uncapped — the game resets the target FPS every tick — so
@@ -71,7 +84,11 @@ In order:
    userspace governor.
 2. ~~**Re-measure `ShaderOpts` 0→3 uncapped.**~~ **Done (§8.20): −4.85% Market, −4.55% Hyrule
    Field**, both t ≤ −13. See Item A below.
-3. **What the non-swap timed work is waiting on — at the Market.** It is **20.7 ms** there and
+3. ~~**What the non-swap timed work is waiting on.**~~ **Answered 2026-09-24 (§8.21): mostly
+   nothing — it is ≈ 90% on-CPU.** Render thread 75–78% on-CPU over the whole period across 17
+   segments; the ~7 ms off-CPU is roughly the 5 ms swap plus ~2 ms. IPC 0.52; ~27 context
+   switches and ~75 DDK bridge ioctls per frame. Kept below for the record:
+   **What the non-swap timed work is waiting on — at the Market.** It is **20.7 ms** there and
    13.7 ms at Hyrule Field (§8.20; this line used to say "~13 ms", which is the Field's figure).
    The draw counts are modest (261 / 167). Candidates: driver synchronisation per draw, the
    tiler, memory. Two things to carry in: §8.19's "barely follows the CPU clock (+~2% for −20%)"
@@ -182,7 +199,7 @@ spinning driver looks like work (`profiling-guide.md` §2.3 makes the same point
 PowerVR share in report 7). P1 and P2 settle computing-versus-waiting before any profile is worth
 recording.
 
-### P1 — On-CPU time per segment *(code, ~10 lines, permanent)*
+### P1 — On-CPU time per segment *(code, ~10 lines, permanent)* — **done, §8.21: running, ~77%**
 
 Read `CLOCK_THREAD_CPUTIME_ID` for the render thread at each segment's first and last measured
 frame and print it next to `cpu_mhz=`, exactly as the temperature and clock fields already are
@@ -194,7 +211,12 @@ retracted the clock bracket that had ruled it out. On-CPU well below `period_us`
 **blocked**, and P2/P3 find where. It must be per *thread*: audio is on core 1
 (`OTRGlobals.cpp:1113`) and a whole-process number folds it in.
 
-### P2 — ioctls per frame *(no code, one run)*
+### P2 — ioctls per frame *(no code, one run)* — **done, §8.21: ~75/frame, all the PVR bridge**
+
+**The recipe below is wrong about the device node**: there is no `/dev/pvrsrvkm`; the DDK uses
+`/dev/dri/renderD130`. `strace` is not installed. What works:
+`sudo perf record -e raw_syscalls:sys_enter --filter 'id == 54' -p $PID -- sleep 10`, then
+`perf script`, and read `args[0]` (fd) and `args[1]` (request) from each line.
 
 The SGX DDK submits through ioctls on `/dev/pvrsrvkm`. Count them against `draws=` from the same
 run:
@@ -253,6 +275,10 @@ There is **no GPU-side tracing on this part** — no PVRTune, no frame debugger,
 `GL_EXT_occlusion_query_boolean` and A/B (`~/git/dragonbox-pyra/docs/profiling-guide.md` §3.2,
 already established). `ls /proc/pvr /sys/kernel/debug/pvr` costs ten seconds if someone wants to
 be certain, but "attach a GPU profiler" is not a step any plan here can contain.
+
+**Status 2026-09-24:** P1, P2 and a flat P4 done (§8.21). P3 as written is broken — `perf sched
+record -p` loses the idle transitions; use `-a` if it is ever needed. User-space call graphs do not
+work on this stack at all (§8.21), so P5 and P6 are how call sites get priced from here.
 
 **Order: P1 and P2 in one session.** Neither needs a theory, together they split the hypothesis
 space, and P1 leaves the harness permanently better instrumented. P3 or P4 follows from which way
@@ -314,6 +340,8 @@ P1 went; P5 only once P2 says draws are worth pricing.
       largest number again only if the 20.7 ms non-swap block turns out to be GPU-side waiting,
       which is exactly what §2a's P1 and P2 decide. Voltage research on an unreadable rail before
       that probe is the wrong order.
+      **§8.21 decided it: that block is ≈ 90% on-CPU, not GPU waiting.** This item is worth at
+      most ~4% of the Market frame and sits behind every CPU-side item.
 
 ## 5 — Owed to other people
 

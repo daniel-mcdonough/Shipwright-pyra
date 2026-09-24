@@ -138,7 +138,10 @@ effect" from "no effect this could see", add pairs.
 ```
 
 Use this to verify a *default* took effect, where an A/B would override the very thing you are
-testing. **Never quote an absolute taken without `SOH_BENCH_SOAK_C`** (trap 1).
+testing. **`run` measures exactly one segment** — `SOH_BENCH_REPS` only counts in A/B mode
+(`TotalSegments()`), so the `REPS=3` above is inert. For several identical segments, e.g. to
+attach a profiler to the middle ones and keep clean ones either side, A/B a CVar against itself:
+`bench.sh ab gSettings.ShaderOpts 3 3 ... SOH_BENCH_REPS=5` is ten segments of the shipped arm. **Never quote an absolute taken without `SOH_BENCH_SOAK_C`** (trap 1).
 
 ### Author a new fixture — needs the owner holding the device
 
@@ -351,18 +354,31 @@ core 1. On-CPU ≈ elapsed means it is running, and `-e cycles,instructions` the
 from memory stalls by IPC. On-CPU well below elapsed means it is blocked, and the next question is
 where:
 
+**Answered for the Market, 2026-09-24 (§8.21): ~77% on-CPU, i.e. computing.** Read the
+`BENCH oncpu` line rather than re-deriving it. What was learned running the tools:
+
 ```sh
-perf trace -e ioctl -p $(pidof soh.elf)      # count them against draws= from the same run
-perf list | grep sched:                  # then, if the tracepoints exist:
-perf sched record -p $(pidof soh.elf) -- sleep 20 && perf sched timehist
+PID=$(pgrep -x soh.elf)
+sudo perf stat --per-thread -e task-clock,context-switches,cycles,instructions -p $PID -- sleep 20
+# ioctls: there is no /dev/pvrsrvkm and no strace. The DDK uses /dev/dri/renderD130; ioctl is
+# ARM EABI syscall 54. Each perf-script line carries fd and request as its first two args.
+sudo perf record -e raw_syscalls:sys_enter --filter 'id == 54' -p $PID -o io.data -- sleep 10
+sudo perf script -i io.data -F tid,time,trace
+# flat on-CPU profile of the render thread; sort by dso first
+sudo perf record -F 499 -t $PID -o rec.data -- sleep 25
+sudo perf report -i rec.data --no-children --sort dso,sym --stdio
 ```
 
-The SGX DDK submits through ioctls on `/dev/pvrsrvkm`, so ioctls-per-frame against `draws=` is the
-direct test of whether the frame is shaped by draw calls. **None of these has been run on this
-device yet** — `perf` itself is known to work (report 7 §7.6 used `perf record`), the rest is
-standard tooling that should be there and has not been confirmed. There is no GPU-side profiler on
-this part at all (`~/git/dragonbox-pyra/docs/profiling-guide.md` §3.2), so do not plan around a
-frame capture.
+- **Call graphs do not work here.** No `.debug_frame` in the shipping build; a `-g1` build adds it
+  but the unwinder still stops at the stripped DDK and invents callers inside `soh.elf` (§8.21).
+  Price call sites with `BENCH_` counters and A/Bs.
+- `perf sched record -p` loses idle transitions and reports impossible run times; use `-a`.
+- Generate `perf report` **after** the game exits, or it perturbs the segments it overlaps; with a
+  debug-info build pass `--no-inline`, or `addr2line` runs for half an hour.
+- Attach to the middle segments of a `bench.sh ab <cvar> X X` run and keep clean ones either side,
+  so the harness shows which segments the profiler disturbed.
+- No GPU-side profiler is known to work on this part (`~/git/dragonbox-pyra/docs/profiling-guide.md`
+  §3.2). The DDK does ship `libPVRScopeServices.so`, which is PowerVR's counter library; untried.
 
 Run it on the frozen Market fixture, uncapped, on the userspace pin, after the soak — and cover
 both ends of a run, because the Market's frame period creeps +4% across five minutes at a fixed

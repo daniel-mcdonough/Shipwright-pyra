@@ -1115,3 +1115,141 @@ accumulating state are all still possible. It belongs to the next question.
 - The ~13 ms of non-swap timed work NEXT.md asks about is **Hyrule Field's** (13.7 ms at arm 3).
   The Market's is **20.7 ms**. The next profile should use the Market, where the frame is closest to
   30 FPS and the non-swap share is largest.
+
+## 8.21 The 65% is computing, not waiting — and a tenth of the render thread is resource lookups
+
+Measured 2026-09-24, 01:05–01:55 device time. NEXT.md §2a asked whether the Market's 20.7 ms of
+non-swap timed work is the render thread running or blocked, and said to settle that before any
+profile was worth reading. This is P1, P2, a failed P3 and P4 from that ladder.
+
+All runs: Market fixture, `ShaderOpts` 3 (shipped default), uncapped, CPU 1250 MHz by all four
+`cpu_*` fields in every segment, soaked to 70 °C (segments 70–77 °C). Seventeen segments across
+three runs; the repeated segments came from `bench.sh ab gSettings.ShaderOpts 3 3`, because
+`bench.sh run` measures exactly one segment whatever `SOH_BENCH_REPS` says (TESTING.md corrected).
+
+### P1 — on-CPU time (new, permanent)
+
+`benchmark.cpp` now prints a `BENCH oncpu` line per segment: the render thread's
+`CLOCK_THREAD_CPUTIME_ID` over wall time for the whole frame period and inside the timed window,
+and the process total. Two extra syscalls per frame, a few µs; not priced with an A/B.
+
+| | range over 17 segments |
+|---|---|
+| render thread on-CPU, share of frame period | **75.3–77.7%** (≈ 23.7–24.5 ms of 31.3–32.6 ms) |
+| render thread on-CPU inside timed window | 73.1–75.0% (≈ 18.7–19.2 ms of 25.3–25.9 ms) |
+| whole process | 80.0–82.5% of one core |
+
+`perf stat --per-thread` on the same process agrees independently: task-clock 15,398 ms in 20.0 s,
+0.770 CPUs, for the render thread.
+
+Off-CPU time inside the window is therefore ~6.8 ms per frame, and the swap alone is 5.0 ms. If the
+swap is mostly blocked — which is what a swap on this stack should be — the **non-swap 20.7 ms is
+roughly 90% on-CPU**. The 65% is computing. Outside the window (≈ 6.1 ms) the thread is ~86%
+on-CPU. **The "is it GPU-side waiting" hypothesis that §2a and the GPU-OPP item hung on is
+refuted for the large block**: it can explain at most ~2 ms of it.
+
+Two more numbers from `perf stat`: the render thread runs at **0.52 instructions per cycle**
+(10.0 G instructions, 19.2 G cycles in 20 s) — low for a Cortex-A15, which suggests memory, branch
+or barrier stalls rather than arithmetic — and it context-switches **~27 times per frame**
+(16,962 in 20 s). The audio thread, by contrast, runs at 1.39 IPC.
+
+### P2 — ioctls per frame
+
+NEXT.md's recipe named `/dev/pvrsrvkm`; **that node does not exist on this device**. The 1.14 DDK
+submits through DRM: the process holds `/dev/dri/renderD130` (fds 9 and 11) and `/dev/dri/card0`.
+`perf trace` is not needed and `strace` is not installed; `raw_syscalls:sys_enter` filtered on
+`id == 54` (ARM EABI `ioctl`) works without either.
+
+**23,588 ioctls in 10 s ≈ 75 per frame**, every one the same request, `0x401c6440` — DRM
+driver-private command 0x40 with a 28-byte argument, i.e. the PVR services bridge entry point.
+69/frame on fd 9, 7/frame on fd 11. That is neither one per draw (261) nor the two or three a
+fully batching driver would issue. The bridge function id is inside the argument struct, so this
+trace cannot say which calls the 75 are; the kernel profile below names some of them.
+
+### P3 — not answered, and the method was wrong
+
+`perf sched record -p <pid>` followed by `timehist` credited the render thread with 16.2 s of run
+time in a 15 s window and 0.38 s of waiting — impossible next to P1's 77%. Task-filtered recording
+loses the switch events needed to see the thread go idle. P3 needs `perf sched record -a`. It is
+also no longer the priority, since P1 says the block is running.
+
+### P4 — where the on-CPU time goes
+
+`perf record -F 499`, whole process, 25 s, then `-F 149 -t <render tid>`, 12 s, twice (one run
+with a `-g1` build). DSO split for the render thread:
+
+| DSO | share |
+|---|---|
+| `soh.elf` | 53.5% |
+| `libc.so.6` | 15.7% |
+| `libGLESv2` (DDK) | 11.9% |
+| kernel | 7.5% |
+| `libsrv_um` (DDK services) | 4.7% |
+| `pvrsrvkm` (DDK kernel module) | 3.1% |
+| `libstdc++` | 2.8% |
+
+Self time by leaf function, grouped (render thread, 1,496 samples, `-g1` build; the groups are
+regex over symbol names, so treat edges as ±1 point):
+
+| group | self time |
+|---|---|
+| interpreter: `GfxSpVertex`, `GfxSpTri1`, tri handlers, matrix | 12.0% |
+| interpreter: everything else (`Run`, RDP handlers, …) | 12.2% |
+| **resource lookup** — `ResourceManager`, `ArchiveManager::HashToCString`, `Context::GetInstance`, the `ResourceIdentifier` hash table | **10.7%** |
+| PVR user-space mutex (`PVRSRVLockMutex`/`Unlock`, `pthread_mutex_lock`) | 6.0% |
+| malloc / free | 5.1% |
+| `shared_ptr` refcount (`_M_release`, `_M_add_ref_copy`) | 4.5% (8.0% in the non-`-g1` run) |
+| memcmp / memset / `_Hash_bytes` / string | 4.1% |
+| frame interpolation (`interpolate_branch`, its `_Rb_tree`) | 3.2% |
+| CVar lookup by name | 1.4% |
+| unresolved (stripped DDK and libc addresses) | 21.3% |
+
+**The resource-lookup cluster is the finding.** It is one call site doing avoidable work every frame
+in a frozen scene: `gfx_set_timg_otr_hash_handler_custom` (`interpreter.cpp:3453`), per texture
+load, calls `Context::GetInstance()` three times, `GetResourceManager()` three times and
+`GetArchiveManager()` twice — every one returns a `shared_ptr` **by value**, an atomic increment
+and decrement with barriers on ARMv7 — calls `HashToCString` twice, builds a `std::string` and a
+`ResourceIdentifier` from it, and with alt assets enabled concatenates `"alt/" + path` and makes a
+second, failing hash-table lookup before the real one (`ResourceManager.cpp:96-121`). The comment
+at the call site says upstream disabled the cache that used to short-circuit this and that "we need
+to do proper profiling to see whether or not it is worth it". Lookup + refcount + a share of the
+malloc/free and hashing it causes is in the region of **10–15% of the render thread's CPU time**,
+≈ 2.5–3.5 ms of the Market frame. That is an upper-bound-ish estimate from self time, not a
+measured saving; the A/B is the measurement.
+
+Kernel-side, two things that should not be in a steady frame:
+
+- **The driver allocates and frees GPU memory every frame.** `PVRSRVAllocDeviceMemBW` →
+  `BM_Alloc` → `RA_Alloc`, plus the matching `FreeDeviceMem` and `mmap`/`munmap`: ~2.5–3.5% of the
+  render thread. `fb_reallocs=0.00`, so it is not framebuffer storage. Unattributed; per-draw
+  `glBufferData` orphaning is the obvious suspect and is item G's territory.
+- **The SGX goes through a power-state transition inside the frame**: `PVRSRVSetDevicePowerStateKM`
+  → `SGXPostPowerState` → `SGXInitialise`, ~0.9%. The GPU is idling off between frames and being
+  re-initialised. The CPU cost is small; the latency it adds to the GPU side is unmeasured.
+
+### What did not work: call graphs
+
+Neither frame-pointer nor DWARF unwinding produces usable user-space call graphs here. The shipping
+build has no `.debug_frame` (ARM uses `.ARM.exidx`, which perf's unwinder ignores). A `-g1` build
+adds it (222 MB binary, identical timings — 31.7–32.6 ms against 31.3–32.1), but the unwinder still
+stops at the stripped DDK and, inside `soh.elf`, invents callers: it reported `Interpreter::Run`
+and the RDP handlers as called *by* `UpdateFramebufferParameters`. A lead built on that, "3.2% in
+`StartFrame` → `UpdateFramebufferParameters`", was checked against the stacks and retracted. Kernel
+chains are fine. **Price call sites with in-frame counters and A/Bs (P5/P6), not call graphs.**
+Also: on-device `perf report` with inline resolution over the `-g1` binary ran for over half an
+hour in `addr2line`; pass `--no-inline`.
+
+Unverified: a `std::filesystem::filesystem_error` constructor appeared as a leaf in 0.27% of
+samples. Probably a hidden `libstdc++` function resolved to the nearest exported symbol; if real, it
+is an exception constructed every frame. Not chased.
+
+### What it changes
+
+- **§2a's premise is inverted.** The large block is on-CPU work in `soh.elf`, libc and the GL
+  driver's CPU side, not the GPU. The GPU-OPP item drops further (NEXT.md §4); "is the frame
+  pipelined with the GPU" (NEXT.md item 5) now concerns only the ~7 ms off-CPU share.
+- A new first item: **the texture-by-hash lookup path.** Measure it with an A/B, not the profile.
+- Item G (one `glBufferData` per frame) gains a mechanism to look for — the per-frame device-memory
+  allocation — and should count allocations, not only time.
+- `libPVRScopeServices.so` is present in the DDK. The playbook's "no GPU counters on this part"
+  may be wrong; it has not been tried.
