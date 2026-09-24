@@ -40,6 +40,13 @@ namespace Ship {
 extern uint64_t gBenchResourceLoads;
 }
 
+// Cumulative calls per GL entry point, from the OpenGL backend (gfx_opengl.cpp).
+extern "C" {
+extern uint64_t gBenchGlFn[];
+extern const char* const gBenchGlFnNames[];
+extern const int gBenchGlFnCount;
+}
+
 namespace {
 
 // ---------------------------------------------------------------------------------------------
@@ -318,6 +325,8 @@ struct Segment {
     uint64_t threadCpuStart = 0, threadCpuEnd = 0, procCpuStart = 0, procCpuEnd = 0;
     // Ship::gBenchResourceLoads at the same two points: resource-manager loads per frame period.
     uint64_t resLoadsStart = 0, resLoadsEnd = 0;
+    // gBenchGlFn at the same two points: calls per GL entry point per frame period.
+    std::vector<uint64_t> glFnStart, glFnEnd;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
 };
 
@@ -460,7 +469,7 @@ double PercentileMicros(std::vector<uint32_t> v, double pct) {
 
 void WriteResults() {
     std::string text;
-    char line[512];
+    char line[1024];
 
     snprintf(line, sizeof(line), "BENCH config entrance=0x%04X age=%d dayTime=0x%04X night=%d\n", gCfg.entrance,
              gCfg.linkAge, gCfg.dayTime, gCfg.nightFlag);
@@ -510,7 +519,8 @@ void WriteResults() {
                  "BENCH work %zu draws=%.1f tris=%.1f tex_uploads=%.2f tex_upload_kb=%.1f fb_binds=%.1f "
                  "clears=%.1f fb_copies=%.2f fb_readbacks=%.2f shader_loads=%.1f fb_reallocs=%.2f "
                  "timg_hash=%.1f vtx_hash=%.1f dl_hash=%.1f timg_path=%.1f vtx_path=%.1f dl_path=%.1f timg_sig=%.1f "
-                 "res_loads=%.1f res_loads_window=%.1f lookup_hit=%.1f lookup_miss=%.1f lookup_flush=%.2f\n",
+                 "res_loads=%.1f res_loads_window=%.1f lookup_hit=%.1f lookup_miss=%.1f lookup_flush=%.2f "
+                 "gl_calls=%.1f gl_uniforms=%.1f vbo_uploads=%.1f vbo_kb=%.1f\n",
                  i, PerFrame(seg, seg.counters[BENCH_DRAWS]), PerFrame(seg, seg.counters[BENCH_TRIS]),
                  PerFrame(seg, seg.counters[BENCH_TEX_UPLOADS]), PerFrame(seg, seg.counters[BENCH_TEX_UPLOAD_KB]),
                  PerFrame(seg, seg.counters[BENCH_FB_BINDS]), PerFrame(seg, seg.counters[BENCH_CLEARS]),
@@ -524,8 +534,29 @@ void WriteResults() {
                      ? (double)(seg.resLoadsEnd - seg.resLoadsStart) / (double)(seg.frameMicros.size() - 1)
                      : 0.0,
                  PerFrame(seg, seg.counters[BENCH_RES_LOADS_WINDOW]), PerFrame(seg, seg.counters[BENCH_LOOKUP_HIT]),
-                 PerFrame(seg, seg.counters[BENCH_LOOKUP_MISS]), PerFrame(seg, seg.counters[BENCH_LOOKUP_FLUSH]));
+                 PerFrame(seg, seg.counters[BENCH_LOOKUP_MISS]), PerFrame(seg, seg.counters[BENCH_LOOKUP_FLUSH]),
+                 PerFrame(seg, seg.counters[BENCH_GL_CALLS]), PerFrame(seg, seg.counters[BENCH_GL_UNIFORMS]),
+                 PerFrame(seg, seg.counters[BENCH_VBO_UPLOADS]), PerFrame(seg, seg.counters[BENCH_VBO_BYTES]) / 1024.0);
         text += line;
+        // Calls per GL entry point per frame period, largest first, zeros left out.
+        if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
+            seg.frameMicros.size() > 1) {
+            std::vector<std::pair<double, int>> fns;
+            for (int f = 0; f < gBenchGlFnCount; f++) {
+                const double n = (double)(seg.glFnEnd[f] - seg.glFnStart[f]) / (double)(seg.frameMicros.size() - 1);
+                if (n > 0.0) {
+                    fns.emplace_back(n, f);
+                }
+            }
+            std::sort(fns.begin(), fns.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            snprintf(line, sizeof(line), "BENCH glfn %zu", i);
+            text += line;
+            for (const auto& [n, f] : fns) {
+                snprintf(line, sizeof(line), " %s=%.1f", gBenchGlFnNames[f], n);
+                text += line;
+            }
+            text += "\n";
+        }
         // On-CPU time: is the frame computing or waiting? thread_pct is the render thread's CPU
         // time over wall time for the segment; thread_us scales it to one frame period, so it
         // reads directly against period_us. window_us is the same thread's CPU time inside the
@@ -1121,6 +1152,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().procCpuStart = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
                 gRunSegments.back().wallStart = Clock::now();
                 gRunSegments.back().resLoadsStart = Ship::gBenchResourceLoads;
+                gRunSegments.back().glFnStart.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
             }
@@ -1132,6 +1164,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().procCpuEnd = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
                 gRunSegments.back().wallEnd = Clock::now();
                 gRunSegments.back().resLoadsEnd = Ship::gBenchResourceLoads;
+                gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().cpuEndKHz = SampleCpu(gRunSegments.back());
                 gRunSegments.back().fbEndW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbEndH = OTRGetGameRenderHeight();
