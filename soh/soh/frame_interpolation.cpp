@@ -223,7 +223,7 @@ union Data {
     } open_child;
 };
 
-// The recording tree's containers. LeanInterp=0 is the original: every node and op vector is its
+// The recording tree's containers. LeanInterp=0 is the original (set it only to A/B against it): every node and op vector is its
 // own heap allocation, and the whole older tree is freed node by node at the start of every tick
 // (~3600 operator new per tick at the Market, §8.30). LeanInterp=1 is the same tree, matched the
 // same way, in std::pmr containers on a per-recording monotonic buffer: the older recording's
@@ -709,7 +709,8 @@ unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
 }
 
 void FrameInterpolation_StartRecord(void) {
-    int lean = CVarGetInteger("gSettings.LeanInterp", 0);
+    // Default 1 since §8.30: exact, and -8.0% render-thread CPU at the Market.
+    int lean = CVarGetInteger("gSettings.LeanInterp", 1);
 #ifndef SOH_BENCHMARK
     lean = lean == 2 ? 0 : lean;
 #endif
