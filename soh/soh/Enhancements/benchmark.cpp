@@ -510,7 +510,7 @@ void WriteResults() {
                  "BENCH work %zu draws=%.1f tris=%.1f tex_uploads=%.2f tex_upload_kb=%.1f fb_binds=%.1f "
                  "clears=%.1f fb_copies=%.2f fb_readbacks=%.2f shader_loads=%.1f fb_reallocs=%.2f "
                  "timg_hash=%.1f vtx_hash=%.1f dl_hash=%.1f timg_path=%.1f vtx_path=%.1f dl_path=%.1f timg_sig=%.1f "
-                 "res_loads=%.1f res_loads_window=%.1f\n",
+                 "res_loads=%.1f res_loads_window=%.1f lookup_hit=%.1f lookup_miss=%.1f lookup_flush=%.2f\n",
                  i, PerFrame(seg, seg.counters[BENCH_DRAWS]), PerFrame(seg, seg.counters[BENCH_TRIS]),
                  PerFrame(seg, seg.counters[BENCH_TEX_UPLOADS]), PerFrame(seg, seg.counters[BENCH_TEX_UPLOAD_KB]),
                  PerFrame(seg, seg.counters[BENCH_FB_BINDS]), PerFrame(seg, seg.counters[BENCH_CLEARS]),
@@ -523,7 +523,8 @@ void WriteResults() {
                  seg.frameMicros.size() > 1
                      ? (double)(seg.resLoadsEnd - seg.resLoadsStart) / (double)(seg.frameMicros.size() - 1)
                      : 0.0,
-                 PerFrame(seg, seg.counters[BENCH_RES_LOADS_WINDOW]));
+                 PerFrame(seg, seg.counters[BENCH_RES_LOADS_WINDOW]), PerFrame(seg, seg.counters[BENCH_LOOKUP_HIT]),
+                 PerFrame(seg, seg.counters[BENCH_LOOKUP_MISS]), PerFrame(seg, seg.counters[BENCH_LOOKUP_FLUSH]));
         text += line;
         // On-CPU time: is the frame computing or waiting? thread_pct is the render thread's CPU
         // time over wall time for the segment; thread_us scales it to one frame period, so it
@@ -702,6 +703,81 @@ void ApplyCameraOverride() {
 
 // Printed so a run is reproducible from its own log: position the view once by hand or by
 // entrance, read these numbers, then pin them with SOH_BENCH_POS/EYE/AT for every run after.
+// Watch mode with SOH_BENCH_AB_CVAR set: an A/B during real play. The game runs normally (capped,
+// game logic live) while the arms alternate in ABBA order every kWatchBlockFrames rendered
+// frames, and each block logs one line. Real play is not repeatable, so no single block pair means
+// anything; interleaving short blocks over minutes of play is what spreads the play evenly across
+// both arms. Under the frame cap the period is the cap, so the useful metric is the render
+// thread's CPU time per frame, which measures the work done whatever the limiter does with it.
+constexpr int kWatchBlockFrames = 300;
+// Frames dropped at the start of each block, after the arm changes.
+constexpr int kWatchSkipFrames = 10;
+
+struct WatchBlock {
+    int frames = 0;
+    uint64_t periodMicros = 0;
+    uint64_t windowMicros = 0;
+    uint64_t windowCpuMicros = 0;
+    uint64_t counters[BENCH_COUNTER_COUNT] = {};
+    uint64_t threadCpuStart = 0;
+    Clock::time_point wallStart{};
+    int cpuMinKHz = -1, cpuMaxKHz = -1;
+};
+WatchBlock gWatch;
+int gWatchBlockIndex = 0;
+
+void WatchBlockFrame(uint32_t micros, uint64_t windowCpu) {
+    const int inBlock = gPhaseFrames % kWatchBlockFrames;
+    if (inBlock == 0) {
+        if (gWatch.frames > 0 && gPlayState != nullptr) {
+            const double n = (double)gWatch.frames;
+            const double wall =
+                (double)std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - gWatch.wallStart).count();
+            const double threadCpu = (double)(CpuMicros(CLOCK_THREAD_CPUTIME_ID) - gWatch.threadCpuStart);
+            SPDLOG_INFO("Benchmark watch-block {} arm={} frames={} period_us={:.1f} window_us={:.1f} "
+                        "window_cpu_us={:.1f} thread_cpu_pct={:.1f} thread_cpu_us={:.1f} lookup_hit={:.1f} "
+                        "lookup_miss={:.2f} lookup_flush={} res_loads_window={:.2f} draws={:.1f} scene={} "
+                        "cpu_min_mhz={} cpu_max_mhz={} temp_c={:.1f}",
+                        gWatchBlockIndex, gCfg.abCVar.empty() ? std::string("single") : gCfg.abValues[ArmIndexForSegment(gWatchBlockIndex)],
+                        gWatch.frames, gWatch.periodMicros / n, gWatch.windowMicros / n, gWatch.windowCpuMicros / n,
+                        wall > 0.0 ? 100.0 * threadCpu / wall : 0.0, threadCpu / n,
+                        gWatch.counters[BENCH_LOOKUP_HIT] / n, gWatch.counters[BENCH_LOOKUP_MISS] / n,
+                        gWatch.counters[BENCH_LOOKUP_FLUSH], gWatch.counters[BENCH_RES_LOADS_WINDOW] / n,
+                        gWatch.counters[BENCH_DRAWS] / n, gPlayState->sceneNum, KHzToMHz(gWatch.cpuMinKHz),
+                        KHzToMHz(gWatch.cpuMaxKHz), ReadTempMilliC() / 1000.0);
+            gWatchBlockIndex++;
+        }
+        gWatch = WatchBlock{};
+        if (!gCfg.abCVar.empty()) {
+            ApplyArm(gCfg.abValues[ArmIndexForSegment(gWatchBlockIndex)]);
+        }
+        return;
+    }
+    if (inBlock < kWatchSkipFrames) {
+        return;
+    }
+    if (gWatch.frames == 0) {
+        gWatch.threadCpuStart = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
+        gWatch.wallStart = Clock::now();
+    }
+    gWatch.frames++;
+    gWatch.periodMicros += gPeriodMicros;
+    gWatch.windowMicros += micros;
+    gWatch.windowCpuMicros += windowCpu;
+    for (int k = 0; k < BENCH_COUNTER_COUNT; k++) {
+        gWatch.counters[k] += gBenchCounters[k];
+    }
+    if (inBlock % kCpuSampleEvery == 0) {
+        const int khz = ReadCpuKHz();
+        if (khz >= 0 && (gWatch.cpuMinKHz < 0 || khz < gWatch.cpuMinKHz)) {
+            gWatch.cpuMinKHz = khz;
+        }
+        if (khz > gWatch.cpuMaxKHz) {
+            gWatch.cpuMaxKHz = khz;
+        }
+    }
+}
+
 void LogViewpoint() {
     if (gPlayState == nullptr) {
         return;
@@ -956,6 +1032,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 if (gPhaseFrames % 60 == 0) {
                     LogViewpoint();
                 }
+                WatchBlockFrame(micros, windowCpu);
                 break;
             }
             // Give the scene a moment to spawn actors before reaching for the player, then hold

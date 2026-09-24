@@ -141,8 +141,20 @@ run() {
 # No CPU pin here: authoring is not a measurement, and the game is nicer to steer
 # at the clock the governor picks. Scene numbers in the log are the scene_table.h
 # ids - 0x55 Kokiri Forest, 0x51 Hyrule Field.
+#
+# Real-play A/B (report 8 8.22): add SOH_BENCH_AB_CVAR/SOH_BENCH_AB_VALUES and the game
+# alternates the arms in ABBA blocks of 300 frames while someone plays, logging one
+# "watch-block" line per block. Keep the frame cap (SOH_BENCH_UNCAP=0 - uncapped play runs
+# the game too fast) and pin the clock (PYRA_WATCH_PIN=1): under ondemand the lighter arm
+# gets a lower clock and more CPU time per frame, which biases against it.
+#
+#   PYRA_WATCH_PIN=1 ./scripts/pyra/bench.sh watch start SOH_BENCH_UNCAP=0 \
+#       SOH_BENCH_AB_CVAR=gSettings.LeanResLookup SOH_BENCH_AB_VALUES=0,3
+#   ./scripts/pyra/bench.sh watch blocks
+#   ./scripts/pyra/bench.sh watch stop
 watch_start() {
   watch_stop
+  if [[ "${PYRA_WATCH_PIN:-0}" == 1 ]]; then pin_cpu; fi
   local env_args=("SOH_BENCH=1" "SOH_BENCH_WATCH=1" "$@")
   echo "==> ${env_args[*]}" >&2
   # The redirect and the & are grouped around the launch alone. Putting them after a
@@ -158,10 +170,16 @@ watch_read() {
   ssh -n "$HOST" "grep 'Benchmark viewpoint' '$REMOTE_DIR/watch.log' 2>/dev/null | tail -5" || true
 }
 
+watch_blocks() {
+  ssh -n "$HOST" "grep -o 'Benchmark watch-block .*' '$REMOTE_DIR/watch.log' 2>/dev/null" || true
+}
+
 # The game catches SIGTERM and shuts down slowly, so a plain pkill returns long before
 # the process is gone and the next launch meets a live fullscreen window.
 watch_stop() {
   ssh -n "$HOST" "pkill -x '$COMM' 2>/dev/null; sleep 3; pkill -9 -x '$COMM' 2>/dev/null; sleep 1; exit 0" >/dev/null 2>&1 || true
+  # Only if a watch pinned it: the saved-governor file is the marker.
+  if ssh -n "$HOST" "[ -e $GOV_SAVE ]"; then unpin_cpu; fi
 }
 
 case "${1:-run}" in
@@ -172,8 +190,9 @@ case "${1:-run}" in
     case "$sub" in
       start) watch_start "$@" ;;
       read)  watch_read ;;
+      blocks) watch_blocks ;;
       stop)  watch_stop ;;
-      *) echo "usage: $0 watch {start [VAR=VAL ...]|read|stop}" >&2; exit 1 ;;
+      *) echo "usage: $0 watch {start [VAR=VAL ...]|read|blocks|stop}" >&2; exit 1 ;;
     esac
     ;;
   run)    shift; run "$@" ;;
