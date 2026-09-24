@@ -3,7 +3,10 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (evening)**, after §8.26: re-profiled with client arrays on. The driver's
+Last revised **2026-09-24 (late evening)**, after §8.27: the ceiling of lazy vertex lighting is
+≈0.47 ms at the Market and ≈0.2 ms at Hyrule Field, under the gate, so it is not built. Lighting
+itself measures ~0.8 ms at the Market — two directional lights per vertex at ~165 cycles, a latency
+chain — and fog 0.16 ms. After §8.26: re-profiled with client arrays on. The driver's
 CPU fell 5.0 → 3.3 ms per frame and the game side did not move. The interpreter's geometry is now
 the top named item (3.3 ms), and **62% of the triangles it processes are discarded**.
 `gSettings.LeanGLState=3` (§8.25) and `gSettings.LeanGeom=1` (§8.26, bit-exact, −1.1%) are defaults.
@@ -79,15 +82,24 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - Modes 1-2 alone are ~0.1 ms. Kept because mode 3's pointer handling is built on the shadow.
     - ~~**Next profile** with mode 3 on.~~ **Done (§8.26).**
 
-000. **Price lazy vertices before building them** (§8.26). ≥58% of transformed vertices and 62%
-    of submitted triangles are never drawn, yet lighting and fog run for every vertex. First a
-    throwaway A/B that skips lighting and fog outright (a wrong picture, never shipped) gives the
-    ceiling. Build deferred per-vertex lighting only if that ceiling is over ~0.5 ms: exact if the
-    light state is captured at load, but stateful, so it needs the full ladder. No NEON rewrite
-    until then; `LeanGeom` showed the arithmetic is not where the time is.
-    - Other blocks by µs/frame: rest of the interpreter 2.2 ms (`Run` dispatch, tri2/tile
-      handlers, texture-hash handler), game-side lookups by name 1.2 ms, interpolation 0.9 ms,
-      malloc/free 0.8 ms.
+000. ~~**Price lazy vertices before building them.**~~ **Done (§8.27): not worth building.**
+    Skipping lighting, texgen and fog outright is −972 µs (−5.8%) render-thread CPU at the Market
+    (t −37) and −352 µs (−3.6%) at Hyrule Field (t −25); fog alone is −164 µs at the Market. Times
+    the unused fraction, lazy lighting's ceiling is ≈470 / ≈200 µs, before its own overhead.
+    Lazy fog (≈95 µs) is easy and exact, but not worth a new invariant.
+
+0000. **Interleave the vertex lighting across vertices, exactly** (§8.27). Every lit vertex runs
+    exactly two directional lights at ~165 cycles, one dependent chain per light (int8 → float,
+    dot, `/127` VDIV, int → float → int per channel). Light 2–4 vertices together, same operations
+    in the same order per vertex, so the chains overlap. Stateless, and it helps used vertices as
+    well as discarded ones. Ceiling ~0.8 ms Market; nobody knows how much the A15 already overlaps.
+    - Build it behind a CVar with a benchmark-build **equivalence mode** that runs both versions
+      and counts differing colours over real frames: `VFMA` contraction can differ between the two
+      loop shapes. Zero mismatches at both fixtures (and in watch mode) before any A/B counts.
+    - Then the usual ladder: frozen A/B at both fixtures. Being exact, it needs no real-play A/B
+      for correctness, only the equivalence count.
+    - Other blocks by µs/frame, all sampled, so unsized (§8.27): rest of the interpreter 2.2 ms,
+      game-side lookups by name 1.2 ms, interpolation 0.9 ms, malloc/free 0.8 ms.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**

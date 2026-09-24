@@ -549,6 +549,14 @@ void WriteResults() {
                  PerFrame(seg, seg.counters[BENCH_TRI_RECT]), PerFrame(seg, seg.counters[BENCH_TRI_CLIPREJ]),
                  PerFrame(seg, seg.counters[BENCH_TRI_CULLED]), PerFrame(seg, seg.counters[BENCH_TRIS]));
         text += line;
+        // Inside the lighting loop (§8.27): light iterations over lit vertices, directional and
+        // positional; texgen and fog vertices; light-direction recomputes.
+        snprintf(line, sizeof(line),
+                 "BENCH light %zu dir=%.1f pos=%.1f texgen=%.1f fog=%.1f recalc=%.1f\n", i,
+                 PerFrame(seg, seg.counters[BENCH_VTX_LIGHT_DIR]), PerFrame(seg, seg.counters[BENCH_VTX_LIGHT_POS]),
+                 PerFrame(seg, seg.counters[BENCH_VTX_TEXGEN]), PerFrame(seg, seg.counters[BENCH_VTX_FOG]),
+                 PerFrame(seg, seg.counters[BENCH_LIGHTS_RECALC]));
+        text += line;
         // Calls per GL entry point per frame period, largest first, zeros left out.
         if (seg.glFnEnd.size() == (size_t)gBenchGlFnCount && seg.glFnStart.size() == seg.glFnEnd.size() &&
             seg.frameMicros.size() > 1) {

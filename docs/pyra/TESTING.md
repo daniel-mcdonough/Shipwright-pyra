@@ -289,6 +289,11 @@ BENCH period mde_us=...
   (overwritten before any drawn triangle used them; a lower bound), `tri_in` (`GfxSpTri1` calls),
   `tri_rect`, `tri_clipped`, `tri_culled`, and `tris` drawn. `tri_in = tri_clipped + tri_culled +
   tris`. At the Market 38% of submitted triangles are drawn.
+- `BENCH light <seg>` (§8.27) counts inside the lighting loop per frame: `dir`/`pos` light
+  iterations summed over lit vertices, `texgen` and `fog` vertices, and `recalc` (light-direction
+  recomputes). Both fixtures run exactly two directional lights per lit vertex.
+- `gSettings.ProbeSkipLight` (benchmark builds only) skips vertex work for a ceiling A/B: 1 =
+  lighting + texgen + fog, 2 = lighting + texgen, 3 = fog. **Wrong picture by design.**
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
@@ -456,8 +461,9 @@ sudo perf report -i rec.data --no-children --sort dso,sym --stdio
   `perf script -F ip,dso --show-mmap-events`, subtract the `soh.elf` mmap base, pull the binary
   from `/root/.debug/<path>/<build-id>/elf`, and bin by 16-byte region against `llvm-objdump
   --triple=thumbv7a-linux-gnueabihf`. The PCs skid onto the instructions after a `VDIV` or `VMRS`,
-  and the counts **overstate** what removing that instruction saves, by ~3× in §8.26. Use the
-  result to pick a candidate, and an A/B to size it.
+  and the counts **overstate** what removing that instruction saves, by ~3× in §8.26 — and
+  **understate** a dependent chain by ~2.5× in §8.27 (lighting: sampled ~0.33 ms with the
+  transform, measured ~0.8 ms alone). Use the result to pick a candidate, and an A/B to size it.
 - No GPU-side profiler is known to work on this part (`~/git/dragonbox-pyra/docs/profiling-guide.md`
   §3.2). The DDK does ship `libPVRScopeServices.so`, which is PowerVR's counter library; untried.
 

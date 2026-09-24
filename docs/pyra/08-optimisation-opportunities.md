@@ -1782,3 +1782,87 @@ in-function attribution as a pointer, not a size.**
 - By µs per frame, the largest blocks left are unresolved driver/libc addresses (4.1 ms), the rest
   of the interpreter (2.2 ms: `Run`'s dispatch, tri2 and tile handlers, the texture-hash handler)
   and the game-side resource lookups by name (1.2 ms).
+
+## 8.27 The ceiling of lazy vertex lighting: under the gate, and lighting is a latency chain
+
+Measured 2026-09-24 evening, frozen fixtures, 1250 MHz, 6 ABBA pairs each, soaked to 70 °C, with
+the die let down to ~65 °C between runs. Every segment of every run was on the pin (74–81 °C); none
+discarded.
+
+### The probe
+
+`gSettings.ProbeSkipLight` (libultraship, **benchmark builds only**, read per frame in
+`StartFrame`) skips work in `GfxSpVertex` outright: 1 = lighting, texgen and fog; 2 = lighting and
+texgen; 3 = fog. The picture is wrong on purpose. Position, clip flags and the aspect adjustment
+still run, because a lazy version would have to compute them at load. Draws, triangles, GL calls
+and every geometry counter were identical between arms, and no branch in `GfxSpTri1` depends on a
+vertex's colour, alpha or UV values, so the delta is the skipped work and nothing downstream.
+
+| render-thread CPU per frame | Δ | t | MDE | Δ timed window | Δ period |
+|---|---|---|---|---|---|
+| Market, mode 1 (all) | **−972 µs (−5.8%)** | −37.1 | 67 | −1132 µs, t −15.0 | −1207 µs, t −8.2 |
+| Market, mode 3 (fog only) | **−164 µs (−1.0%)** | −15.7 | 27 | −230 µs, t −3.1 | −299 µs, t −2.7 |
+| ⇒ Market, lighting + texgen | ≈ −808 µs | by subtraction; mode 2 not run | | | |
+| Hyrule Field, mode 1 (all) | **−352 µs (−3.6%)** | −25.1 | 36 | −327 µs, t −4.4 | −229 µs, t −1.4 (not resolved) |
+
+MDE is 2.571 × se at df = 5, computed from the `oncpu` lines the same way `bench.sh` computes it
+for the window.
+
+### The ceiling
+
+A lazy build still pays for every vertex a drawn triangle uses. Its ceiling is the skipped cost
+times the unused fraction (≥58% Market, ≥63% Hyrule Field; lower bounds, §8.26):
+
+| | Market | Hyrule Field |
+|---|---|---|
+| lazy lighting + fog | ≈ 560 µs | ≈ 220 µs |
+| lazy fog alone | ≈ 95 µs | — |
+| lazy lighting alone | ≈ 470 µs | ≈ 200 µs (assuming the Market's fog share) |
+
+Those are ceilings before the lazy version's own cost: a pending flag per slot, a check per
+triangle vertex, and a state snapshot. **Lazy lighting is under the ~0.5 ms gate at both
+fixtures and is not built.** Lazy fog would be easy and exact (`d->z`/`d->w` are stored before the
+fog block touches `w`, and `fog_mul`/`fog_offset` fit in `LoadedVertex`'s tail padding), but ~95 µs
+does not pay for a new invariant either.
+
+### This contradicts the §8.26 attribution, in the other direction
+
+§8.26 put transform, lighting and clip flags together at about a quarter of `GfxSpVertex`'s
+samples, ~0.33 ms. Lighting alone measures ~0.8 ms. In §8.26 the samples overstated the divides
+~3×; here they understate a dependent chain ~2.5×. Skid moves samples onto whatever follows a
+long-latency instruction, in either direction. **In-function sample attribution on this core is
+not a size, in either direction.** Only the A/B is.
+
+### What the lighting loop actually does
+
+New counters (`BENCH light` line, benchmark builds only), per frame:
+
+| | Market | Hyrule Field |
+|---|---|---|
+| lit vertices | 6075 | 3010 |
+| directional light iterations | 12150 | 6020 |
+| positional light iterations | 0 | 0 |
+| texgen vertices | 17 | 17 |
+| fogged vertices | 6105 | 3016 |
+| light-direction recomputes (`lights_changed`) | 239 | 38 |
+
+**Exactly two directional lights per lit vertex, in both scenes; no positional lighting, almost no
+texgen.** The ~808 µs is then ~133 ns, **~165 cycles, per lit vertex** for two dot products and an
+ambient term. That is not arithmetic throughput. Per light the code is one dependent chain: three
+int8 → float converts, a three-term dot product, `intensity /= 127.0f` (VDIV), a compare, then for
+each channel `r += intensity * col` with `r` an `int`, so an int → float → int round trip per
+channel per light. The two lights share `r`/`g`/`b`, so their chains serialise too. Fog, for
+comparison, is ~27 ns per vertex.
+
+### What this leaves
+
+- **Exact, stateless: interleave the lighting across vertices.** Light several vertices together,
+  doing the same operations in the same order for each, so their chains overlap. It is bit-exact
+  only if the compiler contracts (`VFMA`) the same way in both versions, so the prototype needs an
+  in-process equivalence check: a benchmark-build mode that runs both and counts differing colours
+  over real frames. Unlike lazy lighting it also speeds up the vertices that are used. **Unproven:**
+  §8.26 showed the A15 already hides some latency, so size it with an A/B before believing any
+  cycle count.
+- The ranking from §8.26 otherwise stands: the rest of the interpreter (2.2 ms), game-side lookups
+  by name (1.2 ms), interpolation (0.9 ms). All three are sampled numbers, and this section is a
+  second reason not to trust a sampled size.
