@@ -4,6 +4,8 @@
 #include <map>
 #include <unordered_map>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "frame_interpolation.h"
 #include "soh/OTRGlobals.h"
@@ -85,6 +87,43 @@ using namespace std;
 #ifdef SOH_BENCHMARK
 uint64_t gBenchInterpChildren;
 uint64_t gBenchInterpOps;
+
+// SOH_BENCH_INTERP_TRACE=<path> (§8.30): write the recording's call stream for game ticks N and N+1
+// (N = SOH_BENCH_INTERP_TRACE_TICK, default 1000, counted from the first recorded tick), so
+// docs/pyra/tools/interpbench.cpp can replay the game's real tree shape. Lines: "T" starts a tick,
+// "O <ptr> <int>" opens a child, "C" closes one, "o <op>" appends an op, "a"/"m" set the last
+// op's has_adjusted/has_mtx flag.
+static FILE* sInterpTrace;
+static long sInterpTraceTick = -1;
+static long sInterpTraceFirst;
+
+static void InterpTraceTick() {
+    if (sInterpTraceTick == -1) {
+        const char* path = getenv("SOH_BENCH_INTERP_TRACE");
+        const char* first = getenv("SOH_BENCH_INTERP_TRACE_TICK");
+        sInterpTraceFirst = first != nullptr ? atol(first) : 1000;
+        sInterpTrace = path != nullptr ? fopen(path, "w") : nullptr;
+        sInterpTraceTick = 0;
+    }
+    if (sInterpTrace == nullptr) {
+        return;
+    }
+    long tick = sInterpTraceTick++;
+    if (tick == sInterpTraceFirst + 2) {
+        fclose(sInterpTrace);
+        sInterpTrace = nullptr;
+    } else if (tick >= sInterpTraceFirst) {
+        fprintf(sInterpTrace, "T\n");
+    }
+}
+#define INTERP_TRACE(...)                                                               \
+    do {                                                                                \
+        if (sInterpTrace != nullptr && sInterpTraceTick > sInterpTraceFirst) {          \
+            fprintf(sInterpTrace, __VA_ARGS__);                                         \
+        }                                                                               \
+    } while (0)
+#else
+#define INTERP_TRACE(...)
 #endif
 
 namespace {
@@ -206,6 +245,9 @@ Data& append(Op op) {
 #ifdef SOH_BENCHMARK
     gBenchInterpOps++;
 #endif
+    if (op != Op::OpenChild) {
+        INTERP_TRACE("o %d\n", (int)op);
+    }
     auto& m = current_path.back()->ops[op];
     current_path.back()->items.emplace_back(op, m.size());
     return m.emplace_back();
@@ -484,6 +526,9 @@ void FrameInterpolation_StartRecord(void) {
 #endif
     if (OTRGlobals::Instance->GetInterpolationFPS() != 20) {
         is_recording = true;
+#ifdef SOH_BENCHMARK
+        InterpTraceTick();
+#endif
     }
 }
 
@@ -498,6 +543,7 @@ void FrameInterpolation_RecordOpenChild(const void* a, int b) {
 #ifdef SOH_BENCHMARK
     gBenchInterpChildren++;
 #endif
+    INTERP_TRACE("O %p %d\n", a, b);
     label key = { a, b };
     auto& m = current_path.back()->children[key];
     append(Op::OpenChild).open_child = { key, m.size() };
@@ -507,6 +553,7 @@ void FrameInterpolation_RecordOpenChild(const void* a, int b) {
 void FrameInterpolation_RecordCloseChild(void) {
     if (!is_recording)
         return;
+    INTERP_TRACE("C\n");
     // append(Op::CloseChild);
     if (has_inv_actor_mtx && current_path.size() == inv_actor_mtx_path_index) {
         has_inv_actor_mtx = false;
@@ -589,6 +636,7 @@ void FrameInterpolation_RecordMatrixSetTranslateRotateYXZ(f32 translateX, f32 tr
                                                                                           translateZ, *rot };
     if (next_is_actor_pos_rot_matrix) {
         d.has_mtx = true;
+        INTERP_TRACE("m\n");
         // d.mtx = *Matrix_GetCurrent();
         invert_matrix((const float*)Matrix_GetCurrent()->mf, (float*)inv_actor_mtx.mf);
         next_is_actor_pos_rot_matrix = false;
@@ -609,6 +657,7 @@ void FrameInterpolation_RecordMatrixToMtx(Mtx* dest, char* file, s32 line) {
     auto& d = append(Op::MatrixToMtx).matrix_to_mtx = { dest };
     if (has_inv_actor_mtx) {
         d.has_adjusted = true;
+        INTERP_TRACE("a\n");
         SkinMatrix_MtxFMtxFMult(&inv_actor_mtx, Matrix_GetCurrent(), &d.src);
     } else {
         d.src = *Matrix_GetCurrent();
