@@ -7,6 +7,7 @@ Last revised **2026-09-24 (night, later)**, after §8.30: **the interpolation re
 in a per-recording arena (`gSettings.LeanInterp=1`, the default)**: −1365 µs render-thread CPU at
 the Market (−8.0%, t −110, MDE 32), −266 µs at Hyrule Field (−2.7%, t −13.1). It is exact: 0 of
 139,324 replacement-map entries differ in motion on the device, and the positive control fires.
+In real play (owner playing, 32 pairs, eleven scenes) it is −1068 µs, −8.1% (t −3.3, MDE 644).
 A microbenchmark replaying the game's traced tick predicted 59–76% of the recording's cost would go;
 64% did. Unexplained: the Market's timed window got +143 µs slower (t 3.2, MDE 116).
 Before that, §8.29: **frame interpolation costs 2.7 ms of

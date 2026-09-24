@@ -160,6 +160,8 @@ Keep `SOH_BENCH_UNCAP=0` — uncapped play runs the game too fast — and `PYRA_
 the cap the frame period is the cap, so compare **`thread_cpu_us`** (render-thread CPU per frame)
 across adjacent ABBA pairs; blocks differ a lot in content, so it takes ~50 pairs (~17 minutes) to
 resolve a ~10% effect. Every block line carries `scene=` and `cpu_min_mhz`/`cpu_max_mhz`.
+`python3 docs/pyra/tools/watchpairs.py blocks.txt <arm A value>` pairs them, dropping pairs off the
+pin or across a scene change, and prints the delta with t and MDE (§8.30).
 
 ### Author a new fixture — needs the owner holding the device
 

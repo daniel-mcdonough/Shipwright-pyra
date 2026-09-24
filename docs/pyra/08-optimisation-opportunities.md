@@ -2159,8 +2159,23 @@ of residue, larger here, and not caused by the change.
 The change is exact by construction, verified entry by entry in motion, and a clear win at both
 fixtures, so **`gSettings.LeanInterp` defaults to 1** (`2c4b3d4`). A single segment with the CVar
 absent from the device's config read 15,600 µs render-thread CPU, the arm-1 value (15,692; arm 0
-was 17,057). It was not real-play A/B'd. The recording is stateful across ticks, but the in-motion
-map comparison checks the output directly, which a timing A/B could not.
+was 17,057).
+
+### Real play: −8.1%
+
+Watch mode, `LeanInterp` 0,1 alternating per 300-frame block, capped (`SOH_BENCH_UNCAP=0`), pinned
+(`PYRA_WATCH_PIN=1`), the owner playing ~14 minutes across eleven scenes: the Market, Hyrule Field,
+Kakariko, the Death Mountain trail and crater, and others. 81 blocks, all at 1250 MHz, the die at
+63 → 74 °C. Pairs are adjacent blocks; 8 of the 40 were dropped for spanning a scene change,
+leaving 32 (`tools/watchpairs.py`):
+
+| real play, 32 pairs | A (render-thread CPU per frame) | Δ | t | MDE |
+|---|---|---|---|---|
+| `LeanInterp` 0 → 1 | 13,251 µs | **−1068 µs (−8.1%)** | −3.32 | 644 |
+
+The saving holds in play, at the frozen Market's size in proportion, with every scene change and
+lazy load of a real session. The log shows no errors. The MDE is wide because blocks differ in
+content; the sign and the rough size are what this confirms.
 
 ### What this leaves
 
