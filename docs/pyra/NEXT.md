@@ -3,7 +3,10 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (late evening)**, after §8.27: the ceiling of lazy vertex lighting is
+Last revised **2026-09-24 (night)**, after §8.28: interleaving the lighting across vertices is
+exact (0 mismatches at three fixtures) and worth nothing (+43 µs, t 1.9); a microbenchmark shows the
+A15 already overlaps the chains. Lighting alone measures −740 µs at the Market (t −27.6), about
+twice what the isolated loop predicts, which is unexplained. After §8.27: the ceiling of lazy vertex lighting is
 ≈0.47 ms at the Market and ≈0.2 ms at Hyrule Field, under the gate, so it is not built. Lighting
 itself measures ~0.8 ms at the Market — two directional lights per vertex at ~165 cycles, a latency
 chain — and fog 0.16 ms. After §8.26: re-profiled with client arrays on. The driver's
@@ -88,18 +91,19 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     the unused fraction, lazy lighting's ceiling is ≈470 / ≈200 µs, before its own overhead.
     Lazy fog (≈95 µs) is easy and exact, but not worth a new invariant.
 
-0000. **Interleave the vertex lighting across vertices, exactly** (§8.27). Every lit vertex runs
-    exactly two directional lights at ~165 cycles, one dependent chain per light (int8 → float,
-    dot, `/127` VDIV, int → float → int per channel). Light 2–4 vertices together, same operations
-    in the same order per vertex, so the chains overlap. Stateless, and it helps used vertices as
-    well as discarded ones. Ceiling ~0.8 ms Market; nobody knows how much the A15 already overlaps.
-    - Build it behind a CVar with a benchmark-build **equivalence mode** that runs both versions
-      and counts differing colours over real frames: `VFMA` contraction can differ between the two
-      loop shapes. Zero mismatches at both fixtures (and in watch mode) before any A/B counts.
-    - Then the usual ladder: frozen A/B at both fixtures. Being exact, it needs no real-play A/B
-      for correctness, only the equivalence count.
-    - Other blocks by µs/frame, all sampled, so unsized (§8.27): rest of the interpreter 2.2 ms,
-      game-side lookups by name 1.2 ms, interpolation 0.9 ms, malloc/free 0.8 ms.
+0000. ~~**Interleave the vertex lighting across vertices, exactly.**~~ **Done (§8.28): exact, and
+    no gain.** +43 µs at the Market (t 1.9, MDE 57); reverted. `tools/lightbench.cpp` shows the
+    shipped loop at 53 ns/vertex, batching −5 ns, branchless +30 ns. Lighting alone is −740 µs in
+    the game (t −27.6), 2× the isolated loop: the gap is unexplained.
+    - Exact and small, if ever wanted: cache the light-direction recompute (239 per frame at the
+      Market, ≈ 90 µs ceiling).
+
+00000. **Size the remaining blocks by skipping them, before choosing one** (§8.28). All of these
+    are sampled numbers, and §8.26–8.28 found sampling off by 2–3× in both directions: rest of the
+    interpreter 2.2 ms (`Run` dispatch, tri2/tile handlers, texture-hash handler), game-side lookups
+    by name 1.2 ms, interpolation 0.9 ms, malloc/free 0.8 ms. For each, find a skip that leaves the
+    frame drawable (even if wrong) and A/B it, as `ProbeSkipLight` did. For a question about how the
+    core runs a loop, a microbenchmark on the device first.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**

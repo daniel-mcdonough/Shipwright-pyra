@@ -1848,7 +1848,8 @@ New counters (`BENCH light` line, benchmark builds only), per frame:
 
 **Exactly two directional lights per lit vertex, in both scenes; no positional lighting, almost no
 texgen.** The ~808 µs is then ~133 ns, **~165 cycles, per lit vertex** for two dot products and an
-ambient term. That is not arithmetic throughput. Per light the code is one dependent chain: three
+ambient term. ~~That is not arithmetic throughput.~~ **§8.28: wrong as a diagnosis — overlapping the
+chains exactly gains nothing in the game, and isolated the loop runs 53–87 ns per vertex.** Per light the code is one dependent chain: three
 int8 → float converts, a three-term dot product, `intensity /= 127.0f` (VDIV), a compare, then for
 each channel `r += intensity * col` with `r` an `int`, so an int → float → int round trip per
 channel per light. The two lights share `r`/`g`/`b`, so their chains serialise too. Fog, for
@@ -1866,3 +1867,80 @@ comparison, is ~27 ns per vertex.
 - The ranking from §8.26 otherwise stands: the rest of the interpreter (2.2 ms), game-side lookups
   by name (1.2 ms), interpolation (0.9 ms). All three are sampled numbers, and this section is a
   second reason not to trust a sampled size.
+
+## 8.28 Interleaving the lighting: exact, and worth nothing
+
+Measured 2026-09-24 night. §8.27's diagnosis, that lighting costs ~165 cycles per vertex because each
+light is one dependent chain, was tested and **is refuted**.
+
+### The change, and proof it was exact
+
+`gSettings.LeanLight=1` (libultraship `537c92cc`, reverted in `12e0a6ef`) lit a `GfxSpVertex`
+call's vertices in a separate pass, four at a time. It used the same operations the inline loop
+compiles to, spelled with `fmaf`, because GCC contracts to `VFMA` under its default
+`-ffp-contract=fast` (checked in the disassembly: the dot product is
+`fma(n2,c2, fma(n1,c1, fma(n0,c0, 0)))`, then `VDIV` by 127, and each channel
+`(int)fma(col, I, (float)r)`). Mode 2 ran both and counted differing colours:
+
+| fixture | lit vertices / frame | mismatches |
+|---|---|---|
+| Market | 6075 | **0** |
+| Hyrule Field | 3010 | **0** |
+| Kokiri Forest | 4120 (207 texgen) | **0** |
+| Market, positive control (intensity × 1.01) | 6075 | 4030 |
+| Market, `× (1/127)` instead of `/ 127` | 6075 | 0 |
+
+The control shows the check can see a difference. The last row is a side result: at the Market the
+inexact reciprocal never changed a truncated colour.
+
+### The result
+
+| `LeanLight` 0 → 1, Market, 6 pairs, all 1250 MHz | Δ | t | MDE |
+|---|---|---|---|
+| render-thread CPU | **+43 µs (+0.3%)** | 1.9 | 57 |
+| timed window | +111 µs | 2.0 | 141 |
+
+No gain; if anything a little slower. Hyrule Field was not run.
+
+### Why: a microbenchmark
+
+`tools/lightbench.cpp`, same compiler and flags, on the device pinned to 1.25 GHz, 6144 vertices,
+two lights, outputs checked against the original:
+
+| per lit vertex | coherent normals | random normals |
+|---|---|---|
+| A — the inline loop as shipped | **53 ns (67 cycles)** | 87 ns |
+| B — inline, branchless (`I` cleared to +0 via its sign bit) | 85 ns | 85 ns |
+| C — four at a time (`LeanLight=1`) | 48 ns | 56 ns |
+| D — four at a time, branchless | 62 ns | 62 ns |
+| light-direction recompute (`CalculateNormalDir`-like) | 92 ns per call | |
+
+All four are bit-identical. The A15 already overlaps the chains of neighbouring vertices; batching
+saves ~5 ns per vertex on coherent normals (~30 µs at the Market, under the MDE, as measured).
+The branchless form is *slower*: moving a float to the integer side and back costs more than a
+predicted branch, so `VMRS` was not the problem either. Only on random normals, where the `I > 0`
+branch mispredicts, does anything gain much.
+
+### The size of lighting, measured directly
+
+`ProbeSkipLight` 0 → 2 (lighting and texgen only, fog left on), Market: **−740 µs render-thread CPU
+(−4.4%), t −27.6, MDE 74**, over 5 pairs. The sixth pair was discarded because segment 11 dropped
+to 1000 MHz. §8.27's −808 µs by subtraction is confirmed within its error.
+
+That is still twice what the isolated loop predicts: 6075 × 53 ns plus 239 recomputes × 4 calls ×
+92 ns is ~0.41 ms, or ~0.62 ms with random-normal branch behaviour. The gap is **not explained**.
+Branch mispredictions on real mesh normals are the most likely candidate, but the in-game batch
+would then have gained, and it did not. Nothing here measures it.
+
+### What this leaves
+
+- **The exact lighting line is closed.** Lazy lighting's ceiling is under the gate (§8.27), and
+  interleaving recovers nothing. What remains exact is the light-direction recompute: 239 per frame
+  at the Market (38 at Hyrule Field), each redoing 3 divides, a 3×3 multiply and a normalise for
+  2 lights + 2 lookat vectors, ≈ 90 µs by the microbenchmark. A cache keyed on the light directions
+  and the top of the modelview stack could skip repeats, but the ceiling is ~0.1 ms.
+- The remaining blocks are sampled sizes: the rest of the interpreter (2.2 ms), game-side lookups
+  by name (1.2 ms), interpolation (0.9 ms). §8.26–8.28 found sampled sizes off by 2–3× in both
+  directions. Size each with a skip-it probe before choosing.
+- **Method:** a microbenchmark on the device took seconds and predicted the in-game null. When a
+  hypothesis is about how the core executes a loop, try it there before a 10-minute soaked A/B.

@@ -471,6 +471,11 @@ Run it on the frozen Market fixture, uncapped, on the userspace pin, after the s
 both ends of a run, because the Market's frame period creeps +4% across five minutes at a fixed
 clock (§8.20).
 
+**"Would this loop rewrite be faster?"** — microbenchmark it on the device before building it into
+the game (§8.28). Compile with the cross container and the game's flags, pin the clock, check the
+outputs are identical, compare ns per element. `docs/pyra/tools/lightbench.cpp` is the template;
+its header has the commands. It took seconds and predicted a null that a soaked A/B then confirmed.
+
 **"Did my new default actually take effect?"** — remove the CVar from the device's
 `shipofharkinian.json`, then `bench.sh run` one segment and compare the absolute against the known
 arm values. An A/B cannot answer this: it sets the CVar itself.
