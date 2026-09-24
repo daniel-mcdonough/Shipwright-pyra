@@ -219,7 +219,10 @@ sleep 55; for i in 1 2; do DISPLAY=:0 xwd -root -silent > /tmp/g-B-$i.xwd; sleep
 ```
 
 Compare only pixels that are stable within each arm (A-1 = A-2 and B-1 = B-2), then look at where
-the A ≠ B pixels are. With `REPS=2` a third pair in segment 3 (arm A again) gives a same-arm
+the A ≠ B pixels are. **At Hyrule Field the clouds scroll in the frozen fixture**: on 2026-09-24 two
+grabs of the *same* arm 23 s apart differed in 262,618 pixels, all at y ≤ 300 (§8.24; §8.22 had
+seen only ~600 over 150 s, cause of the difference unknown). Mask the sky or take a same-arm
+control at the same spacing. With `REPS=2` a third pair in segment 3 (arm A again) gives a same-arm
 control at a similar time distance: slow drift (the sky at Hyrule Field) shows up there too.
 
 ## 4. Reading the output
@@ -276,6 +279,12 @@ BENCH period mde_us=...
   on an `__OTR__` string), `res_loads` (`LoadResourceProcess` entries over the whole period) and
   `res_loads_window` (inside the timed window). With `gSettings.LeanResLookup=3` `res_loads` should
   read 0 in a frozen scene; if it does not, the cache is being flushed.
+- `BENCH work` also counts GL traffic (§8.24): `gl_calls` (every call the OpenGL backend makes into
+  the driver), `gl_uniforms` (the `glUniform*` subset), `vbo_uploads`/`vbo_kb` (`glBufferData`
+  calls and what they send; 0 with `gSettings.LeanGLState=3`, which draws from client arrays). A
+  `BENCH glfn <seg>` line lists calls per GL entry point per frame, largest first. **GL call count
+  is not a cost proxy on this driver**: removing 43% of them saved 0.5% (§8.24). Draws and uploads
+  are what cost.
 - `fb=start->end` is the game framebuffer size actually in use at the segment's first and last
   measured frame, read back from the interpreter rather than inferred from the CVar. For a
   resolution A/B it is the proof the arm took effect; for anything else it should be constant.
@@ -376,6 +385,12 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     purpose — it is the thermal backstop and it owns the charger's current limit. If a run is ever
     killed so hard that `unpin_cpu` does not run, the device is left on `userspace` at 1.25 GHz;
     `echo ondemand | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor` puts it back.
+13. **`bench.sh`'s output file can carry the results block twice, the second copy interleaved
+    mid-line with other output** (seen 2026-09-24 in `ab` runs). Parse the first occurrence of each
+    `BENCH segment`/`BENCH oncpu` line and ignore the rest, or read `$PYRA_DIR/bench.txt`.
+14. **Back-to-back soaked A/Bs push the Market past 82 °C.** Two in a row (Hyrule Field then Market,
+    2026-09-24) capped six of the Market's twelve segments to 1000 MHz, leaving three clean pairs.
+    Let the die fall to ~65 °C between runs, or run the Market first.
 
 ## 6. Recipes
 

@@ -1434,3 +1434,166 @@ scene — but "should" is reasoning, and the watch-block log would show it in on
 
 Consequence for the rig: **every baseline taken from now on includes the cache.** A frozen Market
 `bench.sh run` should now read ~27.5 ms, not ~31.4 ms, and `res_loads` should be 0.
+
+## 8.24 Client-side vertex arrays: −13.4% of the Market frame, −7.3% at Hyrule Field — and GL calls are not what costs
+
+Measured 2026-09-24, 04:44–06:00 device time. The session PROMPT.md briefed: the Hyrule Field
+number §8.22 owed, a fresh profile of the frame the lookup cache left, and one probe from it.
+
+### Hyrule Field, LeanResLookup 0 → 3 at 1250 MHz (owed from §8.22)
+
+Run first, on a device at 60 °C; all 12 segments at 1250 MHz by all four `cpu_*` fields, 71–81 °C.
+
+| 6 ABBA pairs | Δ | t | MDE |
+|---|---|---|---|
+| frame period | **−3203 µs (−15.1%)**, 21.20 → 17.99 ms, 47.2 → 55.6 FPS | −51.7 | 159 |
+| timed window | −3186 µs (−17.5%) | −77.6 | 106 |
+
+`res_loads` 1150 → 0, `lookup_hit` 479/frame, `lookup_flush` 0. The 1000 MHz figure in §8.22
+(−14.6%) stands; at the standard clock it is −15.1%.
+
+### The re-profile, cache on
+
+Method as §8.21: `bench.sh ab gSettings.ShaderOpts 3 3 $MARKET SOH_BENCH_REPS=5`, ten identical
+segments, all at 1250 MHz, 76–82 °C. `perf stat --per-thread` over ~segment 3, `perf record -F 499
+-t <render tid>` for 25 s over ~segments 4–5 (10,352 samples, against §8.21's 1,496), reports after
+exit. The device script is [`tools/prof.sh`](tools/prof.sh); the grouping is now
+[`tools/perfgroup.py`](tools/perfgroup.py) so the next profile is grouped the same way. §8.21's
+regexes were not saved, so the rows below were re-derived from its row names: edges ±1 point.
+
+Frame: 28.0–28.6 ms in the segments before `perf` attached (§8.23 said ~27.5; the next run on the
+same binary read 27.4–27.8, so this is run-to-run and temperature, not the new counters). Render
+thread **0.742 CPUs, IPC 0.50, ~27 context switches per frame** — against 0.770, 0.52 and 27 in
+§8.21. The cache took work out; it did not change the thread's character.
+
+| DSO | §8.21 | now |
+|---|---|---|
+| `soh.elf` | 53.5% | **47.0%** |
+| `libc.so.6` | 15.7% | 17.0% |
+| `libGLESv2` | 11.9% | **13.9%** |
+| kernel | 7.5% | 7.8% |
+| `libsrv_um` | 4.7% | **6.7%** |
+| `pvrsrvkm` | 3.1% | 3.1% |
+| `libstdc++` | 2.8% | 1.7% |
+
+| group (self time, render thread) | §8.21 | now |
+|---|---|---|
+| interpreter: `GfxSpVertex`, `GfxSpTri1`, tri handlers, matrix | 12.0% | **16.2%** |
+| interpreter: everything else | 12.2% | 10.2% (+0.9% GL backend, counted separately now) |
+| resource lookup | 10.7% | **5.6%** |
+| PVR user-space mutex | 6.0% | 6.3% |
+| malloc / free | 5.1% | 4.9% |
+| frame interpolation | 3.2% | 4.3% |
+| memcmp / memset / hash / string | 4.1% | 3.9% |
+| `shared_ptr` refcount | 4.5% (8.0%) | 2.1% |
+| CVar lookup by name | 1.4% | 0.9% |
+| unresolved (stripped DDK / libc) | 21.3% | 25.1% |
+
+What changed rank: the lookup cluster halved and fell from second to fifth; refcounting halved
+with it. The interpreter's geometry (`GfxSpVertex` 6.3%, `GfxSpTri1` 6.4%) is now the largest named
+item. The **driver's CPU side** — `libGLESv2` + `libsrv_um` + `pvrsrvkm` by DSO, which already
+includes their unresolved addresses — rose from 19.7% to **23.7%**, plus part of the kernel's
+7.8%; by DSO it is the largest block after `soh.elf` itself. (Most of the "unresolved" row is
+`libGLESv2`: 13.0 of its 13.9% has no symbol.)
+
+The 5.6% of lookup that is left is not the interpreter: `ResourceMgr_FileAltExists`,
+`ResourceMgr_GetResourceByNameHandlingMQ`, `ResourceMgr_LoadGfxByName`, `ResourceMgr_OTRSigCheck`,
+`LoadResourceAsync` (with a `std::promise` allocated per call) — the game's own C code resolving
+assets by name, answered from the manager's cache (`res_loads` is 0, so none reaches
+`LoadResourceProcess`). About 2.5%; not chased.
+
+### The probe: GL calls per frame
+
+The PVR mutex (6.3%) is taken per GL call, so the prompt's probe was to count GL calls. New
+counters (`BENCH work` `gl_calls`, `gl_uniforms`, `vbo_uploads`, `vbo_kb`, and a `BENCH glfn` line
+per entry point; macros over every GL entry point `gfx_opengl.cpp` uses, benchmark builds only):
+
+| per frame | Market | Hyrule Field |
+|---|---|---|
+| GL calls | **2410** (9.2 per draw) | **2153** (12.9 per draw) |
+| `glVertexAttribPointer` + `glEnable/DisableVertexAttribArray` | 792 | 999 |
+| `glUniform2fv` + `glUniform1iv` | 518 | 329 |
+| `glBufferData` / `glDrawArrays` | 261 / 261 (337 KB) | 167 / 167 (162 KB) |
+
+A third to a half of all GL calls were the vertex-attribute arrays: every shader switch disabled
+every attribute (`UnloadShader`) and re-enabled and re-pointed them all (`LoadShader`), about five
+each, 51–63 switches a frame. GLES 2 has no VAOs, so that is global state reset to mostly the same
+values.
+
+`gSettings.LeanGLState` (libultraship `f011db32`, default 0):
+
+- **1** — shadow the attribute arrays: enable, disable and re-point only what differs between the
+  old and the new program. Re-established from nothing every frame (ImGui draws in the same
+  context; its GL3 backend restores the three arrays it uses, but the shadow does not rely on it)
+  and after the blit and shader-cache-reset paths.
+- **2** — also skip uniform uploads that would resend what the program already holds (per-program
+  shadow; only this backend writes these programs' uniforms).
+- **3** — also draw from **client-side vertex arrays**: bind no buffer and point the attributes at
+  the interpreter's own vertex array, which is allocated once and never moves, instead of one
+  `glBufferData` per draw.
+
+**Mode 2 answers the probe, and the answer is no.** It removes 1035 GL calls a frame (2410 → 1375,
+−43%) and saves **−119 µs of the Market window (−0.54%), t=−3.3, MDE 93**; the period moved −136 µs,
+t=−1.1, MDE 323, not resolved. Six pairs, all at 1250 MHz. About 0.1 µs per call. **State-setting
+GL calls are nearly free on this driver; the mutex's share is not paid per call in any way that
+matters.** Whatever the driver spends is per draw or per upload. The prompt's premise ("paid per GL
+call, so count GL calls") is refuted.
+
+That points at item G's mechanism rather than the mutex, and report 5 §5.3 already had the cheapest
+test of it: client-side arrays measured best of four upload strategies (58 µs/draw against 68).
+Mode 3 was that test.
+
+### Mode 3: the result
+
+Hyrule Field first, then the Market back to back; the second run heated the die past
+`pyra-thermal`'s 82 °C rung and six of its twelve segments ran at 1000 MHz. Only pairs with both
+halves at 1250 MHz are used: five of six at Hyrule Field, three of six at the Market.
+
+| 0 → 3 | Δ frame period | t | MDE | Δ render-thread CPU | Δ swap |
+|---|---|---|---|---|---|
+| Market, 3 pairs | **−3685 µs (−13.4%)**, 27.5 → 23.8 ms, **36.3 → 42.0 FPS** | −51.3 | 309 | −3435 µs (−17.2%) | +74 µs |
+| Hyrule Field, 5 pairs | **−1309 µs (−7.3%)**, 18.0 → 16.7 ms, **55.5 → 59.8 FPS** | −24.3 | 150 | −1648 µs (−14.4%) | **+377 µs (+7.4%)** |
+
+Discards, stated: Market pairs 2 and 5 had both halves at 1000 MHz (−3592 and −4203 µs, consistent,
+not quoted); pair 4 changed clock mid-segment. Hyrule Field pair 5 had both halves at 1000 MHz.
+With only three clean pairs at the Market the MDE is wide (309 µs), but the effect is twelve times
+it. An earlier unsoaked single pair, mode 2 → 3, read 27.5 → 23.8 ms: modes 1–2 contribute ~0.1 ms
+of the total, mode 3 the rest.
+
+**Why:** the ioctl count, P2's method, at Hyrule Field inside one process: **~28 bridge ioctls per
+frame with `glBufferData`, ~15 without**, almost all of the difference on fd 9 (21.7 → 7.2 per
+frame). With 167 uploads a frame that is not one ioctl per upload — the driver sub-allocates and
+goes to the kernel for fresh device memory every so often, which is the `BM_Alloc`/`RA_Alloc`/
+`mmap` churn §8.21 found in the kernel profile. The CPU saving is several times what report 5's
+microbenchmark implied (8–10 µs × 261 ≈ 2.3 ms at most); that benchmark uploaded into a warm
+driver with nothing else in flight. **Report 5 §5.3's conclusion, "within noise of the
+alternatives and needs no change", is wrong for this game**; its ordering was right.
+
+At Hyrule Field a quarter of the CPU saving comes back as swap time: the driver now copies vertices
+at the draw and the GPU has less slack, or the frame simply reached the point where the GPU is the
+next limit (16.7 ms with 5.5 ms of swap). The Market, heavier on the CPU, keeps nearly all of it.
+
+### Visual check
+
+In-process, per TESTING.md: a two-segment A/B with 1500-frame segments and `xwd` grabs inside each.
+
+- **Market, mode 2 vs 3: 0 differing pixels** of 921,600.
+- **Hyrule Field, mode 0 vs 3: 266,534 differing pixels, every one in the sky band (y ≤ 300) but
+  4 on the horizon row, max 74/255.** A same-arm control — mode 0 against mode 0, grabs the same
+  23 s apart — differs in **262,618** sky pixels, max 73, and 0 below it. The clouds scroll in the
+  frozen fixture. **Identical picture at both fixtures.**
+
+This contradicts §8.22's same-arm sky drift of 596 pixels over 150 s; today the sky moved a quarter
+of a million pixels in 23 s. The frozen fixture's sky is not frozen, and how much it moves depends
+on something not yet identified. Any Hyrule Field visual check must mask y ≤ 300 or carry a
+same-arm control at the same spacing (TESTING.md).
+
+### What is not yet known
+
+- **Real play.** Mode 3 is stateful — a shadow of global GL state that anything else touching the
+  context can invalidate. The paths that do (the blit, `ClearShaderCache`, ImGui) are handled by
+  reading the code, and the frozen frame exercises none of them: no pause-menu framebuffer copy, no
+  scene change, no menu. It needs the watch-mode A/B, which needs the owner holding the device.
+- Whether the CPU saving at Hyrule Field survives in play, where the frame is capped at 30 FPS and
+  the GPU has more slack than the uncapped fixture.
+- Kokiri, and anything with pre-rendered backgrounds.

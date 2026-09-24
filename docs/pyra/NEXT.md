@@ -3,12 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (early morning)**, after §8.23: the asset-lookup cache
-(`gSettings.LeanResLookup`, **now default 3**) is −12.1% of the frozen Market frame (31.3 → 27.5 ms
-at 1250 MHz) and **−11.7% of the render thread's CPU in 17 minutes of real play**, 99.97% hit rate,
-zero flushes, no visual change. Every baseline from now on includes it. Before that, §8.21: the 65% is the render thread *computing* (≈ 90%
-on-CPU), not waiting on the GPU, and ~10–15% of its CPU time is per-frame resource lookups at one
-call site. Earlier the same day: `ShaderOpts` re-measured uncapped and the CPU pin fixed (§8.20).
+Last revised **2026-09-24 (morning)**, after §8.24: **client-side vertex arrays
+(`gSettings.LeanGLState=3`, default still 0) are −13.4% of the frozen Market frame (27.5 → 23.8 ms,
+36.3 → 42.0 FPS) and −7.3% at Hyrule Field**, same picture in-process — waiting on a real-play
+session before it becomes a default. The same section refuted "the driver is paid per GL call":
+removing 43% of GL calls saved 0.5%. Before that, §8.22-8.23: the asset-lookup cache
+(`gSettings.LeanResLookup`, **default 3**) is −12.1% of the Market frame and −15.1% at Hyrule Field
+(now measured at 1250 MHz), −11.7% of render-thread CPU in real play. §8.21: the frame is the render
+thread *computing*, not waiting on the GPU.
 
 ## Ground rules that keep being learned the hard way
 
@@ -61,6 +63,17 @@ other 65% was profiled for the first time in §8.21: it is CPU work — interpre
 allocation, and the GL driver's CPU side — so the list is no longer ranked against a guess.
 
 ### Do this first
+
+00. **Real-play A/B of `gSettings.LeanGLState` 0 vs 3, then default it** (§8.24). −3685 µs at the
+    Market, −1309 µs at Hyrule Field, identical in-process. It shadows global GL state, so it needs
+    the paths the fixture never takes: pause menu (framebuffer copy/blit), scene changes, the ImGui
+    menu open. Watch mode, `SOH_BENCH_AB_CVAR=gSettings.LeanGLState SOH_BENCH_AB_VALUES=0,3`,
+    `PYRA_WATCH_PIN=1 SOH_BENCH_UNCAP=0`, owner playing; compare `thread_cpu_us`. Then Kokiri.
+    - At Hyrule Field a quarter of the CPU saving came back as swap time. If the GPU is now the
+      next limit there, the "is the frame pipelined" question (item 5 below) is live again.
+    - Modes 1-2 alone are ~0.1 ms. Kept because mode 3's pointer handling is built on the shadow.
+    - **Next profile:** re-take the flat profile with mode 3 on; the driver's 23.7% should have
+      moved, and the interpreter's geometry (16.2%) is the largest named item left.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**
@@ -133,7 +146,7 @@ In order:
 | **D** | **Item 3 — sub-rect texture upload** (§8.4, §8.15) | ~1.5% ceiling | Upload a tile's sub-rectangle as its own texture so `tex_width2 == tex_width`, moving the remaining shader clamps to hardware. Capped by the non-mirror share of the 3.6% §8.15 found, so the ceiling is low and the work is not. **Prototype exactly one texture format** and measure before converting anything. |
 | **E** | **`GL_EXT_shader_framebuffer_fetch`** | unknown | Present, unexplored, and nearly free on a tile-based deferred renderer — `gpu-optimization.md` calls it the most interesting unexplored extension on the device. No Shipwright use case has been identified yet, which is the first thing to establish. Do not build machinery for it before finding one. |
 | **F** | **Present 640×360 and let the display controller scale** | unknown, ≤ the 3.4 ms of item 4 above | The game renders at 640×360 to `mGameFb` and then draws it as a 1280×720 quad. §8.7 calls that pass "inherent to the internal-resolution feature" — inherent to the *feature*, not to the hardware: the OMAP5 DSS can scale a plane in the display controller. It attacks the part of the swap that does not scale with pixels. Establish that a scaled plane is reachable through SDL/EGL on this stack **before** touching the renderer; if it is not, this is dead. |
-| **G** | **One `glBufferData` per frame with offsets** | 1.4–6.6%, uncertain by 4× | **Not the refuted ring buffer — see "Do not build".** Report 5 §5.3 measured this variant at 60 µs/draw against 68 for the code today, and it is the one row in that table nothing refutes. §8.6 dismissed the 12% as noise by computing it against the *scissored* 14.2 µs figure, which is a different measurement; against the 68 µs path it is 8 µs × 261 draws ≈ 2 ms ≈ 6% of the Market frame, larger than item A which shipped. Both readings clear the rig. **Gated on P2** (§2a): if draws are not the shape of the frame, this is worth nothing whatever the microbenchmark says. |
+| **G** | ~~**One `glBufferData` per frame with offsets**~~ | **superseded (§8.24)** | Client-side arrays — report 5's best row — took the per-draw `glBufferData` out entirely: −13.4% at the Market, several times what this row estimated. Report 5's "within noise, needs no change" was wrong for this game. The single-upload variant is no longer worth building unless mode 3 fails in real play. |
 | **H** | **Count redundant batch splits on texture change** | unknown; a counter, not yet a change | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
 
 ### Do not build
