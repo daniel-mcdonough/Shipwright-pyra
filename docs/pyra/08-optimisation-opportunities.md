@@ -2904,3 +2904,55 @@ backend forgets its binding shadow at every frame start, so ImGui's binds read a
 - **For the two-core design:** the draw cost cannot be simply removed. Item H took 13% of the Market's
   draws and 1% of its window CPU; the rest are real state changes. §8.36's ~4.7 ms of GL work per Market
   frame stands, less ~0.16 ms.
+
+## 8.38 A texture bind costs ~5.5 µs at the next draw, even when it binds the same texture back
+
+Measured 2026-09-25 night, the device free, frozen Market pinned at 1000 MHz, soaked to 70 °C with
+`SOH_BENCH_WARMUP=2400`, the die let down to 65 °C before each run. All 24 segments were on the pin.
+`LeanTexReuse=1` is the default here, so the Market draws 228-229 per frame.
+
+### The probe
+
+`gSettings.ProbeSkipDraw` 5 and 6 (libultraship `60114393`), A/B'd against mode 3 (every draw twice), so
+the delta is only what a texture bind adds to the repeat. Both bind on unit 0; the other texture is the
+one unit 0 held at the previous draw (a real scene texture), or a complete 1×1 texture when that is the
+same one. Unit 0 and the backend's shadow end as they started.
+
+- **5**: bind the other texture and the original back, then repeat. The repeat draws exactly as before.
+- **6**: repeat with the other texture bound, then restore. A real texture change, nothing else.
+
+| 6 pairs each, Δ against mode 3 | Δ window CPU | t | MDE | per draw |
+|---|---|---|---|---|
+| mode 5, bind away and back (A 15,931 µs) | **+1208 µs (+7.6%)** | 56.0 | 55 | **5.3 µs** |
+| mode 6, another texture (A 15,691 µs) | **+1313 µs (+8.4%)** | 63.9 | 53 | **5.8 µs** |
+
+`glfn` shows the extra calls and nothing else: +2 `glBindTexture` and +1 `glActiveTexture` per draw
+(≈0.1 µs each, §8.24). The swap *fell* ~200 µs in both, the GPU side is not what the numbers measure.
+
+- **The driver validates on any bind, not on a change of texture.** Binding a texture away and straight
+  back costs 5.3 µs at the next draw; a draw that really samples another texture costs 5.8. The backend's
+  shadow already skips binds of the texture already bound; nothing smaller than "fewer binds" helps.
+
+### §8.37's decomposition, corrected
+
+§8.37 split §8.36's 15.8 µs per draw as if every draw were alike. That average was over 262 draws, 33 of
+which (item H's) changed no state and cost ~6.5 µs. The other 229 therefore averaged (4125 − 33 × 6.5) /
+229 ≈ **17.1 µs**, and with this probe:
+
+| a Market draw that changes state, 1000 MHz | µs |
+|---|---|
+| the call | ~4.3 |
+| its vertices (client arrays) | ~2.2 |
+| the texture bind, validated at the draw | **~5.5** |
+| the rest of the state change (texture-size uniforms, attribute pointers, program, ...) | ~5 (by difference) |
+
+*Reasoning, not measured:* the texture-size uniforms follow texture changes (85 `glUniform2fv` per frame),
+so a uniform upload is the likeliest part of the remaining ~5 µs; a repeat after re-uploading an
+unchanged uniform would price it the same way.
+
+### What this leaves
+
+- Every texture change costs ~5.5 µs of driver time however it is issued, and the Market makes 225 of
+  them: ~1.2 ms per frame. Only fewer binds reduce it: grouping draws by texture (reordering, NEXT.md),
+  or fewer distinct textures per frame (atlases; not a small change).
+- Price the uniform part the same way before deciding anything about uniforms.

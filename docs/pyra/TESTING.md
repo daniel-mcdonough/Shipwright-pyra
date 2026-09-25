@@ -350,6 +350,8 @@ BENCH period mde_us=...
   At the Market mode 1 is −4.1 ms of render-thread CPU: the draw calls are a quarter of the thread.
   3 issues every draw twice with no state change between, 4 repeats only its first triangle (§8.37):
   +6.5 and +4.3 µs per draw at the Market. Read `win_cpu_us`: the doubled GPU work lands in the swap.
+  5 and 6 (§8.38) repeat it after binding another texture to unit 0 and back, or with the other texture
+  bound; A/B them against 3, not 0.
 - `BENCH batch <seg>` (§8.37): draws per frame by the set of state changes that split each from the
   previous batch. `cause=any/alone` per cause, then the commonest sets. `tex_same` is a reload of the
   texture already bound (NEXT.md item H); `other` should read ~1 (the frame's last draw). If `other`

@@ -201,9 +201,11 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       watch mode with the owner playing, including framebuffer-texture effects, the pause menu and ImGui
       open: `SOH_BENCH_AB_CVAR=gSettings.LeanTexReuse SOH_BENCH_AB_VALUES=0,1`. Expect ~1% render-thread
       CPU; the point is that nothing looks wrong.
-    - **Does a texture bind alone cost the ~9 µs of validation?** Add a `ProbeSkipDraw` mode that binds
-      another texture and back between the two draws of mode 3. If that repeat costs ~15 µs, texture
-      changes are the validation, and the only lever left on draws is grouping them by texture.
+    - ~~**Does a texture bind alone cost the ~9 µs of validation?**~~ **Done (§8.38): ~5.5 µs, and a bind
+      of the texture straight back costs the same (5.3 µs, t 56.0) as a real change (5.8 µs, t 63.9).** A
+      state-changing Market draw is ~17.1 µs: call 4.3, vertices 2.2, texture bind 5.5, the rest ~5.
+    - **Price a uniform upload the same way** (a `ProbeSkipDraw` mode that re-uploads an unchanged
+      texture-size uniform between mode 3's draws). The likeliest part of the remaining ~5 µs.
     - **Could opaque draws be grouped by texture?** Before building any reordering, count (a `BENCH`
       counter) how many draws in runs of consecutive opaque, depth-tested, non-decal draws share a
       texture with an earlier draw in the same run, i.e. how many sorting could remove. Reordering
