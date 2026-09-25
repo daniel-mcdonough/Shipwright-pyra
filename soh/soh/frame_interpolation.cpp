@@ -796,7 +796,9 @@ unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
     // and their nodes (FrameInterpolation_RecycleMaps) - the same entries, no allocations. 3
     // (benchmark builds): mode 2, plus a map built the original way, compared entry by entry.
     static size_t last_size;
-    int lean_map = CVarGetInteger("gSettings.LeanInterpMap", 0);
+    // Default 1 since §8.36: exact, -145 us (-0.9%) render-thread CPU at the Market. Mode 2 measured
+    // no better (-161 us) and holds state across ticks, so it is not the default.
+    int lean_map = CVarGetInteger("gSettings.LeanInterpMap", 1);
 #ifndef SOH_BENCHMARK
     lean_map = lean_map == 3 ? 2 : lean_map;
 #endif
