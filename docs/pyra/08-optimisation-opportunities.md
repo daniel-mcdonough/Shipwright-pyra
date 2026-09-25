@@ -2187,3 +2187,151 @@ content; the sign and the rough size are what this confirms.
   (~2400 per frame period). Size malloc/free after this change, not before.
 - **Method:** trace the game natively on the host when the question is the game's data shape.
   The host build runs the fixtures, and its counters matched the device's exactly.
+
+## 8.31 Sizing the rest: two thirds of the heap traffic is looking things up by name
+
+Measured 2026-09-24 night to 09-25 early morning, the device free for the session. NEXT.md 00000's
+remaining blocks — malloc/free, game-side lookups by name, the rest of the interpreter — each got a
+counter first, then a skip or an exact change, A/B'd at the Market and Hyrule Field.
+
+### No uprobes: an LD_PRELOAD instead
+
+The prompt's recipe, `perf probe -x libc.so.6 malloc`, cannot work on this device: the `5.6.19-m4`
+kernel has `CONFIG_UPROBE_EVENTS` off (kprobes are on). `perf probe -q` fails silently. A
+`5.6.19-m4-uprobe` kernel (hardware repo, `pc/pyra-crossbuild.sh kernel-m4-uprobe`: m4 plus that
+option, nothing else) is installed in the test slot `l1`, not booted and not the default.
+
+Counting did not need it. `scripts/pyra/allocshim.c` interposes malloc/calloc/realloc/memalign/
+strdup and every `operator new`/`delete`, counts per thread, and bins each allocation by its return
+address — the link register, so no unwinding. The benchmark prints `BENCH alloc` when it is loaded
+and writes per-segment site tables (`SOH_BENCH_SITES`); `docs/pyra/tools/sites.py` names them.
+**Validation:** `LeanInterp` 0 vs 1 reads 5566 vs 3199 `new` per frame, a difference of 2367 against
+§8.30's ~2400 recording allocations per frame period.
+
+### What allocates
+
+Market, `LeanInterp=1`, per frame: **3202 `operator new`, 45 malloc.** By caller:
+
+| | allocations | what |
+|---|---|---|
+| `ConsoleVariable::Get(const char*)` | 711 | a `std::string` key built from the name for every CVar read |
+| resource lookups by path | ~1430 | ~13 per lookup: `LoadResourceAsync`'s promise/future, `ResourceIdentifier`, `FileAltExists`, the MQ path copy, `"alt/" + path` |
+| `Interpreter::GetBaseTexturePath` | 441 | the resource path copied on every texture load, to look up in an empty map |
+| frame interpolation's replacement map | ~225 | |
+
+Hyrule Field: 1776 per frame, the same callers.
+
+New counters: `BENCH lookup` (lookups by name, outermost entry only, and CVar reads), `BENCH ops`
+(display-list commands per opcode) and, with `SOH_BENCH_OPTIME=1`, `BENCH optime` (see TESTING.md
+trap 16 for its cost). Per frame at the Market: **~112 resource lookups** (103 of them
+`gSPDisplayList` → `ResourceMgr_LoadGfxByName`), **~713 CVar reads** (`CosmeticsUpdateTick` 264,
+`IsSceneMasterQuest` 110 — one per resource lookup, `func_800315AC` 68, HUD drawing ~100), and
+**10,927 display-list commands**. `GuiWindow::SyncVisibilityConsoleVariable` also writes a CVar every
+frame, unchanged.
+
+### Lookups by name: a 1.1 ms block, now an exact cache
+
+The skip, `gSettings.ProbeMemoLookup=1` (benchmark builds): a per-thread memo on the path pointer in
+`ResourceMgr_GetResourceByNameHandlingMQ`. Frozen Market, 5 pairs at 1250 MHz (the sixth capped):
+**−1052 µs render-thread CPU (−6.7%, t −31, MDE 94)**, ~9.5 µs per lookup; mode 2's name check found 0
+reused pointers.
+
+The shippable form, `gSettings.LeanGameLookup=1` (`soh/soh/ResourceManagerHelpers.cpp`): the same
+cache keyed by address but verified against the whole path, used only while the resource manager's
+and archive manager's generations, the extension table's (bumped in `OTRExtScanner`), the alt-asset
+toggle, the MQ flag and the resource's dirty bit are unchanged. Failed lookups are not cached. A
+display list with an alt/ version always takes the original route, so its original is still unloaded
+each call.
+
+- **Equivalence, in motion** (`SOH_BENCH_STATIC=0`, Market, 600 frames): mode 2 looks up without the
+  cache on every hit and compares — **0 mismatches**; mode 3, the positive control, compares against
+  the previous path — **68,670**.
+- **Picture:** in-process, `LeanCVar` off, off vs on 0 pixels; both arms within launch noise of the
+  unmodified build (26.6k pixels, the trap-3 floor).
+
+| `LeanGameLookup` 0 → 1 | Δ render-thread CPU | t | MDE | Δ period | Δ window |
+|---|---|---|---|---|---|
+| Market, 4 pairs at 1250 MHz | **−1160 µs (−7.3%)** | −21.5 | 171 | −1133 µs, t −10.2 | −20 µs, t −0.3 |
+| Hyrule Field, 4 pairs at 1250 MHz | **−428 µs (−4.4%)** | −11.4 | 119 | −384 µs, t −3.6 | 0 |
+
+It beats its own probe (−1160 vs −1052) because it also skips `UnloadOriginalWhenAltExists`, which
+the probe left in. **Not the default yet:** it holds state across frames, so it waits for a real-play
+A/B. These A/Bs ran with `LeanCVar=1` stuck in the config (below); both arms had it, so the deltas
+stand.
+
+### The texture-load path: exact, −3 to −5%
+
+`LoadBlock` and `LoadTile` copy the texture's resource path into a new string to look it up in
+`mMaskedTextures`, which is empty unless a mod registers masked textures. `gSettings.LeanTexLoad=1`
+skips both while the map is empty. A find in an empty map always misses, so the result is the same.
+
+| `LeanTexLoad` 0 → 1, 1000 MHz (pyra-thermal capped the runs; trap 14) | Δ render-thread CPU | t | MDE | Δ window |
+|---|---|---|---|---|
+| Market, 3 pairs | **−596 µs (−3.1%)** | −23.8 | 108 | −901 µs, t −10.8 |
+| Hyrule Field, 4 pairs | **−561 µs (−4.8%)** | −27.4 | 65 | −605 µs, t −6.9 |
+
+About 1.35 µs per texture load at 1000 MHz for a path copy and a `shared_ptr` copy — more than I
+would have guessed; the measurement is what it is. Pixel-identical in-process, and within launch
+noise of the unmodified build. Stateless, so **`LeanTexLoad` now defaults to 1**; a single segment
+with the CVar absent showed `GetBaseTexturePath` gone from the allocation table.
+
+### CVar reads: not exact, not shipped
+
+`gSettings.LeanCVar=1` finds CVars through a transparent hash on the `const char*` and returns a raw
+pointer, removing the key string and the `shared_ptr` copy — all 713 allocations. Pinned to 1000 MHz,
+6 pairs: **Market −252 µs (−1.3%, t −5.5, MDE 117)**; Hyrule Field −526 µs, but not stable (pairs 0–1
+−146 and −268 with the window flat, pairs 2–5 −559 to −798 with the window moving as much), and the
+counts put no CVar reads in the window. Unexplained.
+
+**It changes the picture.** In-process at the Market, `LeanCVar` 0 vs 1 differs in 505k pixels (mean
+0.48/255, speckles along edges up to 111/255); the same-arm control is identical. A build with the
+pre-change `ConsoleVariable` matches mode 0 to launch noise and mode 1 by 512k pixels. The bisect:
+mode 3 (the original keyed find checked against the transparent one on every read, the original's
+answer returned) logged 0 disagreements and still changes the picture; mode 4 (mode 3 with `Get()`
+also on the original find) still changes it. So the lookup is not the cause; what differs is that the
+getters no longer go through `Get()`, which returns the same object. **Not found.** `LeanCVar` stays
+0; modes 3 and 4 are left in for the next attempt.
+
+**A harness bug this found:** the game saves CVars mid-run on its own, and `gSettings.LeanCVar=1`
+ended up in the device's config — every later run booted with it. The harness now clears an A/B CVar
+that was absent before the run, restores one that was present, and saves (it also used to read an
+absent CVar as 0, which would have replaced a default of 1).
+
+### The rest of the interpreter
+
+`SOH_BENCH_OPTIME=1`, one Market segment, less the ~640 ns floor the no-op sync commands read: the
+geometry handlers dominate as in §8.26 (`G_TRI2` ~5.1 ms, `G_VTX_OTR_HASH` ~1.8 ms, `G_QUAD` ~0.75 ms,
+all clock-inflated); then `G_SETTIMG_OTR_HASH` ~0.64 ms, `G_LOADBLOCK` ~0.47 ms (the path copies above),
+`G_SETTIMG` ~0.34 ms, `G_TEXRECT_WIDE` ~0.31 ms (16 µs each, 20 per frame), `G_MTX` ~0.27 ms,
+`G_SETTILE` ~0.23 ms. No non-geometry handler is a millisecond; dispatch itself could not be separated
+from the clock's cost. Not skip-probed.
+
+### The timed window, again
+
+`ProbeMemoLookup` also moved the Market's window +133 µs (t 2.8), like §8.30's +143 µs. Here the swap
+accounts for most of it (+107 µs), consistent with the GPU having less slack once the game side is
+faster. §8.30's did not: its swap moved +29 µs and the rest +113 µs. Not one effect.
+
+**§8.30's regression holds.** `LeanInterp` 0 → 1 re-measured at the Market, 8 pairs, all 16 segments
+pinned at 1000 MHz: render thread **−1656 µs (−8.2%, t −118, MDE 33)**, period −1670 µs (t −19.2),
+and the window **+295 µs (+1.4%, t 6.4, MDE 109)** — every pair positive, growing from +124 to +442 µs
+across the run. Swap +119 µs, the window's own work +175 µs. The net stays a clear win; the L2 guess
+(size each arena buffer to the recording, ~230 KB, instead of 256 KB-and-double, or drop the unused
+recorder's storage) is now worth testing.
+
+### Traps, added to TESTING.md
+
+- Segments 0–2 can still be settling after the soak (render thread 18.0 → 15.9 ms in one run): use
+  `SOH_BENCH_WARMUP=2400`.
+- Starting a run at 65 °C did not stop pyra-thermal capping most of six runs to 1000 MHz. Pinning
+  both arms at 1000 MHz (`PYRA_PIN_FREQ=1000000`) gives whole runs; `pairs.py` takes the clock.
+- `bench.sh` defaulted `PYRA_DIR` to `~/soh`, a stale binary with no archives; it now defaults to
+  `~/soh-bench2`.
+
+### What this leaves
+
+- **`LeanGameLookup` needs the real-play A/B**, then becomes the default: −7.3% of the Market's render
+  thread.
+- **The CVar reads** (~250 µs at the Market): why skipping `Get()` changes the picture.
+- **The remaining heap traffic** with both on: ~1550 per frame at the Market (3202 − ~1210 − 441), of
+  which 711 are CVar key strings and ~225 the replacement map.

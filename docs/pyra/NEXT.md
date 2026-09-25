@@ -3,7 +3,15 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-24 (night, later)**, after §8.30: **the interpolation recording now lives
+Last revised **2026-09-25 (early morning)**, after §8.31: **two thirds of the Market's 3200 heap
+allocations per frame are lookups by name.** `gSettings.LeanTexLoad=1` (now the default) skips a
+path copy per texture load: −596 µs (−3.1%) Market, −561 µs (−4.8%) Hyrule Field at 1000 MHz,
+pixel-identical. `gSettings.LeanGameLookup=1` caches the game's ~110 lookups by path per frame,
+exactly (0 mismatches in motion, control fires, pixel-identical): **−1160 µs (−7.3%) Market, −428 µs
+(−4.4%) Hyrule Field at 1250 MHz** — off until a real-play A/B. `gSettings.LeanCVar=1` (−252 µs
+Market) **changes the picture** for a reason not found; not shipped. §8.30's window regression holds
+(+295 µs, t 6.4, 8 pairs). Uprobes do not exist on the m4 kernel; `scripts/pyra/allocshim.c` counts
+allocations instead. Before that, §8.30: **the interpolation recording now lives
 in a per-recording arena (`gSettings.LeanInterp=1`, the default)**: −1365 µs render-thread CPU at
 the Market (−8.0%, t −110, MDE 32), −266 µs at Hyrule Field (−2.7%, t −13.1). It is exact: 0 of
 139,324 replacement-map entries differ in motion on the device, and the positive control fires.
@@ -122,12 +130,26 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       What is left of interpolation is ~1.3 ms at the Market: the record-side map lookups and
       `Data` copies (~0.8 ms) and the walk (~0.55 ms). Taking the rest means keying ops by
       position, which changes the matching rule. Size the other blocks first.
-    - Lookups by name: count per entry point, then a frozen-only memo on the name pointer.
-    - malloc/free: count with a `perf probe` uprobe (untried here; unwinding does not work, counting
-      should). The recording's ~3550 allocations per tick are gone since §8.30, so size this with
-      the new default, and `LeanInterp=0` to see what the recording used to add.
-    - Interpreter rest: count commands per opcode first. §8.29 found the replacement-map lookup in
-      `GfxSpMatrix` below the MDE, so interpolation does not account for any of this block.
+    - ~~Lookups by name: count per entry point, then a frozen-only memo on the name pointer.~~
+      **Done (§8.31): ~112 per frame, ~9.5 µs each; the memo skip is −1052 µs at the Market.
+      `gSettings.LeanGameLookup=1` is the exact form, −1160 µs (−7.3%) Market, −428 µs Hyrule Field.**
+      **Next: the real-play watch-mode A/B (it holds state), then default it.** Include a scene
+      with pre-rendered backgrounds and the ImGui menu.
+    - ~~malloc/free~~ **Counted (§8.31)** with `scripts/pyra/allocshim.c` (the m4 kernel has no
+      uprobes): 3202 per frame at the Market, 1776 at Hyrule Field; CVar keys 711, lookups ~1430,
+      texture paths 441 (gone with `LeanTexLoad`, now the default). What is left after the two
+      lookup changes is ~1550, 711 of them CVar keys.
+    - **CVar reads without the key string** (`gSettings.LeanCVar=1`, −252 µs Market at 1000 MHz):
+      **changes the frozen picture** (505k pixels, mean 0.48/255); the pre-change build matches mode
+      0. Modes 3 and 4 rule out both lookups; the getters skipping `Get()` is what differs, and why
+      that matters is not known. Find it before measuring further. The Field's LeanCVar numbers
+      are also unstable within a run.
+    - **§8.30's window regression holds** (+295 µs, t 6.4, MDE 109, 8 pairs at 1000 MHz, growing
+      through the run). Test the L2 guess: arena buffers sized to the recording (~230 KB) instead
+      of 256 KB-and-double, or drop the unused recorder's storage.
+    - ~~Interpreter rest: count commands per opcode first.~~ **Counted and timed (§8.31):** 10,927
+      commands per frame; geometry dominates; no non-geometry handler reaches 1 ms
+      (`G_SETTIMG_OTR_HASH` ~0.64 ms, `G_LOADBLOCK` ~0.47 ms before `LeanTexLoad`). Not skip-probed.
 
 0. ~~**A/B the texture-by-hash lookup path.**~~ **Done (§8.22): mode 3 is −3787 µs (−12.1%) at
    the Market, t≈−123 on the three clean pairs; −3549 µs (−14.6%) at Hyrule Field at 1000 MHz.**
