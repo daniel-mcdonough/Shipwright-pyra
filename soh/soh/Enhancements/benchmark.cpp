@@ -138,6 +138,11 @@ struct Config {
     // Directory for per-segment call-site tables (§8.31): alloc-sites-N.txt from
     // scripts/pyra/allocshim.so, lookup-sites-N.txt from the resource manager. Empty: none.
     std::string sitesDir;
+    // SOH_BENCH_DUMP=<dir>: write the frame to <dir>/seg<k>-f<n>.ppm at frames n and n+1 of every
+    // segment, n = SOH_BENCH_DUMP_FRAME. The same frame in both arms, so a visual check does not
+    // depend on when a screen grab happened to land (§8.32); the second frame is a same-arm control.
+    std::string dumpDir;
+    int dumpFrame = 300;
 };
 
 Config gCfg;
@@ -1068,6 +1073,8 @@ extern "C" void Benchmark_Init(void) {
     gBenchFinish = EnvInt("SOH_BENCH_FINISH", 0);
     gCfg.uncap = EnvBool("SOH_BENCH_UNCAP", gCfg.uncap);
     gCfg.sitesDir = EnvOr("SOH_BENCH_SITES", "");
+    gCfg.dumpDir = EnvOr("SOH_BENCH_DUMP", "");
+    gCfg.dumpFrame = EnvInt("SOH_BENCH_DUMP_FRAME", gCfg.dumpFrame);
     gBenchOpTime = EnvInt("SOH_BENCH_OPTIME", 0);
 
     gCfg.havePos = ParseVec3("SOH_BENCH_POS", gCfg.pos);
@@ -1340,6 +1347,11 @@ extern "C" void Benchmark_FrameEnd(void) {
             }
             if (gPhaseFrames > 0 && gPhaseFrames % kCpuSampleEvery == 0) {
                 SampleCpu(gRunSegments.back());
+            }
+            if (!gCfg.dumpDir.empty() && (gPhaseFrames == gCfg.dumpFrame || gPhaseFrames == gCfg.dumpFrame + 1)) {
+                // Taken at the end of the next frame drawn.
+                snprintf(gBenchDumpPath, sizeof(gBenchDumpPath), "%s/seg%zu-f%d.ppm", gCfg.dumpDir.c_str(),
+                         gRunSegments.size() - 1, gPhaseFrames + 1);
             }
             if (++gPhaseFrames >= gCfg.measureFrames) {
                 gRunSegments.back().threadCpuEnd = CpuMicros(CLOCK_THREAD_CPUTIME_ID);

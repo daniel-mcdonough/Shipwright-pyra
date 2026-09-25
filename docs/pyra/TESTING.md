@@ -208,6 +208,13 @@ trap 3.
 
 ### In-process visual check — one frozen pose, both arms
 
+**Prefer the frame dump (§8.32).** `SOH_BENCH_DUMP=<dir>` writes the game's render target as
+`seg<k>-f<n>.ppm` at frames n and n+1 of every segment (n = `SOH_BENCH_DUMP_FRAME`, default 300),
+so both arms are captured at the same frame whatever their speed, with no screen grab. Compare with
+`docs/pyra/tools/dumpcmp.py <dir>`. The frozen Market is not perfectly still: consecutive frames of
+one arm differ in ~15-21 pixels (a short animation cycle), so compare the same frame index across
+arms and read the within-arm numbers as the floor. The grab method below is what §8.22-8.31 used.
+
 Run an A/B with long segments and grab frames during each, so the pose cannot differ between arms.
 Segment boundaries are not logged, so time the grabs from `Benchmark measuring` in `run.log`:
 segment 0 starts ~4 s after it (the recompilation grace) and lasts `FRAMES × period`.
