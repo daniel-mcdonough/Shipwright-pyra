@@ -472,7 +472,33 @@ struct InterpolateCtx {
     Vec3s tmp_vec3s;
     MtxF actor_mtx;
 
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipInterp=3 (§8.36): the walk writes every replacement here instead of into
+    // the map, so the map is never built, copied or searched. A global, so the stores stay.
+    static inline MtxF probe_scratch;
+    bool probe_no_map = false;
+#endif
+
+    // LeanInterpMap=2 (§8.36): nodes extracted from the previous tick's maps, reused here instead of
+    // allocating. A recycled node holds a stale matrix; every caller of new_replacement writes all 16
+    // floats (interpolate_mtxf, SkinMatrix_MtxFMtxFMult), so none of it survives.
+    vector<unordered_map<Mtx*, MtxF>::node_type>* spare_nodes = nullptr;
+
     MtxF* new_replacement(Mtx* addr) {
+#ifdef SOH_BENCHMARK
+        if (probe_no_map) {
+            return &probe_scratch;
+        }
+#endif
+        if (spare_nodes != nullptr && !spare_nodes->empty()) {
+            if (auto it = mtx_replacements.find(addr); it != mtx_replacements.end()) {
+                return &it->second;
+            }
+            auto node = std::move(spare_nodes->back());
+            spare_nodes->pop_back();
+            node.key() = addr;
+            return &mtx_replacements.insert(std::move(node)).position->second;
+        }
         return &mtx_replacements[addr];
     }
 
@@ -726,6 +752,14 @@ struct InterpolateCtx {
 
 } // anonymous namespace
 
+// LeanInterpMap=2 (§8.36): maps and nodes handed back after the frames that used them were drawn.
+// Bounded, so a scene with an unusual burst of matrices does not pin its peak forever.
+static bool recycle_maps;
+static constexpr size_t kMaxSpareNodes = 4096;
+static constexpr size_t kMaxSpareMaps = 4;
+static vector<unordered_map<Mtx*, MtxF>> spare_maps;
+static vector<unordered_map<Mtx*, MtxF>::node_type> spare_nodes;
+
 #ifdef SOH_BENCHMARK
 uint64_t gBenchInterpCompared;
 uint64_t gBenchInterpMismatch;
@@ -742,32 +776,109 @@ unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step) {
     InterpolateCtx ctx;
     ctx.step = step;
     ctx.w = 1.0f - step;
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipInterp=3 (§8.36): walk as usual, but into a scratch matrix, and hand back no
+    // replacements. Against mode 0 it prices the replacement map: building it, copying it out, and
+    // the interpreter's hits. Pixel-exact only in a frozen fixture, like modes 1 and 2.
+    if (CVarGetInteger("gSettings.ProbeSkipInterp", 0) == 3) {
+        ctx.probe_no_map = true;
+        if (active_stores == 2) {
+            ctx.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
+        } else {
+            ctx.interpolate_branch(std_recorder.previous_root, std_recorder.current_root);
+        }
+        return {};
+    }
+#endif
+    // gSettings.LeanInterpMap (§8.36). 1: reserve the map at the previous one's size, so it is not
+    // rehashed as it grows, and move it out instead of copying it (a member of a local is not moved
+    // implicitly) - the same entries, half the allocations. 2: also reuse the previous tick's maps
+    // and their nodes (FrameInterpolation_RecycleMaps) - the same entries, no allocations. 3
+    // (benchmark builds): mode 2, plus a map built the original way, compared entry by entry.
+    static size_t last_size;
+    int lean_map = CVarGetInteger("gSettings.LeanInterpMap", 0);
+#ifndef SOH_BENCHMARK
+    lean_map = lean_map == 3 ? 2 : lean_map;
+#endif
+    recycle_maps = lean_map >= 2;
+    if (recycle_maps) {
+        if (!spare_maps.empty()) {
+            ctx.mtx_replacements = std::move(spare_maps.back());
+            spare_maps.pop_back();
+        }
+        ctx.spare_nodes = &spare_nodes;
+    }
+    if (lean_map != 0) {
+        ctx.mtx_replacements.reserve(last_size);
+    }
     if (active_stores == 2) {
         ctx.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
-        return ctx.mtx_replacements;
+    } else {
+        ctx.interpolate_branch(std_recorder.previous_root, std_recorder.current_root);
     }
-    ctx.interpolate_branch(std_recorder.previous_root, std_recorder.current_root);
 #ifdef SOH_BENCHMARK
     // LeanInterp=2: walk the pmr recording too and compare the two replacement maps entry by entry.
-    // The original's map is the one used.
-    if (active_stores == 3) {
-        InterpolateCtx lean;
-        lean.step = step;
-        lean.w = 1.0f - step;
-        lean.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
-        gBenchInterpCompared += ctx.mtx_replacements.size();
-        if (lean.mtx_replacements.size() != ctx.mtx_replacements.size()) {
+    // LeanInterpMap=3: walk the same recording again into a fresh map and compare it with the
+    // recycled one. Either way the first map is the one used. gSettings.ProbeInterpCorrupt=2 is the
+    // positive control for the second: one entry of the recycled map is perturbed for the compare and
+    // restored after it, so exactly one mismatch per interpolated frame must show.
+    if (active_stores == 3 || lean_map == 3) {
+        InterpolateCtx other;
+        other.step = step;
+        other.w = 1.0f - step;
+        if (active_stores == 3) {
+            other.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
+        } else if (active_stores == 2) {
+            other.interpolate_branch(pmr_recorder.previous_root, pmr_recorder.current_root);
+        } else {
+            other.interpolate_branch(std_recorder.previous_root, std_recorder.current_root);
+        }
+        auto& used = ctx.mtx_replacements;
+        MtxF saved{};
+        MtxF* perturbed = nullptr;
+        if (lean_map == 3 && CVarGetInteger("gSettings.ProbeInterpCorrupt", 0) == 2 && !used.empty()) {
+            perturbed = &used.begin()->second;
+            saved = *perturbed;
+            perturbed->mf[0][0] += 1.0f;
+        }
+        gBenchInterpCompared += used.size();
+        if (other.mtx_replacements.size() != used.size()) {
             gBenchInterpMismatch++;
         }
-        for (auto& [dest, mf] : ctx.mtx_replacements) {
-            auto it = lean.mtx_replacements.find(dest);
-            if (it == lean.mtx_replacements.end() || memcmp(&it->second, &mf, sizeof(mf)) != 0) {
+        for (auto& [dest, mf] : used) {
+            auto it = other.mtx_replacements.find(dest);
+            if (it == other.mtx_replacements.end() || memcmp(&it->second, &mf, sizeof(mf)) != 0) {
                 gBenchInterpMismatch++;
             }
         }
+        if (perturbed != nullptr) {
+            *perturbed = saved;
+        }
     }
 #endif
+    if (lean_map != 0) {
+        last_size = ctx.mtx_replacements.size();
+        return std::move(ctx.mtx_replacements);
+    }
     return ctx.mtx_replacements;
+}
+
+void FrameInterpolation_RecycleMaps(std::vector<std::unordered_map<Mtx*, MtxF>>& maps) {
+    if (!recycle_maps) {
+        return;
+    }
+    for (auto& m : maps) {
+        if (m.empty()) {
+            continue; // a frame that did not interpolate: a default map, which never allocated
+        }
+        while (!m.empty() && spare_nodes.size() < kMaxSpareNodes) {
+            spare_nodes.push_back(m.extract(m.begin()));
+        }
+        m.clear();
+        if (spare_maps.size() < kMaxSpareMaps) {
+            spare_maps.push_back(std::move(m)); // keeps its bucket array
+        }
+    }
 }
 
 void FrameInterpolation_StartRecord(void) {

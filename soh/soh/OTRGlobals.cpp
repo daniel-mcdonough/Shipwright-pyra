@@ -1854,6 +1854,7 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     }
 
     RunCommands(commands, mtx_replacements);
+    FrameInterpolation_RecycleMaps(mtx_replacements);
 #ifdef SOH_BENCHMARK
     Benchmark_SplitMark(SPLIT_RENDER_END, (int)mtx_replacements.size());
 #endif

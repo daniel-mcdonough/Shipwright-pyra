@@ -356,6 +356,8 @@ struct Segment {
     // The render thread's own CPU time inside the timed window, summed like swapMicros. Set
     // against mean_us it says how much of the window the thread was actually running.
     uint64_t windowCpuMicros = 0;
+    // Of that, the backend's end of frame and the swap (gBenchEofCpuMicros, §8.36).
+    uint64_t eofCpuMicros = 0;
     // Thread and process CPU time, and wall time, at the segment's first and last measured frame.
     // Over the same span these give the on-CPU share of the whole frame period, outside the
     // window included; the process figure folds in audio and every other thread.
@@ -730,9 +732,10 @@ void WriteResults() {
             const double windowUs = PerFrame(seg, seg.windowCpuMicros);
             const double meanUs = MeanMicros(seg.frameMicros);
             snprintf(line, sizeof(line),
-                     "BENCH oncpu %zu thread_us=%.1f thread_pct=%.1f window_us=%.1f window_pct=%.1f proc_pct=%.1f\n",
+                     "BENCH oncpu %zu thread_us=%.1f thread_pct=%.1f window_us=%.1f window_pct=%.1f proc_pct=%.1f "
+                     "eof_cpu_us=%.1f\n",
                      i, threadPct / 100.0 * PerFrame(seg, seg.periodMicros), threadPct, windowUs,
-                     meanUs > 0.0 ? 100.0 * windowUs / meanUs : 0.0, procPct);
+                     meanUs > 0.0 ? 100.0 * windowUs / meanUs : 0.0, procPct, PerFrame(seg, seg.eofCpuMicros));
             text += line;
         }
     }
@@ -1172,6 +1175,7 @@ extern "C" void Benchmark_FrameBegin(void) {
     }
     memset(gBenchCounters, 0, sizeof(gBenchCounters));
     gBenchSwapMicros = 0;
+    gBenchEofCpuMicros = 0;
     gBenchFinishMicros = 0;
     if (gCfg.uncap && gWnd != nullptr) {
         gWnd->SetTargetFps(gCfg.targetFps);
@@ -1328,6 +1332,7 @@ extern "C" void Benchmark_FrameEnd(void) {
             gRunSegments.back().finishMicros += gBenchFinishMicros;
             gRunSegments.back().periodMicros += gPeriodMicros;
             gRunSegments.back().windowCpuMicros += windowCpu;
+            gRunSegments.back().eofCpuMicros += gBenchEofCpuMicros;
             if (gPhaseFrames == 0) {
                 gRunSegments.back().threadCpuStart = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
                 gRunSegments.back().procCpuStart = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);

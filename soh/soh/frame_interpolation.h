@@ -5,8 +5,12 @@
 #ifdef __cplusplus
 
 #include <unordered_map>
+#include <vector>
 
 std::unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float step);
+
+// Hands the tick's maps back once their frames are drawn, for LeanInterpMap=2 to reuse (§8.36).
+void FrameInterpolation_RecycleMaps(std::vector<std::unordered_map<Mtx*, MtxF>>& maps);
 
 #ifdef SOH_BENCHMARK
 // Recording work since launch, monotonic (§8.29): child nodes opened and ops appended. Recording

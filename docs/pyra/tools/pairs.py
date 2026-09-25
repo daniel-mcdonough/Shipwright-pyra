@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Paired A/B stats from a bench run.log: render-thread CPU, period, window, the window's own CPU
-# time (oncpu window_us: the rest of the window is the thread blocked) and swap. Segments pair as (0,1),(2,3)...
+# time (oncpu window_us: the rest of the window is the thread blocked), swap, and the CPU time of
+# the end of frame and swap (oncpu eof_cpu_us, §8.36; nan in older logs). Segments pair as (0,1),(2,3)...
 # A pair is dropped if either segment left the pin: 1250 MHz, or the clock given as a third argument.
 # Pass 1000 to analyse the pairs pyra-thermal capped whole (TESTING.md trap 14): usage run.log <arm A> [MHz]
 import re, sys, math
@@ -33,13 +34,14 @@ for i in range(0, max(seg) + 1, 2):
                       ('period_us', lambda s: float(s['segment']['period_us'])),
                       ('window_us', lambda s: float(s['segment']['mean_us'])),
                       ('win_cpu_us', lambda s: float(s['oncpu']['window_us'])),
-                      ('swap_us', lambda s: float(s['segment']['swap_us']))):
+                      ('swap_us', lambda s: float(s['segment']['swap_us'])),
+                      ('eof_cpu_us', lambda s: float(s['oncpu'].get('eof_cpu_us', 'nan')))):
         d[name] = (get(A), get(B))
     pairs.append(d)
     print(f"pair {i//2}: arms A={A['segment']['arm']} B={B['segment']['arm']} temp {A['segment']['temp_c']} / {B['segment']['temp_c']}  "
           + '  '.join(f"{k} {v[1]-v[0]:+.0f}" for k, v in d.items()))
 n = len(pairs)
-for k in ('thread_us', 'period_us', 'window_us', 'win_cpu_us', 'swap_us'):
+for k in ('thread_us', 'period_us', 'window_us', 'win_cpu_us', 'swap_us', 'eof_cpu_us'):
     ds = [p[k][1] - p[k][0] for p in pairs]; a = sum(p[k][0] for p in pairs) / n
     mu = sum(ds) / n; sd = math.sqrt(sum((x - mu) ** 2 for x in ds) / (n - 1)) if n > 1 else float('nan')
     se = sd / math.sqrt(n)
