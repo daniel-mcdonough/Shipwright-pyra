@@ -12,10 +12,14 @@ benchmark on it unless the owner has said so in the current session.
 ## 0. Session setup
 
 ```sh
-export SSH_AUTH_SOCK="$(ls -t ~/.ssh/agent/s.*.agent.* | head -1)"
-export PYRA_HOST=pyra@pyra.local
+. ~/git/dragonbox-pyra/pyra-local.conf    # finds the agent holding the Pyra's key, exports PYRA_HOST
 export PYRA_DIR=/home/pyra/soh-bench2
 ```
+
+Several ssh agents run at once and only one holds the key the Pyra accepts. The old one-liner here,
+`ls -t ~/.ssh/agent/s.*.agent.* | head -1`, picked the newest socket, and on 2026-09-25 that was the
+wrong one: `Permission denied (publickey,password)` is this, not a missing key. `pyra-local.conf`
+(gitignored, in the hardware repo) picks the agent by the key's fingerprint and prefers USB ethernet.
 
 `pyra.local` — the `<pyra-ip>` in the hardware repo is stale. `bench.sh` defaults `PYRA_DIR` to
 `~/soh-bench2` since 2026-09-24; before that it defaulted to `~/soh`, a stale binary with no
