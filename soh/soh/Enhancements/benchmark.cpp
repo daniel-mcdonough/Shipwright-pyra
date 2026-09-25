@@ -370,6 +370,8 @@ struct Segment {
     uint64_t interpCmpStart = 0, interpCmpEnd = 0, interpBadStart = 0, interpBadEnd = 0;
     // gBenchGlFn at the same two points: calls per GL entry point per frame period.
     std::vector<uint64_t> glFnStart, glFnEnd;
+    // gBenchBatchCause at the same two points: draws by the set of state changes behind them (§8.37).
+    std::vector<uint64_t> batchStart, batchEnd;
     // allocshim's counters for the render thread at the same two points (§8.31).
     uint64_t allocStart[kAllocFields] = {}, allocEnd[kAllocFields] = {};
     bool haveAlloc = false;
@@ -715,6 +717,52 @@ void WriteResults() {
             text += line;
             for (const auto& [n, f] : fns) {
                 snprintf(line, sizeof(line), " %s=%.1f", gBenchGlFnNames[f], n);
+                text += line;
+            }
+            text += "\n";
+        }
+        // Draws per frame period by why each was split from the previous batch (§8.37). `any` counts a
+        // cause wherever it appears; `alone` where it was the only one, which for tex_same (a reload of
+        // the texture already bound, NEXT.md item H) is the draws a lazier flush would remove. Then
+        // the commonest sets, largest first.
+        if (seg.batchEnd.size() == (size_t)BENCH_BRK_SETS && seg.batchStart.size() == seg.batchEnd.size() &&
+            seg.frameMicros.size() > 1) {
+            const double periods1 = (double)(seg.frameMicros.size() - 1);
+            double any[BENCH_BRK_BITS] = {}, alone[BENCH_BRK_BITS] = {}, total = 0.0;
+            std::vector<std::pair<double, int>> sets;
+            for (int m = 0; m < BENCH_BRK_SETS; m++) {
+                const double n = (double)(seg.batchEnd[m] - seg.batchStart[m]) / periods1;
+                if (n <= 0.0) {
+                    continue;
+                }
+                total += n;
+                sets.emplace_back(n, m);
+                for (int b = 0; b < BENCH_BRK_BITS; b++) {
+                    if (m & (1 << b)) {
+                        any[b] += n;
+                        if (m == (1 << b)) {
+                            alone[b] += n;
+                        }
+                    }
+                }
+            }
+            std::sort(sets.begin(), sets.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            snprintf(line, sizeof(line), "BENCH batch %zu draws=%.1f", i, total);
+            text += line;
+            for (int b = 0; b < BENCH_BRK_BITS; b++) {
+                snprintf(line, sizeof(line), " %s=%.1f/%.1f", gBenchBatchCauseNames[b], any[b], alone[b]);
+                text += line;
+            }
+            text += " sets:";
+            for (size_t k = 0; k < sets.size() && k < 16; k++) {
+                std::string name;
+                for (int b = 0; b < BENCH_BRK_BITS; b++) {
+                    if (sets[k].second & (1 << b)) {
+                        name += name.empty() ? "" : "+";
+                        name += gBenchBatchCauseNames[b];
+                    }
+                }
+                snprintf(line, sizeof(line), " %s=%.1f", name.empty() ? "none" : name.c_str(), sets[k].first);
                 text += line;
             }
             text += "\n";
@@ -1343,6 +1391,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpCmpStart = gBenchInterpCompared;
                 gRunSegments.back().interpBadStart = gBenchInterpMismatch;
                 gRunSegments.back().glFnStart.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
+                gRunSegments.back().batchStart.assign(gBenchBatchCause, gBenchBatchCause + BENCH_BRK_SETS);
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
                 gRunSegments.back().fbStartH = OTRGetGameRenderHeight();
                 gRunSegments.back().lookupsStart = Ship::BenchLookupsThisThread();
@@ -1380,6 +1429,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpCmpEnd = gBenchInterpCompared;
                 gRunSegments.back().interpBadEnd = gBenchInterpMismatch;
                 gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
+                gRunSegments.back().batchEnd.assign(gBenchBatchCause, gBenchBatchCause + BENCH_BRK_SETS);
                 gRunSegments.back().lookupsEnd = Ship::BenchLookupsThisThread();
                 gRunSegments.back().cvarEnd = Ship::BenchLookupsThisThread(Ship::BENCH_LOOKUP_CVAR);
                 gRunSegments.back().cvarWritesEnd = Ship::gBenchCVarChanges;
