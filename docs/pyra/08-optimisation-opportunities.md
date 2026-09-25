@@ -2884,9 +2884,13 @@ backend forgets its binding shadow at every frame start, so ImGui's binds read a
 - **Picture:** in-process dumps (segments 0 1 1 0), frames 301 and 302: **0 pixels** between the arms at
   the Market, and 0 at Hyrule Field with the sky masked (rows 216 and up). Frame 301 against 302 differs
   by the Market's own 20-pixel cycle in every arm.
-- **Not the default yet.** It relies on the backend's binding shadow across draws, i.e. it is stateful:
-  the ladder wants a real-play A/B with the owner playing (framebuffer-texture effects, the pause menu,
-  ImGui open) before it ships. Default 0.
+- **Real play** (it trusts the backend's binding shadow across draws, so it is stateful): watch mode,
+  `LeanTexReuse` 0,1, the owner playing across seven scenes with the pause menu, framebuffer effects and
+  the ImGui menu. 38 blocks, 16 pairs (3 dropped across scene changes, 0 off the pin): +85 µs (t 0.17,
+  MDE 1054), i.e. nothing a 1% effect could show. The owner saw nothing wrong; the log held only the
+  known noise (TESTING.md trap 11) and six PVR framebuffer-completeness messages at framebuffer creation.
+- **Default 1** since then. With the CVar absent from the config, one Market segment read 228 draws,
+  `tex_same` 0 and 14,067 µs of window CPU at 1000 MHz.
 
 ### What this leaves
 

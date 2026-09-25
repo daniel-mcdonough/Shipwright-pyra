@@ -354,8 +354,9 @@ BENCH period mde_us=...
   previous batch. `cause=any/alone` per cause, then the commonest sets. `tex_same` is a reload of the
   texture already bound (NEXT.md item H); `other` should read ~1 (the frame's last draw). If `other`
   reads high, a flush site is marking after it flushes.
-- `gSettings.LeanTexReuse` (§8.37, default 0 until real play): 1 keeps the batch open on a same-texture
-  reload. The Market's draws go 261 → 228 and `tex_same` reads 0.
+- **Since 2026-09-25 night `gSettings.LeanTexReuse` defaults to 1** (§8.37): no batch split on a
+  same-texture reload. The frozen Market draws **228** per frame, not 261, and `tex_same` reads 0. Set it
+  to 0 only to A/B against the original.
 - `BENCH lookup <seg>` (§8.31): `calls` is resource lookups by name or CRC made by the render thread,
   counted once each at their outermost entry (a `ResourceMgr_*` helper, a bridge function or a
   `ResourceManager` method). `ResourceMgr_OTRSigCheck` is scoped too and is a prefix check, not a
