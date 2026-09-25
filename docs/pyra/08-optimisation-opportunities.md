@@ -3098,3 +3098,103 @@ play.
 - Build the grouping (`gSettings.LeanGroup`, default 0) and A/B it. The estimate is 0.9-1.3 ms at the
   Market; if it lands well under 0.9 ms, the draw prices do not add up the way this section assumes.
 - Then the two-core design: GL at ~4.7 ms per Market frame (§8.36) is ~3.6 ms after grouping.
+
+## 8.41 Grouping by texture: −840 µs (−5.8%) of Market window CPU, ~10 µs per draw removed
+
+Measured 2026-09-25 evening, the device free for the session, both fixtures pinned at 1000 MHz, soaked to
+70 °C with `SOH_BENCH_WARMUP=2400`, the die let down to ~65 °C before each run. All 24 timed segments
+were on the pin; no pair was dropped.
+
+### The change: `gSettings.LeanGroup` (default 0)
+
+libultraship `4c2fbd4c`, GLES2 backend, only with `LeanGLState=3`. A draw whose state is groupable (depth
+test on with `GL_LESS`, depth writes, no polygon offset, no blend) is not drawn: its vertices are copied
+into a bucket keyed by program, the texture ids it reads (sampled, or read for the size and filtering
+uniforms, in the pairs `SetPerDrawUniforms` reads them) and the frame uniforms the program holds. Anything
+that could change what a deferred draw sees, or that needs it drawn, replays the buckets first in
+first-appearance order, one `glDrawArrays(first, count)` per bucket:
+- a draw that is not groupable;
+- a sampler change, texture upload or texture delete touching a texture a bucket reads;
+- viewport, scissor, framebuffer bind, clear, copy, resolve, read-back, depth read, depth discard;
+- shader-cache clear, framebuffer creation or resize, frame start and end;
+- the end of the interpreter's frame, through a new `FlushDeferredDraws` hook, before ImGui draws.
+
+Three design points decided whether it pays or is correct:
+
+- **One arena per run.** Every bucket's vertices live in one array, in chunks that start on a whole vertex
+  of the bucket program's stride, so a bucket is drawn with a `first` from the arena's start and the
+  attribute pointers do not move between buckets (§8.40: ~2.4 µs per changed pointer). A bucket that
+  outgrows its chunk grows in place if its chunk is the arena's last, else takes a new chunk twice as
+  large (one more draw). With 2048-float first chunks 10 of 76 Market buckets split; with 8192 none do.
+- **Lazy state.** In this mode binds, program switches and blend are applied at the draw, against a
+  shadow of what the context holds. Depth and polygon-offset state are computed by the ungrouped path's
+  own rules, quirks included (the depth function follows the decal flag only when test or mask change),
+  so every draw gets the state it would have had. The frame-count and noise-scale uniforms are the ones
+  the program would hold from its last `LoadShader`, not the current frame's.
+- **Mode switches between frames** bring the context to what the path being entered assumes (binds,
+  program, blend), so the harness can alternate arms.
+
+### What it removes
+
+| per frame | Market, 0 → 1 | Hyrule Field, 0 → 1 |
+|---|---|---|
+| `glDrawArrays` | 228 → **145** | 155 → **140** |
+| draws deferred / buckets / replays | 159 / 76 / 12 | 48 / 33 / 13 |
+| `glBindTexture` | 225 → 143 | 167 → 155 (host) |
+| `glUniform2fv` | 85 → 49 | 71 → 64 (host) |
+| `glUseProgram` | 51 → 48 | 64 → 62 (host) |
+
+The prediction was ~143 at the Market (§8.40's `key_dup` 85). It came in at 145, from two more buckets than
+`BENCH group` counts, because the key here also holds the textures the uniforms read, and one more replay
+than there are runs. Host and device counts agree. Program switches barely fall. First-appearance
+order keeps each run's program sequence, so the ~1.3 µs per draw of program switches (§8.40) was never
+removable this way.
+
+### Frozen A/B, 6 pairs each, 1000 MHz
+
+| Δ, LeanGroup 1 − 0 | Market | Hyrule Field |
+|---|---|---|
+| **window CPU** (`win_cpu_us`) | **−840 µs (−5.8%), t −41.1, MDE 53** (A 14,391) | **−143 µs (−1.6%), t −8.9, MDE 41** (A 9,041) |
+| render-thread CPU | −805 µs (−4.7%), t −34.5, MDE 60 | −140 µs (−1.3%), t −11.7, MDE 31 |
+| frame period | −1123 µs (−4.5%), t −12.2, MDE 237 | −231 µs (−1.3%), t −3.5, MDE 168 |
+| swap | −89 µs, t −5.0, MDE 46 | −6 µs, t −0.1, MDE 131 |
+
+- **Each removed draw saves ~10 µs at the Market (840 / 83) and ~9.5 µs at Hyrule Field (143 / 15).**
+  §8.40 put the conservative figure at ~11 µs (call, texture bind, uniforms), less the extra copy of every
+  deferred vertex, which this build adds. The Market came in just under §8.40's 0.9 ms low end, not well
+  under it: **the §8.37-8.40 prices add, to within ~10%.** The 1.3 ms high end assumed a merged draw sheds
+  the whole 15 µs, program switches included; first-appearance order keeps those (above).
+
+### Pixels
+
+In-process dumps (`SOH_BENCH_DUMP`, frames 301-302 and 304-305, two pairs each), on the device:
+
+- **Market: identical.** Each arm-1 frame equals an arm-0 frame exactly; which one depends on the
+  segment's interpolation phase, as always (TESTING.md).
+- **Hyrule Field: 26 pixels, ±1 level, on alternate frames only, arm 1 only**, below the sky mask. 25
+  are on the horizon band (rows 210-212 of 360, just under the sky, where distant fogged terrain meets
+  it) and one on Link's boot. Arm 0 showed the other variant in 8 of 8 frames; arm 1 showed this one in
+  4 of 8, and those frames matched each other exactly. *Reasoning, not measured:* two near-coplanar
+  surfaces of almost the same colour tie exactly in depth only on some interpolated frames. Grouping
+  moved the later one earlier, so under `GL_LESS` it wins the tie. This is the one difference
+  reordering was expected to cause (§8.40).
+- The host drew both fixtures identically below the sky.
+
+### Real play
+
+Watch mode at 1000 MHz, the owner playing: Kokiri Forest, houses and shop (pre-rendered), the Lost
+Woods, Hyrule Field, the pause menu and its sub-screens, ImGui menus. **Nothing visible: no flicker, no
+wrong or missing textures, pause menu and ImGui correct.** No speed result: 24 pairs, 6 dropped at scene
+changes, window CPU +102 µs (t 0.42, MDE 509), render-thread CPU +210 µs (t 0.74, MDE 592). Blocks
+differ by ±600 µs by content; the frozen effect (1.3-5.8%) is under what 24 pairs resolve.
+`watchpairs.py` now takes the pin clock as a third argument; it had 1250 MHz hard-coded and dropped
+every pair of this run.
+
+### What this leaves
+
+- **Whether to make `LeanGroup=1` the GLES2 default.** It is not exact: depth ties can resolve the
+  other way, visibly only at ±1 level so far. Every earlier default was exact or pixel-identical.
+- Program switches are the part of a draw grouping did not take (~48 per Market frame, ~5.8 µs each at
+  the next draw). Sorting a run's buckets by program would take some, at the price of more reordering.
+  Not measured.
+- The two-core design: GL was ~4.7 ms per Market frame (§8.36), ~3.9 ms with grouping.

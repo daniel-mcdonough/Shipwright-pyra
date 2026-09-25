@@ -169,8 +169,9 @@ Keep `SOH_BENCH_UNCAP=0` — uncapped play runs the game too fast — and `PYRA_
 the cap the frame period is the cap, so compare **`thread_cpu_us`** (render-thread CPU per frame)
 across adjacent ABBA pairs; blocks differ a lot in content, so it takes ~50 pairs (~17 minutes) to
 resolve a ~10% effect. Every block line carries `scene=` and `cpu_min_mhz`/`cpu_max_mhz`.
-`python3 docs/pyra/tools/watchpairs.py blocks.txt <arm A value>` pairs them, dropping pairs off the
-pin or across a scene change, and prints the delta with t and MDE (§8.30).
+`python3 docs/pyra/tools/watchpairs.py blocks.txt <arm A value> [MHz]` pairs them, dropping pairs off the
+pin (1250 MHz unless given — **pass 1000 for a `PYRA_PIN_FREQ=1000000` run**, or every pair is dropped, as
+in §8.41's first pass) or across a scene change, and prints the delta with t and MDE (§8.30).
 
 ### Author a new fixture — needs the owner holding the device
 
@@ -373,6 +374,15 @@ BENCH period mde_us=...
   `draws` in them; `tex_dup`/`key_dup` the draws whose texture set / texture set and program an earlier
   draw of the run had; `tex_chg` → `tex_chg_sorted` texture-set changes inside runs as issued and if
   sorted. Frozen Market: 11, 159, 86, 85, 148 → 62. The host's native build gives the same numbers.
+  `lg_deferred`/`lg_draws`/`lg_flushes`/`lg_buckets` (§8.41) are what `gSettings.LeanGroup=1` did: draws
+  deferred, `glDrawArrays` its replays issued, replays of a non-empty set of buckets, buckets. All 0 with
+  it off. Frozen Market: 159, 76, 12, 76; `lg_draws` above `lg_buckets` means buckets outgrew their
+  chunks. **With it on, `draws` on the work line still counts `DrawTriangles` calls; read real draws
+  from `glDrawArrays` on the glfn line** (Market 228 → 145).
+- `gSettings.LeanGroup` (§8.41, default 0, GLES2 with `LeanGLState=3`): deferred, grouped opaque draws.
+  **Not exact**: where two opaque surfaces tie in depth the other may win (Hyrule Field: 26 pixels at ±1
+  level on alternate frames). Compare dumps at both frame phases and expect that, not zero. The `.vbo`
+  trace stays in `DrawTriangles` order, so `vbocmp.py` does not see the reordering.
 - `BENCH lookup <seg>` (§8.31): `calls` is resource lookups by name or CRC made by the render thread,
   counted once each at their outermost entry (a `ResourceMgr_*` helper, a bridge function or a
   `ResourceManager` method). `ResourceMgr_OTRSigCheck` is scoped too and is a prefix check, not a

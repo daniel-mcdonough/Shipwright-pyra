@@ -3,7 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-25 (afternoon)**, after §8.40: **grouping by texture is the next build.** At
+Last revised **2026-09-25 (evening)**, after §8.41: **grouping by texture is built and measured.**
+`gSettings.LeanGroup=1` (GLES2 backend, default 0) defers opaque, depth-written, non-decal draws into
+buckets by program and textures and replays each run in one arena: Market draws 228 → 145, window CPU
+**−840 µs (−5.8%, t −41.1, MDE 53)**; Hyrule Field 155 → 140, −143 µs (−1.6%, t −8.9, MDE 41). That is
+~10 µs per removed draw against §8.40's conservative ~11: the draw prices add. Market pixel-identical;
+Hyrule Field 26 pixels at ±1 level on alternate frames (depth ties on the horizon band and Link's boot).
+Clean in real play (nothing visible; speed unresolved, MDE ~500 µs). **Open: whether to default it.**
+Before that, §8.40: **grouping by texture was the next build.** At
 the Market 159 of 228 draws sit in runs of consecutive opaque, depth-written, non-decal draws, and 85 of
 those have the same texture set and program as an earlier draw of their run (`BENCH group`); sorting
 would cut texture changes in runs from 148 to 62. Estimated 0.9-1.3 ms of the ~14.1 ms window CPU
@@ -229,29 +236,19 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       Market.** 159 of 228 draws are in 11 runs of opaque, depth-written, non-decal draws; 85 share
       texture set and program with an earlier draw of the run; texture changes in runs 148 → 62 if
       sorted. Hyrule Field: 48 draws in runs, 15 could merge. Estimate 0.9-1.3 ms Market, ~0.2 ms Field.
-    - **Build the grouping: `gSettings.LeanGroup`, default 0, in the GLES2 backend.** `DrawTriangles` on a
-      groupable state (depth test and write, no decal, no blend) appends its vertices to a bucket keyed by
-      (texture ids per unit, program); a non-groupable draw, and every call that could change what an
-      earlier draw sees (sampler parameters, texture upload into a live id, framebuffer switch, clear,
-      copy, viewport, scissor, end of frame, ImGui), replays the buckets in first-appearance order and
-      re-establishes the shadow. Check `BENCH group`'s numbers become the draw count (Market 228 → ~143,
-      Hyrule Field ~155 → ~140).
-      Two things decide whether it pays, both from §8.40's prices:
-      - **The vertices must be copied**: the interpreter reuses `mBufVbo` as soon as `DrawTriangles`
-        returns, and client arrays point straight at it. Copy a deferred batch into run storage.
-      - **Keep the attribute pointers still across the replay.** A pointer that changes costs ~2.4 µs
-        at the next draw (mode 10) and an unchanged one nothing (mode 9). Per-bucket arrays would move
-        the base at every bucket. Lay the run's buckets out in one array in replay order, point once
-        per program (stride), and draw each bucket with `glDrawArrays(first, count)`.
-      Count real `glDrawArrays` for the draw count, not `DrawTriangles` calls. The `SOH_BENCH_DUMP`
-      `.vbo` trace is written in `DrawTriangles` order, so `vbocmp.py` will show reordering as
-      differences: compare pixels (`dumpcmp.py`), and read the `.vbo` diff only to locate them.
-      Validate: frozen A/B at both fixtures, in-process dumps at both (depth ties are the one expected
-      source of difference; look at where any differing pixels are), then real play with the owner, in
-      scenes with framebuffer effects and the pause menu. If the Market saves well under 0.9 ms, the
-      draw prices of §8.37-8.40 do not add the way §8.40 assumes; say so.
+    - ~~**Build the grouping: `gSettings.LeanGroup`, default 0, in the GLES2 backend.**~~ **Built and
+      measured (§8.41).** Market 228 → 145 draws, window CPU −840 µs (−5.8%, t −41.1, MDE 53); Hyrule
+      Field 155 → 140, −143 µs (−1.6%, t −8.9, MDE 41); ~10 µs per removed draw, so §8.37-8.40's prices
+      add. Market pixel-identical in-process; Hyrule Field 26 pixels at ±1 level from depth ties; clean
+      in real play with the owner (pause menu, ImGui, pre-rendered rooms), speed unresolved there.
+    - **Decide `LeanGroup`'s default.** It is the first candidate that is not exact: depth ties can
+      resolve the other way (±1 level so far). If defaulted, check it took effect with `bench.sh run`
+      and a draw count of ~145 at the Market (TESTING.md §6).
+    - **Maybe: sort a run's buckets by program too.** Grouping kept 48 of 51 program switches (~5.8 µs
+      each, §8.40); ordering buckets by program within a run would take some at the price of more
+      reordering. Count first: how many switches a program-major order would leave.
     - **Then the two-core design.** §8.36's ~4.7 ms of GL per Market frame, less item H's ~0.16 ms,
-      less whatever grouping takes (~0.9-1.3 ms estimated).
+      less grouping's ~0.84 ms (§8.41): ~3.7 ms.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
       on 2026-09-24 and took over the desktop at 1920×1080 — check before the next host run.
