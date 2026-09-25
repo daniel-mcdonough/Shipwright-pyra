@@ -2499,6 +2499,24 @@ between one and two frames, which is why its median sits above its mean.
   (display-list decode, software T&L, the interpolation replay) against GL submission and the
   swap. That depends on how much of R is GL-side, which this instrument does not split.
 
-**Not measured.** Real play with the player moving or fighting (L should rise; `SOH_BENCH_WATCH=1
-SOH_BENCH_SPLIT=100` measures it with the controls in hand); clocks other than 1250 MHz; the cost
-of the hand-off itself.
+### Real play: logic does not rise
+
+`PYRA_WATCH_PIN=1 bench.sh watch start SOH_BENCH_UNCAP=0 SOH_BENCH_SPLIT=100`, pinned at 1250 MHz, with
+18 minutes of hand play on the debug save: 221 windows across thirteen scenes, including warps,
+Dodongo's Cavern, Spirit Temple and Jabu-Jabu. 201 windows ran at 1.5 frames per tick. The other 19 ran at
+1.0 (30 Hz ticks with R_UPDATE_RATE 2, presumably menus and cutscenes; share 18.5%, same as the rest).
+
+| | L ms/tick | R ms/frame | L share |
+|---|---|---|---|
+| all play, 1.5 frames per tick | **2.64** mean; heaviest window 3.95, heaviest window p95 4.63 | 5–13 | **18.8%** (p10 15.4, median 19.4, p90 22.3; range 10.4–26.5) |
+| Kokiri Forest (0x55), the heaviest scene | 3.69 | 7.99 | 23.5% |
+| Spirit Temple (0x06), the lightest share | 2.18 | 8.99 | 13.9% |
+
+**Playing did not raise logic above the fixtures. It came out lower**: 2.6 ms mean against the
+Market's 3.4, because the Market's crowd costs more than one player moving and fighting. The
+fixture numbers above are therefore representative. At a median share of 19% the CPU-only
+ceiling is 1.24× (1.37× in the heaviest window), before the swap and GPU wait take their part.
+The main thread was on-CPU for only 28% of the time during play. Five-second windows smooth out
+single-tick spikes, but the per-window p95 never exceeded 4.63 ms, so no spike was large either.
+
+**Not measured.** Clocks other than 1250 MHz; the cost of the hand-off itself.
