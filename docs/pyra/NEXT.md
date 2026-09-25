@@ -3,7 +3,15 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-25 (afternoon)**, after §8.35: **client arrays (`LeanGLState=3`) hold at Kokiri
+Last revised **2026-09-25 (evening)**, after §8.36: **the draw calls are a quarter of the main thread.**
+Skipping `glDrawArrays` alone (`gSettings.ProbeSkipDraw=1`) is −4125 µs of render-thread CPU at the
+Market (−24.3%, t −340, MDE 31), ~15.8 µs per draw at 1000 MHz over 262 draws; the rest of the per-draw
+GL state is ~260 µs and the flush plus swap ~285 µs of CPU (`eof_cpu_us`). So the render side's window
+CPU is ~1/3 GL (nearly all of it the draw calls) and ~2/3 interpreter. Also §8.36: the interpolation
+replacement map was being **copied** on return; `gSettings.LeanInterpMap=1` (now the default) moves it:
+−145 µs (−0.9%, t −8.6) Market, −37 µs (t −2.9) Hyrule Field, 0 pixels, heap allocations 291 → 178 per
+frame. Recycling its nodes too (mode 2, exact in motion, 67 per frame) bought nothing more measurable.
+Before that, §8.35: **client arrays (`LeanGLState=3`) hold at Kokiri
 in real play: −20.2% render-thread CPU (t −7.7, 14 pairs), −18.9% (t −9.0) inside five pre-rendered
 interiors**, no visible change there or in the pause or ImGui menus, and no per-frame resource loads
 from the backgrounds. No frozen fixture has a pre-rendered background (checked in `oot.o2r`).
@@ -156,11 +164,12 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       texture paths 441 (gone with `LeanTexLoad`, now the default). What is left after the two
       lookup changes is ~1550, 711 of them CVar keys. **With `LeanCVar` (§8.32): 291 per frame at
       the Market**, ~225 of them frame interpolation's replacement map.
-    - **The interpolation replacement map** (~225 allocations per frame, the largest block of
-      heap traffic left). Size it with a skip before building anything; a pre-reserved or
-      arena-backed map is the obvious candidate, and it has to stay exact in motion (§8.30's
-      entry-by-entry check). It is built outside the timed window: read the window's CPU time
-      (`pairs.py` `win_cpu_us`) as well, since cache traffic out there reaches it (§8.34).
+    - ~~**The interpolation replacement map**~~ **Done (§8.36).** Ceiling (`ProbeSkipInterp=3`, no map)
+      −370 µs (−2.1%, t −18.1) at the Market. Half the allocations were a copy on return;
+      `LeanInterpMap=1` (default) moves it: −145 µs Market, −37 µs Hyrule Field. Mode 2 recycles the
+      nodes (no map allocations left, exact in motion) and is no better. The ~210 µs left of the ceiling
+      is inserts and the interpreter's lookups; a flat table would change libultraship's interface.
+      Not worth it before the draw work below.
     - ~~**CVar reads without the key string**~~ **Done (§8.32): exact, default 1.** −257 µs (−1.5%)
       Market, −186 µs (−1.7%) Hyrule Field at 1000 MHz. §8.31's picture change was the camera
       override (TESTING.md trap 19), not the CVar code.
@@ -173,10 +182,18 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       camera fix still stand where they read identical: a flipped camera shows as a difference, it
       cannot hide one. Comparisons *across builds* (e.g. "within launch noise of the unmodified
       build") are not trustworthy; redo one only if something rests on it.
-    - **Split the render side before designing any two-core pipeline** (§8.33). Logic is 15–20% of
-      the main thread, so moving it to core 1 buys ~10% uncapped and nothing at the cap. The
-      render side is 7.7–13.2 ms per frame. The natural cut is the interpreter against GL
-      submission and the swap; count or skip-probe the GL side's share at the Market first.
+    - ~~**Split the render side**~~ **Done (§8.36).** At the Market the window's ~14.3 ms of CPU is
+      ~4.1 ms `glDrawArrays`, ~0.26 ms other per-draw GL, ~0.29 ms flush and swap, ~9.6 ms interpreter.
+      A GL thread would take ~4.7 ms off the main thread (~27%) before its hand-off cost; §8.33's logic
+      split takes 2.5–4 ms per tick. **Still no design**: first find out whether the draw cost can
+      simply be removed (next two items).
+    - **Price one draw call: per call, or per state change?** Add a `ProbeSkipDraw` mode that issues
+      each `glDrawArrays` twice. If the second call costs nearly 15.8 µs, the cost is per call and
+      fewer draws is the lever; if it is cheap, the cost is the driver validating state that changed,
+      and ordering draws by state is. Market and Hyrule Field (167 draws).
+    - **Count avoidable draws.** Count interpreter flushes by cause (texture load, combiner, other
+      mode, geometry mode, matrix, fill rect...) per frame at the Market, and item H's flushes on a
+      texture load that does not change the texture. At ~16 µs each, 30 avoidable draws are ~3%.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
       on 2026-09-24 and took over the desktop at 1920×1080 — check before the next host run.
@@ -257,7 +274,7 @@ In order:
 | **E** | **`GL_EXT_shader_framebuffer_fetch`** | unknown | Present, unexplored, and nearly free on a tile-based deferred renderer — `gpu-optimization.md` calls it the most interesting unexplored extension on the device. No Shipwright use case has been identified yet, which is the first thing to establish. Do not build machinery for it before finding one. |
 | **F** | **Present 640×360 and let the display controller scale** | unknown, ≤ the 3.4 ms of item 4 above | The game renders at 640×360 to `mGameFb` and then draws it as a 1280×720 quad. §8.7 calls that pass "inherent to the internal-resolution feature" — inherent to the *feature*, not to the hardware: the OMAP5 DSS can scale a plane in the display controller. It attacks the part of the swap that does not scale with pixels. Establish that a scaled plane is reachable through SDL/EGL on this stack **before** touching the renderer; if it is not, this is dead. |
 | **G** | ~~**One `glBufferData` per frame with offsets**~~ | **superseded (§8.24)** | Client-side arrays — report 5's best row — took the per-draw `glBufferData` out entirely: −13.4% at the Market, several times what this row estimated. Report 5's "within noise, needs no change" was wrong for this game. The single-upload variant is no longer worth building unless mode 3 fails in real play. |
-| **H** | **Count redundant batch splits on texture change** | unknown; a counter, not yet a change | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
+| **H** | **Count redundant batch splits on texture change** — **now first in line (§8.36: ~16 µs of CPU per draw)** | unknown; a counter, not yet a change | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
 
 ### Do not build
 

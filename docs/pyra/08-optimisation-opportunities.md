@@ -2647,3 +2647,145 @@ menu opened. 43 blocks, all on the pin; 7 pairs dropped for spanning a scene cha
 
 **A harness trap, again:** the game saved arm 0 into the config during watch mode, so the device booted
 with `LeanGLState=0` afterwards until it was put back (TESTING.md trap 17). It was put back.
+
+## 8.36 The replacement map was half a copy; the render side is one third GL, nearly all of it `glDrawArrays`
+
+Measured 2026-09-25 evening, the device free for the session, frozen fixtures pinned at 1000 MHz
+(`PYRA_PIN_FREQ=1000000`), soaked to 70 °C with `SOH_BENCH_WARMUP=2400`, the die let down to 65 °C
+before every run. Every segment of every run below was on the pin; no pair was dropped. Two tasks:
+the interpolation replacement map's heap traffic (§8.31-8.32), and splitting §8.33's render side
+into interpreter against GL.
+
+### The map: what allocates
+
+`FrameInterpolation_Interpolate` builds a `std::unordered_map<Mtx*, MtxF>` per interpolated frame
+(~165 entries at the Market; the `BENCH interp` line's `map=110` is averaged over all frames, one in
+three of which does not interpolate) and ends with `return ctx.mtx_replacements;`. A member of a local
+is not moved implicitly, so **the whole map was copied on the way out**: ~165 nodes built, ~165 more
+for the copy, the rehashes as it grew, then the original freed. `allocshim` at the Market, per frame:
+
+| | `operator new` per frame |
+|---|---|
+| defaults (§8.32) | 291.7 |
+| `gSettings.ProbeSkipInterp=3` (no map at all, below) | **67.0** |
+| `gSettings.LeanInterpMap=1` (reserve, move out) | 178.0 |
+| `gSettings.LeanInterpMap=2` (also reuse the previous tick's maps and nodes) | **67.0** |
+
+So the map was all 225 of the allocations §8.32 attributed to it, and the copy was half of them.
+
+### The ceiling: a skip
+
+`gSettings.ProbeSkipInterp=3` (benchmark builds) walks the recordings exactly as usual but writes every
+interpolated matrix into one scratch `MtxF` (a global, so the stores stay) and hands back an empty
+map. The map is never built, copied or searched; `mtx_repl` reads 0. Like modes 1 and 2 it is right
+only in a frozen fixture.
+
+| `ProbeSkipInterp` 0 → 3, Market, 6 pairs | Δ | t | MDE |
+|---|---|---|---|
+| render-thread CPU (A 17,251 µs) | **−370 µs (−2.1%)** | −18.1 | 52 |
+| period | −607 µs (−2.4%) | −6.1 | 255 |
+| window, render-thread CPU | −89 µs (−0.6%) | −4.8 | 48 |
+| swap | −15 µs | −0.8 | 50 |
+
+A quarter of the ceiling is inside the timed window: the interpreter's 233 replacement hits per
+frame, and the map's cache footprint (§8.34 showed traffic outside the window reaching it).
+
+### The change
+
+`gSettings.LeanInterpMap` (`soh/soh/frame_interpolation.cpp`):
+
+- **1** — reserve the map at the previous one's size and `return std::move(...)` it. The same entries
+  by construction; only the bucket count can differ, and the interpreter only calls `find`.
+- **2** — also reuse the maps and nodes of the previous tick: `Graph_ProcessGfxCommands` hands the
+  tick's maps back after drawing (`FrameInterpolation_RecycleMaps`), their nodes are extracted, and
+  `new_replacement` re-keys one (`node_type::key()`) instead of allocating. A recycled node holds a
+  stale matrix; both writers (`interpolate_mtxf`, `SkinMatrix_MtxFMtxFMult`) write all 16 floats.
+- **3** (benchmark builds) — mode 2, plus the same recording walked again into a fresh map and
+  compared entry by entry (`cmp`/`mismatch` on the `BENCH interp` line). `gSettings.ProbeInterpCorrupt=2`
+  perturbs one entry of the recycled map for the compare, the positive control.
+
+**Equivalence, in motion** (`SOH_BENCH_STATIC=0`, Market, 600 frames each): mode 3 compared **73,432
+entries, 0 mismatches**; with the control, **400**, one per interpolated frame.
+
+**Picture:** in-process dumps (`SOH_BENCH_DUMP`, segments 0 1 1 0), mode 1 against mode 0 at the same
+frame: **0 pixels** in all three comparisons. Frame n against n+1 differs by the Market's own 21-pixel
+cycle in every arm.
+
+| 6 pairs each | Δ render-thread CPU | t | MDE | Δ window CPU |
+|---|---|---|---|---|
+| Market, mode 1 (A 16,956 µs) | **−145 µs (−0.9%)** | −8.6 | 43 | −14 µs, t −1.1 (MDE 35) |
+| Market, mode 2 (A 17,022 µs) | −161 µs (−0.9%) | −8.1 | 51 | +1 µs, t 0.1 (MDE 49) |
+| Hyrule Field, mode 1 (A 10,598 µs) | **−37 µs (−0.3%)** | −2.9 | 33 | +14 µs, t 0.7 (MDE 49) |
+| Hyrule Field, mode 2 (A 10,626 µs) | −62 µs (−0.6%) | −2.7 | 59 | +15 µs, t 0.5 (MDE 84) |
+
+The period moved within its MDE in every run (225-499 µs); the thread's CPU is the measurement here.
+
+- **The move takes almost all of what allocation-free storage takes.** Mode 2 removes ~111 more
+  allocations and frees per frame than mode 1 and reads 16 µs better at the Market, inside the MDE.
+  *Reasoning, not measured:* what the copy cost was mostly the re-hashing and 80-byte copies of ~165
+  entries, not the allocator. That also says the rest of the ceiling (~210 µs) is the map's inserts
+  and the interpreter's lookups, which no storage change touches; a flat table keyed by `Mtx*` would
+  change libultraship's interface to reach part of it.
+- **Mode 1 is the default** (`d185540`): exact by construction, pixel-identical, and it holds no state
+  across ticks except a capacity hint, so no real-play A/B. Mode 2 is exact in motion and stays
+  available; it is not the default because it keeps pools across ticks for a gain the rig cannot
+  resolve. With the CVar absent from the config, one Market segment read **178 allocations per frame**
+  (from 291).
+
+### The render side, split
+
+Two new instruments (libultraship `7168444`):
+
+- **`eof_cpu_us`** on the `BENCH oncpu` line: the render thread's CPU time from the backend's
+  `EndFrame` (depth discard, `glFlush`) through the swap — the driver's per-frame kick, as work rather
+  than as waiting. `pairs.py` pairs it.
+- **`gSettings.ProbeSkipDraw`** (benchmark builds, read per frame in the GLES2 backend): **1** skips the
+  `glDrawArrays` in `DrawTriangles`; **2** returns from `DrawTriangles` before any GL work (state,
+  uniforms, attribute pointers, the draw). Returning before the state comparisons leaves the backend's
+  shadow state and the driver's agreeing, so the other arm still draws correctly. The interpreter does
+  all of its own work in both. Wrong picture by design.
+
+| Market, 6 pairs, A 16,954-16,965 µs | Δ render-thread CPU | t | MDE | Δ window CPU | Δ swap |
+|---|---|---|---|---|---|
+| `ProbeSkipDraw` 0 → 1 (no `glDrawArrays`) | **−4125 µs (−24.3%)** | −340 | 31 | −4174 µs (−29.3%), t −414 | −891 µs |
+| `ProbeSkipDraw` 0 → 2 (no per-draw GL) | **−4389 µs (−25.9%)** | −204 | 55 | −4446 µs (−31.2%), t −237 | −941 µs |
+| `eof_cpu_us`, both runs and all four map runs | 271-285 µs per frame | | | | |
+
+Draws were 262 per frame in both arms (`BENCH work`), and the `glfn` line confirms mode 1 removed
+exactly the `glDrawArrays`, and mode 2 the uniforms, enables and depth state with them (the attribute
+pointers left in mode 2 are set outside `DrawTriangles`).
+
+So of the Market's ~14.3 ms of window CPU per frame:
+
+| | µs per frame | share |
+|---|---|---|
+| `glDrawArrays` in the driver | ~4130 | 29% |
+| the rest of the per-draw GL side (state, uniforms, attribute pointers) | ~260 | 2% |
+| end of frame: discard, flush, swap (CPU) | ~285 | 2% |
+| GL calls left with mode 2 (~690 per frame: 225 texture binds, 202 attribute pointers, 68 texture units, 51 programs, ...) | not measured; §8.24 puts state calls near free | — |
+| **the interpreter and everything else in the window** | **~9.6 ms** | **~67%** |
+
+- **One draw costs ~15.8 µs of CPU at 1000 MHz**, ~16,000 cycles, and 262 of them are a quarter of the
+  main thread. The swap barely moves (−0.9 ms of 5.3 ms with no geometry at all), so this is CPU time in
+  the driver, not the GPU. *Reasoning, not measured:* a Market draw carries ~6 triangles (~1.5 KB of
+  client-array vertices), and copying that is ~1 µs, so the cost is per call — validation and command
+  emission — rather than per vertex. The next probe should establish that directly.
+- **This refines §8.24, it does not contradict it**: GL call *count* is still not the cost — removing
+  43% of the calls saved 0.5% — but the draw calls themselves are the largest single block measured in
+  this project. Fewer draws is now the lever, at ~16 µs each; NEXT.md item H (flushes on texture loads
+  that do not change the texture) is the first place to count them.
+- **For a two-core design**: the GL side is ~4.7 ms of the Market's ~17 ms of main-thread CPU per frame.
+  A GL thread fed by the interpreter would move about that much off the main thread (~27%), before the
+  hand-off's own cost (a copy of each draw's vertices and state). §8.33's logic split moves 2.5-4 ms per
+  tick. These are the two numbers a design would start from; neither is designed here.
+
+### What this leaves
+
+- **The per-draw cost: per call or per state change?** A probe that issues each draw twice (the second
+  with no state change in between) prices the call alone. If the second call is nearly as dear, batching
+  and removing draws is the lever; if it is cheap, the cost is state validation, and sorting draws by
+  state is.
+- **How many of the 262 draws are avoidable.** Count flushes by cause in the interpreter (texture
+  change, combiner, other-mode, matrix, ...) and item H's no-op texture reloads.
+- The map's remaining ~210 µs ceiling needs an interface change for a small part of it. Not worth it
+  before the draw work.

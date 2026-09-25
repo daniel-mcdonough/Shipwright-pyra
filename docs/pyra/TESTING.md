@@ -335,9 +335,19 @@ BENCH period mde_us=...
   defaults to 1, §8.30): the frozen Market's render thread reads ~15.6 ms, not ~17.1. Set it to 0
   only to A/B against the original.
 - `gSettings.ProbeSkipInterp` (benchmark builds only) skips frame interpolation with
-  `InterpolationFPS` untouched: 1 = record nothing, 2 = record but do not interpolate. **Pixel-exact
-  in a frozen fixture** (§8.29), wrong in play. Do not A/B `InterpolationFPS` 30 vs 20 instead: that
+  `InterpolationFPS` untouched: 1 = record nothing, 2 = record but do not interpolate, 3 = walk as
+  usual but build no replacement map (§8.36, the map's ceiling). **Pixel-exact in a frozen fixture**
+  (§8.29), wrong in play. Do not A/B `InterpolationFPS` 30 vs 20 instead: that
   changes how many frames each tick emits.
+- **Since 2026-09-25 evening `gSettings.LeanInterpMap` defaults to 1** (§8.36): the replacement map is
+  moved out instead of copied. The frozen Market makes **178** heap allocations per frame, not 291. Mode
+  2 also recycles the map's nodes (67 per frame, no faster); mode 3 checks mode 2 against a fresh map
+  (`cmp`/`mismatch` on the interp line; `gSettings.ProbeInterpCorrupt=2` is its control).
+- `eof_cpu_us` on the `BENCH oncpu` line (§8.36): the render thread's CPU time from the backend's
+  `EndFrame` through the swap, per frame. ~280 µs at both fixtures: the swap's 5 ms is waiting.
+- `gSettings.ProbeSkipDraw` (benchmark builds only, §8.36): 1 = no `glDrawArrays` in the GLES2
+  backend's `DrawTriangles`, 2 = none of its GL work. **Wrong picture by design** (nothing is drawn).
+  At the Market mode 1 is −4.1 ms of render-thread CPU: the draw calls are a quarter of the thread.
 - `BENCH lookup <seg>` (§8.31): `calls` is resource lookups by name or CRC made by the render thread,
   counted once each at their outermost entry (a `ResourceMgr_*` helper, a bridge function or a
   `ResourceManager` method). `ResourceMgr_OTRSigCheck` is scoped too and is a prefix check, not a
@@ -514,7 +524,8 @@ recording's call stream is written with
 **"Render-thread CPU, paired, with t and MDE"** — `bench.sh` pairs only the window and the period.
 `python3 docs/pyra/tools/pairs.py run.log <arm A value> [MHz]` pairs `thread_us`, `period_us`, the
 window, the window's own CPU time (`win_cpu_us`) and `swap_us` from `run.log`, and drops any pair with
-a segment off the pin (1250 MHz, or the clock given).
+a segment off the pin (1250 MHz, or the clock given). It also pairs `eof_cpu_us` (nan in logs from
+before §8.36).
 
 **"A/B one CVar with another held fixed"** — the harness sets only the A/B CVar. Put the fixed one in
 `$PYRA_DIR/shipofharkinian.json` for the run and put the file back afterwards (§8.34 ran
