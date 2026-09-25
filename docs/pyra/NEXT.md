@@ -9,7 +9,10 @@ render thread *waiting* inside the window, not working. What is left is +44 µs 
 MDE 26). A probe that adds ~690 KB of cache traffic per tick outside the window costs the window +91 µs
 of CPU, so the L2 guess fits. Sizing the arena buffers cannot change the lines touched, and the
 ceiling is 44 µs, so nothing was built. `LeanInterp=1` nets −1533 µs render-thread CPU at the Market.
-Before that, §8.33: logic is 15–20% of the main thread, so a two-core pipeline buys ~10%.
+Before that, §8.33: **logic is 15–20% of the main thread** (fixtures and 18 minutes of real play), so a
+logic/render pipeline on core 1 buys ~10% uncapped and nothing at the 30 fps cap. The CPU time is in the
+render side (7.7–13.2 ms per frame); a two-core split has to divide that, and how much of it is GL is
+not measured.
 Before that, §8.32: **§8.31's "LeanCVar changes the picture" was the
 benchmark's camera override not holding.** The freeze does not stop `Camera_Update`, which wrote the
 game's own look-at over the override each tick until it happened to stop — and that turned on
@@ -151,7 +154,8 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - **The interpolation replacement map** (~225 allocations per frame, the largest block of
       heap traffic left). Size it with a skip before building anything; a pre-reserved or
       arena-backed map is the obvious candidate, and it has to stay exact in motion (§8.30's
-      entry-by-entry check).
+      entry-by-entry check). It is built outside the timed window: read the window's CPU time
+      (`pairs.py` `win_cpu_us`) as well, since cache traffic out there reaches it (§8.34).
     - ~~**CVar reads without the key string**~~ **Done (§8.32): exact, default 1.** −257 µs (−1.5%)
       Market, −186 µs (−1.7%) Hyrule Field at 1000 MHz. §8.31's picture change was the camera
       override (TESTING.md trap 19), not the CVar code.
@@ -164,6 +168,10 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       camera fix still stand where they read identical: a flipped camera shows as a difference, it
       cannot hide one. Comparisons *across builds* (e.g. "within launch noise of the unmodified
       build") are not trustworthy; redo one only if something rests on it.
+    - **Split the render side before designing any two-core pipeline** (§8.33). Logic is 15–20% of
+      the main thread, so moving it to core 1 buys ~10% uncapped and nothing at the cap. The
+      render side is 7.7–13.2 ms per frame. The natural cut is the interpreter against GL
+      submission and the swap; count or skip-probe the GL side's share at the Market first.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
       on 2026-09-24 and took over the desktop at 1920×1080 — check before the next host run.
