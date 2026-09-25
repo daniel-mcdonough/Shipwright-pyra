@@ -266,6 +266,14 @@ BENCH period mde_us=...
   presentation, not rendering. ~5 ms of every frame is (2026-09-23, both fixtures).
 - `BENCH work` is what the interpreter handed to GL per frame, averaged. Use it to check a change
   did what it claims — fewer draws, no texture uploads — rather than inferring from the time.
+- **The window's wall time is not all work.** `mean_us` includes time the render thread is blocked
+  (GPU waiting, mostly in the swap), and that moves whenever the game side outside the window gets
+  faster or slower. For a change that runs outside the window, read the window's CPU time
+  (`BENCH oncpu … window_us`, `win_cpu_us` in `pairs.py`): §8.30's "+295 µs window regression" was
+  +86 µs of CPU and the rest waiting (§8.34).
+- `gSettings.ProbeSpinUs=N` and `gSettings.ProbeTouchKB=N` (benchmark builds, §8.34) run once per game
+  tick outside the window: a CPU spin of N µs, and a write of one of two alternating N KB buffers plus
+  a read of both. Use them to test whether game-side time or cache traffic reaches the window.
 - `delta` is **arm B minus arm A**, so negative means B is faster.
 - `|t| > 2.4` or so is a real effect at these sample sizes. `t = -23.7` is not a subtle result;
   `t = -0.35` is nothing.
@@ -501,8 +509,13 @@ recording's call stream is written with
 `SOH_BENCH_INTERP_TRACE=<file> SOH_BENCH_INTERP_TRACE_TICK=600`.
 
 **"Render-thread CPU, paired, with t and MDE"** — `bench.sh` pairs only the window and the period.
-`python3 docs/pyra/tools/pairs.py run.log <arm A value>` pairs `thread_us`, `period_us` and the
-window from `run.log`, and drops any pair with a segment off the 1250 MHz pin.
+`python3 docs/pyra/tools/pairs.py run.log <arm A value> [MHz]` pairs `thread_us`, `period_us`, the
+window, the window's own CPU time (`win_cpu_us`) and `swap_us` from `run.log`, and drops any pair with
+a segment off the pin (1250 MHz, or the clock given).
+
+**"A/B one CVar with another held fixed"** — the harness sets only the A/B CVar. Put the fixed one in
+`$PYRA_DIR/shipofharkinian.json` for the run and put the file back afterwards (§8.34 ran
+`ProbeTouchKB` on `LeanInterp=0` that way).
 
 **"Is this change worth anything?"** — A/B it at Market *and* Hyrule Field, 5–6 pairs each, with
 the soak. Two numbers, not one.

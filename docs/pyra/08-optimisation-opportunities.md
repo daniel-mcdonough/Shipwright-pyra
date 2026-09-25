@@ -2520,3 +2520,87 @@ The main thread was on-CPU for only 28% of the time during play. Five-second win
 single-tick spikes, but the per-window p95 never exceeded 4.63 ms, so no spike was large either.
 
 **Not measured.** Clocks other than 1250 MHz; the cost of the hand-off itself.
+
+## 8.34 §8.30's window regression: gone in wall time; 44 µs of CPU is left, and the L2 guess fits it
+
+Measured 2026-09-25 afternoon, the device free for the session, Market fixture, pinned at 1000 MHz
+(`PYRA_PIN_FREQ=1000000`), soaked to 70 °C with `SOH_BENCH_WARMUP=2400`, the die let down to 64 °C
+between runs. Every segment of both runs was on the pin; no pair was dropped.
+
+### What the timed window's time was
+
+`tools/pairs.py` now also pairs the window's own CPU time (`BENCH oncpu … window_us`) and `swap_us`.
+The window's wall time is the render thread computing *plus* the thread blocked, and the blocked part
+moves with the GPU's slack, not with the code under test. Re-reading §8.31's run
+(`run.interp-market-1000.log`) that way:
+
+| §8.31's run, `LeanInterp` 0 → 1, 8 pairs | Δ | t | MDE |
+|---|---|---|---|
+| window, wall | +295 µs | 6.4 | 109 |
+| window, render-thread CPU | **+86 µs** | 5.2 | 39 |
+| swap | +119 µs | 6.6 | 43 |
+
+So two thirds of §8.31's regression was the thread *waiting* inside the window. Arm 1's frames started
+1.7 ms sooner, and §8.31 had seen the same kind of swap increase for `ProbeMemoLookup`.
+
+### Re-measured with the camera fix in
+
+The same A/B on today's build (all §8.31-8.33 defaults, the camera override from §8.32):
+
+| `LeanInterp` 0 → 1, Market, 8 pairs at 1000 MHz | A | Δ | t | MDE |
+|---|---|---|---|---|
+| render-thread CPU | 18,610 µs | **−1533 µs (−8.2%)** | −94.1 | 39 |
+| period | 26,492 µs | −1676 µs (−6.3%) | −16.9 | 235 |
+| window, wall | 21,258 µs | **+74 µs (+0.3%)** | 1.6 | 107 |
+| window, render-thread CPU | 14,333 µs | **+44 µs (+0.3%)** | 4.0 | 26 |
+| swap | 5,421 µs | −50 µs | −3.2 | 37 |
+
+**The wall-time regression does not reproduce**: +74 µs, under its MDE, and the swap moved the other
+way. It did not grow through the run either (pairs +270, −123, +116, −59, +16, +160, +156, +55). I
+can't say which of the intervening changes did it, since a different camera, three new defaults and
+~1.5 ms less render-thread work all changed at once. What survives is **+44 µs of CPU inside the window**,
+real (t 4.0) and small: 0.3% of the window and 3% of what the arena saves elsewhere.
+
+### The L2 guess, tested without the arena
+
+The recording is built and walked outside the window, so an arena can only reach the window through
+shared state, and the cache is the obvious candidate. `gSettings.ProbeTouchKB=N` (benchmark builds,
+`frame_interpolation.cpp`) runs once per tick outside the window. It writes one line in every 64 bytes
+of one of two N KB buffers (alternating, like the arena's two recordings) and reads both. Run on the
+*original* recorder (`LeanInterp=0` set in the config for the run), 230 against 0:
+
+| `ProbeTouchKB` 0 → 230, `LeanInterp=0`, Market, 8 pairs at 1000 MHz | Δ | t | MDE |
+|---|---|---|---|
+| render-thread CPU (the probe's own cost) | +501 µs | 37.2 | 32 |
+| **window, render-thread CPU** | **+91 µs (+0.6%)** | 5.9 | 37 |
+| window, wall | +157 µs | 2.7 | 136 |
+| swap | +4 µs | 0.3 | 36 |
+
+About 690 KB of line traffic per tick outside the window costs the interpreter 91 µs inside it. So
+work outside the window *can* slow the window through the cache, at this scale, and the arena's
++44 µs is about half that. *Reasoning, not measured:* a monotonic buffer never reuses the storage a
+`vector` leaves behind when it grows, so the arena touches more distinct lines per tick than the heap
+tree, which recycles freed chunks within the same recording. The probe's own cost, ~750 µs per tick
+for ~10,800 line accesses (~70 ns each), says those lines are missing L2.
+
+### What was not tested, and why
+
+The prompt's two candidate fixes cannot change the footprint:
+
+- **Sizing each buffer to the recording (~230 KB) instead of 256 KB.** `monotonic_buffer_resource`
+  touches only the bytes it hands out, so the untouched tail of a 256 KB buffer is never in the cache.
+  Same recording, same lines.
+- **Dropping the unused recorder's storage.** With `LeanInterp=1` the original recorder holds two
+  empty root `Path`s; with 0, the arena's buffers are allocated but untouched. Neither is in the cache.
+
+Shrinking the footprint means recycling the abandoned vector storage, e.g. a pool resource over the
+arena or reserving each vector's size from the previous recording. The ceiling is the 44 µs, near
+this rig's MDE, and either change adds work to the path that saves 1.5 ms. **Not built.** The net of
+`LeanInterp=1` stands at −1533 µs render-thread CPU and −1676 µs period at the Market.
+
+### What this leaves
+
+- **Read `win_cpu_us`, not the window's wall time, when a change works outside the window.** Wall time
+  inside the window includes GPU waiting, which moves whenever the game side speeds up (§8.31 and §8.34
+  both saw ~100 µs of it). TESTING.md says so now.
+- The remaining heap traffic (~225 allocations per frame for the replacement map) is the next block.
