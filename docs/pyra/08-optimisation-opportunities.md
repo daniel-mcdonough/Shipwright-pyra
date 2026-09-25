@@ -2789,3 +2789,114 @@ So of the Market's ~14.3 ms of window CPU per frame:
   change, combiner, other-mode, matrix, ...) and item H's no-op texture reloads.
 - The map's remaining ~210 µs ceiling needs an interface change for a small part of it. Not worth it
   before the draw work.
+
+## 8.37 A draw is ~4 µs of call, ~2 µs of vertices and ~9 µs of validation; 33 Market draws were item H's
+
+Measured 2026-09-25 night, the device free for the session, frozen fixtures pinned at 1000 MHz, soaked
+to 70 °C with `SOH_BENCH_WARMUP=2400`, the die let down to 65 °C before every run. Every segment of every
+run was on the pin; no pair was dropped. The two tasks §8.36 left: price one draw call, and count the
+avoidable ones.
+
+### Two instruments
+
+libultraship `9520c3dd`:
+
+- **`gSettings.ProbeSkipDraw` 3 and 4** (benchmark builds): 3 issues every `glDrawArrays` in
+  `DrawTriangles` twice, the second with no state change between; 4 repeats only the first triangle.
+  Wrong picture by design (blended draws blend twice).
+- **`BENCH batch <seg>`**: every draw counted once, under the *set* of state changes that separated it
+  from the previous batch. Each flush site in `GfxSpTri1` marks a bit before it flushes (depth, decal,
+  viewport, scissor, sampler, program, blend, full buffer); the texture site marks `tex_new`, or
+  `tex_same` when the reload resolved to the cache entry already bound in that unit with no mask or
+  blend texture (NEXT.md item H); a flush that draws with no mark is `other` (framebuffer commands,
+  end of frame). The set is counted when the next batch takes its first triangle. The line gives
+  `cause=any/alone` per bit, then the commonest sets. The first build marked the texture site after its
+  flush, so `other` read 241 of 261; fixed before any number below was taken.
+
+### The price of one draw
+
+| 6 pairs each, Δ against mode 0 | Δ window CPU | t | MDE | per draw | Δ swap |
+|---|---|---|---|---|---|
+| Market, mode 3 (same draw again; A 14,281 µs) | **+1685 µs (+11.8%)** | 97.5 | 44 | **6.5 µs** | +751 µs |
+| Market, mode 4 (one triangle again; A 14,298 µs) | **+1120 µs (+7.8%)** | 59.8 | 48 | **4.3 µs** | +151 µs |
+| Hyrule Field, mode 3 (A 9,051 µs) | **+771 µs (+8.5%)** | 56.5 | 35 | **4.6 µs** | +787 µs |
+
+With §8.36's 15.8 µs for a whole Market draw (skipping `glDrawArrays` outright), one draw at 1000 MHz is:
+
+| | µs | share |
+|---|---|---|
+| the call, with state the driver has just validated, one triangle | ~4.3 | 27% |
+| the batch's vertices (client arrays, ~6 triangles on average at the Market) | ~2.2 | 14% |
+| the first draw after a state change: validation | **~9.3** | **59%** |
+
+- **It is mostly state validation, and partly per call.** Neither "fewer draws" nor "sort by state" is
+  the whole lever: a draw that changes nothing still costs ~4.3 µs, and a state change adds ~9.
+- The repeat's per-vertex part (~2.2 µs for ~19 vertices, ~115 ns each) is in the driver, on the CPU:
+  mode 4 moved the swap only +151 µs against mode 3's +751, so the extra GPU work of mode 3 shows in the
+  swap, not in window CPU. *Reasoning, not measured:* ~115 ns per vertex is more than copying 40-odd
+  bytes would take; the driver may be converting or re-laying out the client arrays.
+- Hyrule Field's repeat is cheaper (4.6 µs) than the Market's (6.5); its draws are smaller.
+
+### What splits the batches
+
+Frozen fixtures, per frame. `any` counts a cause wherever it appears in a draw's set; `alone` where it
+was the only one.
+
+| cause | Market (261 draws) any / alone | Hyrule Field (167) any / alone |
+|---|---|---|
+| `tex_new` (a different texture) | **225 / 142** | **151 / 90** |
+| `tex_same` (item H) | 67 / **33** | 21 / **13** |
+| `program` | 51 / 1 | 63 / 2 |
+| `blend` | 20 / 0 | 26 / 0 |
+| `depth` / `decal` | 19 / 12 | 5 / 6 |
+| `sampler` | 4 / 0 | 2 / 0 |
+| viewport, scissor, other | 1 each (frame start and end) | 1 each |
+| full buffer | 0 | 0 |
+
+The commonest sets at the Market: `tex_new` 142, `tex_same` 33, `tex_new+tex_same` 33 (one unit
+changed, the other reloaded the same texture), `tex_new+program` 22, `depth+decal+tex_new+program+blend`
+11. **86% of the Market's draws change a texture**; nothing else splits more than a fifth of them. No
+batch ever fills the buffer. Matrices never split a batch (vertices are transformed on the CPU).
+
+So **33 of the Market's 261 draws (13%) and ~13 of Hyrule Field's 167 (7.5%) exist only because of item
+H**. A merged draw makes no state change, so what it saves is the repeat price, ~4.3 µs, not 15.8:
+≈140 µs at the Market, ≈55 µs at Hyrule Field.
+
+### The change: `gSettings.LeanTexReuse`
+
+`fd067827`. Before the texture site flushes, `TextureAlreadyBound` builds the cache key exactly as
+`ImportTexture` would and looks it up; if it resolves to the entry already in `mRenderingState.mTextures[i]`
+**and** the backend confirms that texture id is bound in unit `i` (`GfxRenderingAPI::IsTextureBound`, new;
+false in every backend but OpenGL), the batch stays open and the entry moves to the back of the LRU as a
+cache hit would move it. Masked and blended textures take the old path. The backend check matters:
+`gfx_set_timg_fb` binds a framebuffer texture to unit 0 without touching `mTextures[0]`, and the
+backend forgets its binding shadow at every frame start, so ImGui's binds read as unknown.
+
+| 6 pairs each | Δ window CPU | t | MDE | Δ render-thread CPU | t | MDE | draws |
+|---|---|---|---|---|---|---|---|
+| Market (A 14,302 µs) | **−158 µs (−1.1%)** | −18.2 | 22 | −166 µs (−1.0%) | −23.2 | 18 | 261 → 228 |
+| Hyrule Field (A 8,981 µs) | −24 µs (−0.3%) | −1.3 | 49 | −16 µs (−0.2%) | −1.9 | 21 | 167 → 155 |
+
+- The Market saving matches the prediction (33 × 4.3 ≈ 140 µs). Hyrule Field's predicted ~55 µs is at
+  the run's MDE, and it did not resolve. The period moved within its MDE in both (437 / 173 µs).
+- `glBindTexture` stayed at 225 per frame at the Market in both arms: the change removes draws, not binds.
+- Hyrule Field's `eof_cpu_us` rose 12 µs (t 6.5, MDE 5). Small and unexplained; the Market's did not move.
+- **Picture:** in-process dumps (segments 0 1 1 0), frames 301 and 302: **0 pixels** between the arms at
+  the Market, and 0 at Hyrule Field with the sky masked (rows 216 and up). Frame 301 against 302 differs
+  by the Market's own 20-pixel cycle in every arm.
+- **Not the default yet.** It relies on the backend's binding shadow across draws, i.e. it is stateful:
+  the ladder wants a real-play A/B with the owner playing (framebuffer-texture effects, the pause menu,
+  ImGui open) before it ships. Default 0.
+
+### What this leaves
+
+- **Texture changes are the draw cost.** 225 of 261 Market draws change a texture, and a draw after a
+  state change pays ~9 µs of validation on top of ~6.5. The probes above do not say which state costs
+  the validation: whether a texture bind alone triggers it is the next probe (a mode that binds another
+  texture and back between the two draws).
+- **Merging texture changes means reordering draws**, which is only safe for opaque, depth-tested,
+  non-decal draws and changes the order the GPU sees. Count first how many consecutive opaque draws
+  could be grouped by texture if sorted within a run of such draws; then decide.
+- **For the two-core design:** the draw cost cannot be simply removed. Item H took 13% of the Market's
+  draws and 1% of its window CPU; the rest are real state changes. §8.36's ~4.7 ms of GL work per Market
+  frame stands, less ~0.16 ms.

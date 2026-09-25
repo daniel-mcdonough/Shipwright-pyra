@@ -186,14 +186,29 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       ~4.1 ms `glDrawArrays`, ~0.26 ms other per-draw GL, ~0.29 ms flush and swap, ~9.6 ms interpreter.
       A GL thread would take ~4.7 ms off the main thread (~27%) before its hand-off cost; §8.33's logic
       split takes 2.5–4 ms per tick. **Still no design**: first find out whether the draw cost can
-      simply be removed (next two items).
-    - **Price one draw call: per call, or per state change?** Add a `ProbeSkipDraw` mode that issues
-      each `glDrawArrays` twice. If the second call costs nearly 15.8 µs, the cost is per call and
-      fewer draws is the lever; if it is cheap, the cost is the driver validating state that changed,
-      and ordering draws by state is. Market and Hyrule Field (167 draws).
-    - **Count avoidable draws.** Count interpreter flushes by cause (texture load, combiner, other
-      mode, geometry mode, matrix, fill rect...) per frame at the Market, and item H's flushes on a
-      texture load that does not change the texture. At ~16 µs each, 30 avoidable draws are ~3%.
+      simply be removed (§8.37: it cannot, below).
+    - ~~**Price one draw call**~~ **Done (§8.37):** a Market draw at 1000 MHz is ~4.3 µs of call,
+      ~2.2 µs of vertices and ~9.3 µs of validation after a state change (`ProbeSkipDraw` 3: +1685 µs
+      window CPU, t 97.5; 4: +1120 µs, t 59.8; Hyrule Field 3: +771 µs, t 56.5). Both levers exist and
+      neither is the whole of it.
+    - ~~**Count avoidable draws**~~ **Done (§8.37), `BENCH batch` line.** 225 of the Market's 261 draws
+      change a texture; 33 (13%) were split only by item H's same-texture reload, ~13 of 167 at Hyrule
+      Field. No batch fills the buffer; matrices never split one.
+    - **`gSettings.LeanTexReuse=1` (item H): real-play A/B, then default it.** −158 µs (−1.1%, t −18.2,
+      MDE 22) window CPU at the Market, 261 → 228 draws; Hyrule Field −24 µs (t −1.3, MDE 49), 167 → 155;
+      0 pixels at both in-process. Stateful (it trusts the backend's binding shadow), so the ladder wants
+      watch mode with the owner playing, including framebuffer-texture effects, the pause menu and ImGui
+      open: `SOH_BENCH_AB_CVAR=gSettings.LeanTexReuse SOH_BENCH_AB_VALUES=0,1`. Expect ~1% render-thread
+      CPU; the point is that nothing looks wrong.
+    - **Does a texture bind alone cost the ~9 µs of validation?** Add a `ProbeSkipDraw` mode that binds
+      another texture and back between the two draws of mode 3. If that repeat costs ~15 µs, texture
+      changes are the validation, and the only lever left on draws is grouping them by texture.
+    - **Could opaque draws be grouped by texture?** Before building any reordering, count (a `BENCH`
+      counter) how many draws in runs of consecutive opaque, depth-tested, non-decal draws share a
+      texture with an earlier draw in the same run, i.e. how many sorting could remove. Reordering
+      changes the GPU's order; only such runs are candidates.
+    - **Then the two-core design.** The draw cost is not simply removable: §8.36's ~4.7 ms of GL per
+      Market frame stands, less item H's ~0.16 ms.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
       on 2026-09-24 and took over the desktop at 1920×1080 — check before the next host run.
@@ -274,7 +289,7 @@ In order:
 | **E** | **`GL_EXT_shader_framebuffer_fetch`** | unknown | Present, unexplored, and nearly free on a tile-based deferred renderer — `gpu-optimization.md` calls it the most interesting unexplored extension on the device. No Shipwright use case has been identified yet, which is the first thing to establish. Do not build machinery for it before finding one. |
 | **F** | **Present 640×360 and let the display controller scale** | unknown, ≤ the 3.4 ms of item 4 above | The game renders at 640×360 to `mGameFb` and then draws it as a 1280×720 quad. §8.7 calls that pass "inherent to the internal-resolution feature" — inherent to the *feature*, not to the hardware: the OMAP5 DSS can scale a plane in the display controller. It attacks the part of the swap that does not scale with pixels. Establish that a scaled plane is reachable through SDL/EGL on this stack **before** touching the renderer; if it is not, this is dead. |
 | **G** | ~~**One `glBufferData` per frame with offsets**~~ | **superseded (§8.24)** | Client-side arrays — report 5's best row — took the per-draw `glBufferData` out entirely: −13.4% at the Market, several times what this row estimated. Report 5's "within noise, needs no change" was wrong for this game. The single-upload variant is no longer worth building unless mode 3 fails in real play. |
-| **H** | **Count redundant batch splits on texture change** — **now first in line (§8.36: ~16 µs of CPU per draw)** | unknown; a counter, not yet a change | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
+| **H** | ~~**Count redundant batch splits on texture change**~~ **Counted and built (§8.37): 33 of 261 Market draws; `LeanTexReuse=1` −158 µs (−1.1%) window CPU, pixel-identical; awaiting real play** | measured | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
 
 ### Do not build
 

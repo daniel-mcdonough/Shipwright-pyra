@@ -348,6 +348,14 @@ BENCH period mde_us=...
 - `gSettings.ProbeSkipDraw` (benchmark builds only, §8.36): 1 = no `glDrawArrays` in the GLES2
   backend's `DrawTriangles`, 2 = none of its GL work. **Wrong picture by design** (nothing is drawn).
   At the Market mode 1 is −4.1 ms of render-thread CPU: the draw calls are a quarter of the thread.
+  3 issues every draw twice with no state change between, 4 repeats only its first triangle (§8.37):
+  +6.5 and +4.3 µs per draw at the Market. Read `win_cpu_us`: the doubled GPU work lands in the swap.
+- `BENCH batch <seg>` (§8.37): draws per frame by the set of state changes that split each from the
+  previous batch. `cause=any/alone` per cause, then the commonest sets. `tex_same` is a reload of the
+  texture already bound (NEXT.md item H); `other` should read ~1 (the frame's last draw). If `other`
+  reads high, a flush site is marking after it flushes.
+- `gSettings.LeanTexReuse` (§8.37, default 0 until real play): 1 keeps the batch open on a same-texture
+  reload. The Market's draws go 261 → 228 and `tex_same` reads 0.
 - `BENCH lookup <seg>` (§8.31): `calls` is resource lookups by name or CRC made by the render thread,
   counted once each at their outermost entry (a `ResourceMgr_*` helper, a bridge function or a
   `ResourceManager` method). `ResourceMgr_OTRSigCheck` is scoped too and is a prefix check, not a
