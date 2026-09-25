@@ -2454,3 +2454,51 @@ allocations per frame, from 970** — 3202 before §8.31. What is left is mostly
 - The rest of the heap traffic: ~225 per frame for the interpolation replacement map.
 - The camera code's uninitialised reads are real in play too: any build can move them. Harmless to
   the harness now; for the port, a curiosity rather than a task.
+
+## 8.33 Logic against render: logic is 15–20% of the main thread, so a two-core pipeline buys ~10%
+
+**Question.** Could game logic for tick N+1 run on core 1 while tick N is interpreted and submitted
+on core 0? Only the audio thread uses core 1 today. The ceiling of such a pipeline is
+(L + R) / max(L, R), and the frozen fixture cannot measure it because it skips `Play_Update`.
+
+**Instrument.** `SOH_BENCH_SPLIT=<ticks>` (new, off by default) reads thread CPU time and wall time
+at four marks per game tick and logs one `Benchmark split` line per window. **L** runs from the top
+of the tick through `Graph_Update`, which includes `Play_Draw` building the display list: that is
+game code and would move with logic. **R** is `Graph_ProcessGfxCommands` up to the audio wait:
+interpolation, the interpreter over every interpolated frame, GL, ImGui and the swap. It needs only
+`SOH_BENCH=1`, so it also runs under `SOH_BENCH_WATCH` during real play.
+
+**Method.** `SOH_BENCH_STATIC=0` (logic running), `FRAMES=900`, pinned at 1250 MHz,
+`InterpolationFPS=30` (1.5 frames per tick), 640×360, with the player held on the fixture mark and
+NPCs live. Each figure is the mean of 9–10 windows of 100 ticks. The first two windows (load and
+settle) are dropped.
+
+| Fixture | L ms/tick | R ms/tick | R ms/frame | L share | ceiling (30 fps interp) | ceiling at InterpolationFPS=20 | main thread on-CPU | other threads ms/tick |
+|---|---|---|---|---|---|---|---|---|
+| Market, capped | 3.42 | 19.37 | 12.91 | 15.0% | 1.18× | 1.27× | 45% | 2.66 |
+| Market, uncapped | 3.47 | 19.84 | 13.22 | 14.9% | 1.17× | 1.26× | 67% (43.3 fps) | 2.55 |
+| Hyrule Field, capped | 2.54 | 11.59 | 7.73 | 18.0% | 1.22× | 1.33× | 28% | 2.81 |
+| Kokiri Forest, capped | 3.93 | 16.04 | 10.69 | 19.7% | 1.25× | 1.37× | 40% | 2.37 |
+
+L is flat across windows (p95 within ~0.5 ms of the median). R per tick is bimodal: ticks alternate
+between one and two frames, which is why its median sits above its mean.
+
+**Reading it.**
+
+- **The ceiling overstates the gain.** It counts CPU only. Uncapped in the Market, a tick takes
+  34.7 ms of wall time but the main thread is on-CPU for 23.3 ms of it. Most of the remainder is
+  swap and GPU wait (`swap_us` 5.4 ms per frame), and a pipeline leaves that on the render side.
+  Taking L out of the serial path gives 34.7 → 31.2 ms, **about +11% uncapped**, and only if the GPU
+  absorbs the extra frames.
+- **At the shipped 30 fps cap there is no frame-rate gain to have.** The main thread is on-CPU
+  for 28–45% of the time already. Splitting moves 2.5–4 ms per tick to core 1, and total CPU work does not
+  fall (the snapshot and hand-off add to it), so thermals are unchanged to first order. The busiest
+  core's load falls from about 45% to about 38%, which is rarely enough for ondemand to drop a step.
+- **The CPU time is in R**, 7.7–13.2 ms per rendered frame. Any two-core split worth its
+  complexity has to divide R itself, not separate L from R. The natural cut is the interpreter
+  (display-list decode, software T&L, the interpolation replay) against GL submission and the
+  swap. That depends on how much of R is GL-side, which this instrument does not split.
+
+**Not measured.** Real play with the player moving or fighting (L should rise; `SOH_BENCH_WATCH=1
+SOH_BENCH_SPLIT=100` measures it with the controls in hand); clocks other than 1250 MHz; the cost
+of the hand-off itself.
