@@ -1053,6 +1053,14 @@ extern "C" void Benchmark_Init(void) {
         return;
     }
 
+    // Play_Draw calls this after the update (and its Camera_Update) and before View_Apply builds
+    // the viewing matrix, so the override is what gets drawn whatever the camera wrote (§8.32).
+    GameInteractor::Instance->RegisterGameHook<GameInteractor::OnPlayDrawBegin>([]() {
+        if (gPhase == Phase::Warmup || gPhase == Phase::SegmentWarmup || gPhase == Phase::Measuring) {
+            ApplyCameraOverride();
+        }
+    });
+
     gCfg.entrance = (uint16_t)EnvInt("SOH_BENCH_ENTRANCE", gCfg.entrance);
     gCfg.linkAge = EnvInt("SOH_BENCH_AGE", gCfg.linkAge);
     gCfg.dayTime = (uint16_t)EnvInt("SOH_BENCH_TIME", gCfg.dayTime);
@@ -1263,8 +1271,12 @@ extern "C" void Benchmark_FrameEnd(void) {
                     gPlayState->frameAdvCtx.enabled = true;
                     SPDLOG_INFO("Benchmark: game logic frozen, scene is now static");
                 }
-                // Only meaningful once the camera has stopped being updated, which is exactly
-                // what freezing achieves - Camera_Update lives inside Play_Update.
+                // Freezing does NOT stop the camera: Play_Update's frame-advance skip jumps to a
+                // label after which Camera_Update still runs every tick and writes its own eye and
+                // look-at into play->view (§8.32). Writing the override here, after the frame,
+                // therefore held only while the camera happened to stop writing - which turned on
+                // uninitialised reads in the camera code, so it flipped with unrelated code changes.
+                // The OnPlayDrawBegin hook in Benchmark_Init writes it again just before View_Apply.
                 ApplyCameraOverride();
                 LogViewpoint();
                 gPhase = Phase::Warmup;

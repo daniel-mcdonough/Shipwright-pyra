@@ -437,6 +437,26 @@ struct InterpolateCtx {
         return &mtx_replacements[addr];
     }
 
+#ifdef SOH_BENCHMARK
+    // SOH_BENCH_INTERP_CAM=<file> (§8.32): every MatrixMtxFToMtx whose two recordings differ, as
+    // text - the step, then the old and new matrices' rows.
+    static void BenchLogMtxFPair(float step, const MtxF* o, const MtxF* n) {
+        static FILE* log = [] {
+            const char* path = getenv("SOH_BENCH_INTERP_CAM");
+            return path != nullptr ? fopen(path, "w") : nullptr;
+        }();
+        if (log == nullptr || memcmp(o, n, sizeof(MtxF)) == 0) {
+            return;
+        }
+        fprintf(log, "step %.4f\n", step);
+        for (int i = 0; i < 4; i++) {
+            fprintf(log, "  old %.7f %.7f %.7f %.7f  new %.7f %.7f %.7f %.7f\n", o->mf[i][0], o->mf[i][1],
+                    o->mf[i][2], o->mf[i][3], n->mf[i][0], n->mf[i][1], n->mf[i][2], n->mf[i][3]);
+        }
+        fflush(log);
+    }
+#endif
+
     void interpolate_mtxf(MtxF* res, MtxF* o, MtxF* n) {
         for (size_t i = 0; i < 4; i++) {
             for (size_t j = 0; j < 4; j++) {
@@ -625,6 +645,9 @@ struct InterpolateCtx {
                         case Op::MatrixMtxFToMtx:
                             interpolate_mtxf(new_replacement(new_op.matrix_mtxf_to_mtx.dest),
                                              &old_op.matrix_mtxf_to_mtx.src, &new_op.matrix_mtxf_to_mtx.src);
+#ifdef SOH_BENCHMARK
+                            BenchLogMtxFPair(step, &old_op.matrix_mtxf_to_mtx.src, &new_op.matrix_mtxf_to_mtx.src);
+#endif
                             break;
 
                         case Op::MatrixToMtx: {

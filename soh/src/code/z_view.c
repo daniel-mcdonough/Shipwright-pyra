@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#include <stdio.h>
 #include "global.h"
 #include "vt.h"
 
@@ -331,6 +333,23 @@ s32 func_800AAA9C(View* view) {
         view->eye.z += 1.0f;
     }
 
+#ifdef SOH_BENCHMARK
+    // SOH_BENCH_VIEW_LOG=<file> (§8.32): the eye and look-at each viewing matrix is built from.
+    {
+        static FILE* viewLog = NULL;
+        static int opened = 0;
+        if (!opened) {
+            const char* path = getenv("SOH_BENCH_VIEW_LOG");
+            viewLog = path != NULL ? fopen(path, "w") : NULL;
+            opened = 1;
+        }
+        if (viewLog != NULL) {
+            fprintf(viewLog, "%p eye %.6f %.6f %.6f at %.6f %.6f %.6f\n", (void*)view, view->eye.x, view->eye.y,
+                    view->eye.z, view->lookAt.x, view->lookAt.y, view->lookAt.z);
+            fflush(viewLog);
+        }
+    }
+#endif
     func_800ABE74(view->eye.x, view->eye.y, view->eye.z);
     MtxF viewingF;
     guLookAtF(viewingF.mf, view->eye.x, view->eye.y, view->eye.z, view->lookAt.x, view->lookAt.y, view->lookAt.z,
