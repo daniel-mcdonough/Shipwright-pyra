@@ -306,6 +306,8 @@ BENCH period mde_us=...
   with `gSettings.LeanInterp=2`: replacement-map entries compared between the original and the
   arena recorder, and the ones that differed. `mismatch` must be 0;
   `gSettings.ProbeInterpCorrupt=1` is its positive control (~1 per frame).
+- **Since 2026-09-25 `gSettings.LeanTexLoad` and `gSettings.LeanGameLookup` default to 1** (§8.31); the
+  frozen Market makes 970 heap allocations per frame, not 3202. Set either to 0 only to A/B.
 - **Since 2026-09-24 the interpolation recording lives in an arena** (`gSettings.LeanInterp`
   defaults to 1, §8.30): the frozen Market's render thread reads ~15.6 ms, not ~17.1. Set it to 0
   only to A/B against the original.
@@ -452,7 +454,12 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     vDSO here): the Market's window goes from ~19 to ~32 ms. The no-op sync commands read the floor
     (~630-680 ns). Subtract it; use the result to choose a handler to skip-probe, never as a size.
 
-17. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
+17. **The game saves CVars on its own, so an A/B arm can end up in the config file** (§8.31:
+    `gSettings.LeanCVar=1` did, and every later run booted with it). `bench.sh ab` now restores and
+    saves the CVar; **watch mode does not** — after `watch stop`, remove the A/B CVar from
+    `$PYRA_DIR/shipofharkinian.json`. Check that file for stray `Lean*`/`Probe*` keys before trusting a run.
+
+18. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
     teardown, seen every run 2026-09-24, with or without that day's changes). The results are
     already written by then. Ignore it, or fix it separately; it is not a benchmark problem.
 

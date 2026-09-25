@@ -2188,7 +2188,7 @@ content; the sign and the rough size are what this confirms.
 - **Method:** trace the game natively on the host when the question is the game's data shape.
   The host build runs the fixtures, and its counters matched the device's exactly.
 
-## 8.31 Sizing the rest: two thirds of the heap traffic is looking things up by name
+## 8.31 Sizing the rest: two thirds of the heap traffic was looking things up by name; two exact fixes, −3 to −7% each
 
 Measured 2026-09-24 night to 09-25 early morning, the device free for the session. NEXT.md 00000's
 remaining blocks — malloc/free, game-side lookups by name, the rest of the interpreter — each got a
@@ -2255,9 +2255,23 @@ each call.
 | Hyrule Field, 4 pairs at 1250 MHz | **−428 µs (−4.4%)** | −11.4 | 119 | −384 µs, t −3.6 | 0 |
 
 It beats its own probe (−1160 vs −1052) because it also skips `UnloadOriginalWhenAltExists`, which
-the probe left in. **Not the default yet:** it holds state across frames, so it waits for a real-play
-A/B. These A/Bs ran with `LeanCVar=1` stuck in the config (below); both arms had it, so the deltas
+the probe left in. It holds state across frames, so it also got a real-play A/B. These A/Bs ran with `LeanCVar=1` stuck in the config (below); both arms had it, so the deltas
 stand.
+
+**Real play.** Watch mode, `LeanGameLookup` 0,1 alternating per 300-frame block, capped and pinned
+to 1250 MHz, the owner playing ~17 minutes across nine scenes (the Market and its entrance, Hyrule
+Field, the Zora's River/Domain/Fountain area and others), with the pause menu and the ImGui menu
+opened. 102 blocks, all on the pin; 46 pairs, 5 dropped for spanning a scene change
+(`tools/watchpairs.py`):
+
+| real play, 46 pairs | A (render-thread CPU per frame) | Δ | t | MDE |
+|---|---|---|---|---|
+| `LeanGameLookup` 0 → 1 | 9439 µs | **−528 µs (−5.6%)** | −3.54 | 298 |
+
+Nothing abnormal on screen, by the owner's account; the log has the same lines, error and warning
+kinds as the previous session's, only the known flush bug scaling with its length. **`LeanGameLookup`
+now defaults to 1.** With both defaults, the frozen Market makes **970 allocations per frame, down
+from 3202**: 679 CVar key strings, ~225 for the interpolation map.
 
 ### The texture-load path: exact, −3 to −5%
 
@@ -2330,8 +2344,6 @@ recorder's storage) is now worth testing.
 
 ### What this leaves
 
-- **`LeanGameLookup` needs the real-play A/B**, then becomes the default: −7.3% of the Market's render
-  thread.
 - **The CVar reads** (~250 µs at the Market): why skipping `Get()` changes the picture.
-- **The remaining heap traffic** with both on: ~1550 per frame at the Market (3202 − ~1210 − 441), of
-  which 711 are CVar key strings and ~225 the replacement map.
+- **The remaining heap traffic** with both on: 970 per frame at the Market, 679 of them CVar key
+  strings and ~225 the replacement map.

@@ -205,9 +205,12 @@ extern "C" bool ResourceMgr_IsAltAssetsEnabled() {
 // table FileAltExists reads, the alt-asset toggle, whether the scene is Master Quest (the path is
 // rewritten for MQ), and the resource not being dirty. A path that has an alt/ version is never
 // answered from the cache, so ResourceMgr_LoadGfxByName still unloads its original each call.
-// Failed lookups are not cached. Read once per game tick in Graph_ProcessGfxCommands.
+// Failed lookups are not cached. Read once per game tick in Graph_ProcessGfxCommands. Default 1:
+// -1160 us (-7.3%) of the frozen Market's render thread, -428 us (-4.4%) at Hyrule Field, and
+// -528 us (-5.6%, t -3.5) in 17 minutes of real play across nine scenes, with no visible change and
+// no new log lines. Set 0 to A/B against the original.
 uint32_t gExtensionCacheGeneration = 0;
-static int sLeanGameLookup = 0;
+static int sLeanGameLookup = 1;
 #ifdef SOH_BENCHMARK
 // Modes 2 and 3 (benchmark builds) answer from the cache and also look up without it, counting
 // answers that differ in gBenchMemoMismatch: 2 against the same path, which must count 0; 3, the
@@ -217,7 +220,7 @@ static std::string sPreviousPath;
 #endif
 
 extern "C" void ResourceMgr_RefreshLeanLookup() {
-    sLeanGameLookup = CVarGetInteger("gSettings.LeanGameLookup", 0);
+    sLeanGameLookup = CVarGetInteger("gSettings.LeanGameLookup", 1);
 }
 
 namespace {

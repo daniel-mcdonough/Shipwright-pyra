@@ -8,7 +8,8 @@ allocations per frame are lookups by name.** `gSettings.LeanTexLoad=1` (now the 
 path copy per texture load: −596 µs (−3.1%) Market, −561 µs (−4.8%) Hyrule Field at 1000 MHz,
 pixel-identical. `gSettings.LeanGameLookup=1` caches the game's ~110 lookups by path per frame,
 exactly (0 mismatches in motion, control fires, pixel-identical): **−1160 µs (−7.3%) Market, −428 µs
-(−4.4%) Hyrule Field at 1250 MHz** — off until a real-play A/B. `gSettings.LeanCVar=1` (−252 µs
+(−4.4%) Hyrule Field at 1250 MHz, −528 µs (−5.6%, t −3.5) in 17 minutes of real play** — now the
+default. Heap allocations per frame at the Market: 3202 → 970. `gSettings.LeanCVar=1` (−252 µs
 Market) **changes the picture** for a reason not found; not shipped. §8.30's window regression holds
 (+295 µs, t 6.4, 8 pairs). Uprobes do not exist on the m4 kernel; `scripts/pyra/allocshim.c` counts
 allocations instead. Before that, §8.30: **the interpolation recording now lives
@@ -133,8 +134,7 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - ~~Lookups by name: count per entry point, then a frozen-only memo on the name pointer.~~
       **Done (§8.31): ~112 per frame, ~9.5 µs each; the memo skip is −1052 µs at the Market.
       `gSettings.LeanGameLookup=1` is the exact form, −1160 µs (−7.3%) Market, −428 µs Hyrule Field.**
-      **Next: the real-play watch-mode A/B (it holds state), then default it.** Include a scene
-      with pre-rendered backgrounds and the ImGui menu.
+      **Real play done: −528 µs (−5.6%, t −3.5, 46 pairs, nine scenes), clean log. Default 1.**
     - ~~malloc/free~~ **Counted (§8.31)** with `scripts/pyra/allocshim.c` (the m4 kernel has no
       uprobes): 3202 per frame at the Market, 1776 at Hyrule Field; CVar keys 711, lookups ~1430,
       texture paths 441 (gone with `LeanTexLoad`, now the default). What is left after the two
