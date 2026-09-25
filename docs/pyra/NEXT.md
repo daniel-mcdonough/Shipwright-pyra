@@ -3,7 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-25 (evening)**, after §8.36: **the draw calls are a quarter of the main thread.**
+Last revised **2026-09-26 (early)**, after §8.37-8.39: **what a draw costs, and why.** A Market draw that
+changes state is ~17.1 µs of CPU at 1000 MHz: ~4.3 µs the call, ~2.2 µs its vertices, ~5.5 µs a texture
+bind (validated at the draw even when the bind restores the same texture, §8.38), ~1.2 µs per uniform
+upload (whatever the value, §8.39, but only 85 per frame), and **~4.5 µs still unexplained**; the 202
+attribute-pointer calls per frame are next to price. 225 of the Market's draws change a texture
+(`BENCH batch`, §8.37). Item H's same-texture splits were 33 of 261 draws: `gSettings.LeanTexReuse=1`
+removes them, −158 µs (−1.1%, t −18.2) window CPU, pixel-identical, clean in real play, now the default.
+Before that, §8.36: **the draw calls are a quarter of the main thread.**
 Skipping `glDrawArrays` alone (`gSettings.ProbeSkipDraw=1`) is −4125 µs of render-thread CPU at the
 Market (−24.3%, t −340, MDE 31), ~15.8 µs per draw at 1000 MHz over 262 draws; the rest of the per-draw
 GL state is ~260 µs and the flush plus swap ~285 µs of CPU (`eof_cpu_us`). So the render side's window
@@ -190,17 +197,16 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - ~~**Price one draw call**~~ **Done (§8.37):** a Market draw at 1000 MHz is ~4.3 µs of call,
       ~2.2 µs of vertices and ~9.3 µs of validation after a state change (`ProbeSkipDraw` 3: +1685 µs
       window CPU, t 97.5; 4: +1120 µs, t 59.8; Hyrule Field 3: +771 µs, t 56.5). Both levers exist and
-      neither is the whole of it.
+      neither is the whole of it. *Corrected in §8.38:* the 15.8 µs average included 33 no-change draws;
+      a state-changing draw is ~17.1 µs, so its validation is ~10.6 µs.
     - ~~**Count avoidable draws**~~ **Done (§8.37), `BENCH batch` line.** 225 of the Market's 261 draws
       change a texture; 33 (13%) were split only by item H's same-texture reload, ~13 of 167 at Hyrule
       Field. No batch fills the buffer; matrices never split one.
     - ~~**`gSettings.LeanTexReuse=1` (item H): real-play A/B, then default it.**~~ **Done: clean in real
       play (16 pairs, seven scenes, nothing seen), default 1; the Market reads 228 draws.** −158 µs (−1.1%, t −18.2,
       MDE 22) window CPU at the Market, 261 → 228 draws; Hyrule Field −24 µs (t −1.3, MDE 49), 167 → 155;
-      0 pixels at both in-process. Stateful (it trusts the backend's binding shadow), so the ladder wants
-      watch mode with the owner playing, including framebuffer-texture effects, the pause menu and ImGui
-      open: `SOH_BENCH_AB_CVAR=gSettings.LeanTexReuse SOH_BENCH_AB_VALUES=0,1`. Expect ~1% render-thread
-      CPU; the point is that nothing looks wrong.
+      0 pixels at both in-process. Real play (watch mode, the pause menu, framebuffer effects and ImGui
+      covered): +85 µs, t 0.17, MDE 1054 — a correctness check, not a measurement; the log was clean.
     - ~~**Does a texture bind alone cost the ~9 µs of validation?**~~ **Done (§8.38): ~5.5 µs, and a bind
       of the texture straight back costs the same (5.3 µs, t 56.0) as a real change (5.8 µs, t 63.9).** A
       state-changing Market draw is ~17.1 µs: call 4.3, vertices 2.2, texture bind 5.5, the rest ~5.
@@ -213,7 +219,9 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - **Could opaque draws be grouped by texture?** Before building any reordering, count (a `BENCH`
       counter) how many draws in runs of consecutive opaque, depth-tested, non-decal draws share a
       texture with an earlier draw in the same run, i.e. how many sorting could remove. Reordering
-      changes the GPU's order; only such runs are candidates.
+      changes the GPU's order; only such runs are candidates. Each draw it merges saves a bind
+      (~5.5 µs, §8.38) and a call (~4.3 µs). Do the attribute-pointer probe first: if one vertex layout
+      takes ~4.5 µs off every state-changing draw without reordering, that is the safer change.
     - **Then the two-core design.** The draw cost is not simply removable: §8.36's ~4.7 ms of GL per
       Market frame stands, less item H's ~0.16 ms.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
