@@ -218,7 +218,8 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       of the texture straight back costs the same (5.3 µs, t 56.0) as a real change (5.8 µs, t 63.9).** A
       state-changing Market draw is ~17.1 µs: call 4.3, vertices 2.2, texture bind 5.5, the rest ~5.
     - ~~**Price a uniform upload the same way**~~ **Done (§8.39): ~1.2 µs at the next draw, same value or
-      not (t 11.5 / 9.9).** 85 per frame at the Market, ~0.1 ms: not the missing ~5 µs, of which ~4.5 is left.
+      not (t 11.5 / 9.9).** 85 per frame at the Market, ~0.1 ms: not the missing ~5 µs, of which ~4.5 is left
+      (~3 after §8.40's pointer and program prices).
     - ~~**Price an attribute-pointer re-specification**~~ **Done (§8.40):** unchanged pointers are free
       (mode 9, +40 µs, t 0.5, MDE 220); pointed away and back ~2.4 µs per draw (mode 10, +561 µs, t 20.0,
       MDE 72). The game changes them only with its 51 program switches: ~0.1 ms. One vertex layout for
@@ -233,7 +234,18 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       (texture ids per unit, program); a non-groupable draw, and every call that could change what an
       earlier draw sees (sampler parameters, texture upload into a live id, framebuffer switch, clear,
       copy, viewport, scissor, end of frame, ImGui), replays the buckets in first-appearance order and
-      re-establishes the shadow. Check `BENCH group`'s numbers become the draw count (228 → ~143).
+      re-establishes the shadow. Check `BENCH group`'s numbers become the draw count (Market 228 → ~143,
+      Hyrule Field ~155 → ~140).
+      Two things decide whether it pays, both from §8.40's prices:
+      - **The vertices must be copied**: the interpreter reuses `mBufVbo` as soon as `DrawTriangles`
+        returns, and client arrays point straight at it. Copy a deferred batch into run storage.
+      - **Keep the attribute pointers still across the replay.** A pointer that changes costs ~2.4 µs
+        at the next draw (mode 10) and an unchanged one nothing (mode 9). Per-bucket arrays would move
+        the base at every bucket. Lay the run's buckets out in one array in replay order, point once
+        per program (stride), and draw each bucket with `glDrawArrays(first, count)`.
+      Count real `glDrawArrays` for the draw count, not `DrawTriangles` calls. The `SOH_BENCH_DUMP`
+      `.vbo` trace is written in `DrawTriangles` order, so `vbocmp.py` will show reordering as
+      differences: compare pixels (`dumpcmp.py`), and read the `.vbo` diff only to locate them.
       Validate: frozen A/B at both fixtures, in-process dumps at both (depth ties are the one expected
       source of difference; look at where any differing pixels are), then real play with the owner, in
       scenes with framebuffer effects and the pause menu. If the Market saves well under 0.9 ms, the
