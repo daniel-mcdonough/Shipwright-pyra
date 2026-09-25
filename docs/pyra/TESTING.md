@@ -111,6 +111,9 @@ SOH_BENCH_EYE=-707.3,55.3,-222.8 SOH_BENCH_AT=-592.8,34.7,-195.9 SOH_BENCH_SETTL
 ```
 
 Market and Hyrule Field bracket the answer between them. Kokiri has not been re-measured uncapped.
+**None of the three draws a pre-rendered background** (§8.35: in `oot.o2r` only the interiors, e.g. the
+Kokiri houses and shop, have a `…Background_…` resource). For a change that could touch that path, use
+watch mode and go indoors.
 
 ## 3. The four things you can run
 

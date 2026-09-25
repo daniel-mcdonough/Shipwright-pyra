@@ -3,7 +3,11 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-25 (afternoon)**, after §8.34: **§8.30's timed-window regression is gone in wall
+Last revised **2026-09-25 (afternoon)**, after §8.35: **client arrays (`LeanGLState=3`) hold at Kokiri
+in real play: −20.2% render-thread CPU (t −7.7, 14 pairs), −18.9% (t −9.0) inside five pre-rendered
+interiors**, no visible change there or in the pause or ImGui menus, and no per-frame resource loads
+from the backgrounds. No frozen fixture has a pre-rendered background (checked in `oot.o2r`).
+Before that, §8.34: **§8.30's timed-window regression is gone in wall
 time** (+74 µs, t 1.6, MDE 107, 8 pairs at 1000 MHz; it was +295). Two thirds of the old figure was the
 render thread *waiting* inside the window, not working. What is left is +44 µs of window CPU (t 4.0,
 MDE 26). A probe that adds ~690 KB of cache traffic per tick outside the window costs the window +91 µs
@@ -108,8 +112,9 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     −2020 µs (−13.6%) of render-thread CPU over 25 real-play pairs, t −4.7. No GL errors and no
     visible glitches. Now the GLES2 default; desktop GL keeps 0 because a core profile rejects
     client arrays.** Still open:
-    - Kokiri, and scenes with pre-rendered backgrounds.
-    - The pause menu was exercised in play; the ImGui menu is unrecorded.
+    - ~~Kokiri, and scenes with pre-rendered backgrounds.~~ **Done (§8.35): −20.2% at Kokiri in real
+      play (t −7.7), −18.9% (t −9.0) in five pre-rendered interiors, nothing visible.**
+    - ~~The pause menu was exercised in play; the ImGui menu is unrecorded.~~ Both exercised in §8.35.
     - At Hyrule Field a quarter of the CPU saving came back as swap time. If the GPU is now the
       next limit there, the "is the frame pipelined" question (item 5 below) is live again.
     - Modes 1-2 alone are ~0.1 ms. Kept because mode 3's pointer handling is built on the shadow.
@@ -187,8 +192,9 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
      real-play pairs, 0 flushes across nine scenes, no visual change. Default is now 3.
    - A session with a texture pack, reading `bench.sh watch blocks` for `lookup_flush`.
    - Hyrule Field 0 → 3 at 1250 MHz (both runs there were thermally capped to 1000).
-   - The `Gfxs2dexBg*` path lookups (pre-rendered backgrounds) are not cached; check with a fixture
-     that has one before assuming they matter.
+   - ~~The `Gfxs2dexBg*` path lookups (pre-rendered backgrounds) are not cached; check with a fixture
+     that has one before assuming they matter.~~ In real play in five pre-rendered rooms (§8.35) there are
+     no misses or resource loads after the room's first block. No frozen fixture has one.
    - **Next profile:** re-take §8.21's flat profile with mode 3 on. The frame's composition has
      changed by 12%, and the ranking below it was made against the old one.
 

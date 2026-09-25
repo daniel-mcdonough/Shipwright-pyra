@@ -2604,3 +2604,46 @@ this rig's MDE, and either change adds work to the path that saves 1.5 ms. **Not
   inside the window includes GPU waiting, which moves whenever the game side speeds up (§8.31 and §8.34
   both saw ~100 µs of it). TESTING.md says so now.
 - The remaining heap traffic (~225 allocations per frame for the replacement map) is the next block.
+
+## 8.35 Client arrays at Kokiri in real play: −20%, and exact-looking in the pre-rendered interiors
+
+Measured 2026-09-25 afternoon, the owner playing. §8.25 made `gSettings.LeanGLState=3` (client-side
+vertex arrays) the GLES2 default from the Market, Hyrule Field and a real-play session that never
+entered Kokiri or a pre-rendered room. This closes that gap.
+
+**Pre-rendered rooms, from the data.** In the device's `oot.o2r` each of the Kokiri interiors
+(`kokiri_home_scene`, `kokiri_home3`–`5`, `kokiri_shop_scene`) has a `…room_0Background_…` image
+resource. Kokiri Forest (`spot04_scene`) and the Market (`market_day_scene`) have none, so **no frozen
+fixture has ever drawn a pre-rendered background**. (`link_home_scene` has one too; not visited.)
+
+**Run.** Watch mode at entrance 0x00EE, `LeanGLState` 0,3 alternating per 300-frame block, capped
+(`SOH_BENCH_UNCAP=0`), pinned at 1250 MHz (`PYRA_WATCH_PIN=1`), the die at 65 → 71 °C. About 7
+minutes of play: Kokiri Forest (scene 85) and five pre-rendered interiors, the Know-It-All Brothers'
+(38), the Twins' (39), Mido's (40), Saria's (41) and the shop (45), with the pause menu and the ImGui
+menu opened. 43 blocks, all on the pin; 7 pairs dropped for spanning a scene change, 14 used.
+
+| real play, render-thread CPU per frame | pairs | A (`LeanGLState` 0) | Δ | t | MDE |
+|---|---|---|---|---|---|
+| all | 14 | 12,353 µs | **−2495 µs (−20.2%)** | −7.7 | 698 |
+| pre-rendered interiors | 9 | 11,747 µs | **−2225 µs (−18.9%)** | −9.0 | 570 |
+| Kokiri Forest | 5 | 13,444 µs | −2980 µs (−22.2%) | −3.7 | 2220 |
+
+- The interiors are the clean comparison: the camera is fixed, and the draw counts of the two arms
+  agree (132 against 136 per frame). Every one of the nine pairs is negative (−631 to −3054 µs).
+- The forest pairs are noisier because the owner was moving: arm 3's blocks drew 14% fewer draws
+  there, so part of that −22% is content. Its MDE is too wide to separate the two.
+- The saving is larger than §8.25's −13.6% across eleven other scenes. Kokiri's scenes are lighter
+  overall, so a fixed per-draw saving is a bigger share of them. *Reasoning, not measured.*
+- **Lookups:** in every interior `lookup_miss` and `res_loads_window` are non-zero only in the first
+  block after entering the room, which is scene load, and then 0. `lookup_flush` is 0 throughout. The
+  pre-rendered background adds no per-frame resource loads. §8.22's worry that the `Gfxs2dexBg*` path
+  lookups are uncached does not show up as a cost here.
+- **Picture:** the owner saw no change in either arm, in the forest, the interiors, the pause menu or
+  the ImGui menu. The log's error and warning lines are the same kinds and counts as the frozen runs of
+  §8.34 (the known flush bug, 36 `RGBA Texture that isn't 16 or 32 bit` lines, two PVR
+  `ComputeFrameBufferCompleteness` lines at startup).
+
+**`LeanGLState=3` stays the default**, now covering Kokiri, pre-rendered rooms and the ImGui menu.
+
+**A harness trap, again:** the game saved arm 0 into the config during watch mode, so the device booted
+with `LeanGLState=0` afterwards until it was put back (TESTING.md trap 17). It was put back.
