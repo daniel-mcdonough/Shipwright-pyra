@@ -415,6 +415,12 @@ bool gPlayerMoved = false;
 // whichever arm happened to be last into the user's config on exit.
 bool gHaveOriginalArm = false;
 std::string gOriginalArm;
+// Whether the A/B CVar existed before the run. The game saves CVars on its own mid-run (a GUI
+// window's visibility sync can trigger it), so an arm can land in the config file; §8.31 found
+// gSettings.LeanCVar=1 persisted that way, silently on in every later run. At the end the CVar
+// is put back exactly - cleared if it was absent, since reading an absent CVar as 0 would
+// replace a default of 1 - and the config is saved.
+bool gOriginalArmExisted = false;
 
 int ArmCount() {
     return gCfg.abCVar.empty() ? 1 : (int)gCfg.abValues.size();
@@ -984,6 +990,7 @@ void EnterMeasuring() {
         gOriginalArm = ArmIsFloat() ? std::to_string(CVarGetFloat(gCfg.abCVar.c_str(), 1.0f))
                                     : std::to_string(CVarGetInteger(gCfg.abCVar.c_str(), 0));
         gHaveOriginalArm = true;
+        gOriginalArmExisted = CVarGet(gCfg.abCVar.c_str()) != nullptr;
         ApplyArm(gCfg.abValues[0]);
         // Same reasoning as AdvanceSegment: arm 0 may differ from whatever the config booted
         // with, so the first segment gets the same recompilation grace as the rest.
@@ -1005,6 +1012,10 @@ void AdvanceSegment() {
         WriteResults();
         if (gHaveOriginalArm) {
             ApplyArm(gOriginalArm);
+            if (!gOriginalArmExisted) {
+                CVarClear(gCfg.abCVar.c_str());
+            }
+            CVarSave();
         }
         if (gCfg.exitWhenDone) {
             Ship::Context::GetInstance()->GetWindow()->Close();
