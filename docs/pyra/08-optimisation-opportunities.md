@@ -3192,8 +3192,10 @@ every pair of this run.
 
 ### What this leaves
 
-- **Whether to make `LeanGroup=1` the GLES2 default.** It is not exact: depth ties can resolve the
-  other way, visibly only at ±1 level so far. Every earlier default was exact or pixel-identical.
+- ~~Whether to make `LeanGroup=1` the GLES2 default~~ **Made the GLES2 default at the owner's call**
+  (libultraship, after `4c2fbd4c`), the first default that is not exact. Checked with the key absent from
+  the device's config: one soaked Market segment at 1000 MHz drew 145 `glDrawArrays`, deferred 159, and
+  read 13.51 ms of window CPU (the A/B's arm 1: ~13.55).
 - Program switches are the part of a draw grouping did not take (~48 per Market frame, ~5.8 µs each at
   the next draw). Sorting a run's buckets by program would take some, at the price of more reordering.
   Not measured.

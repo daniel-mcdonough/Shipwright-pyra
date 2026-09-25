@@ -9,7 +9,8 @@ buckets by program and textures and replays each run in one arena: Market draws 
 **−840 µs (−5.8%, t −41.1, MDE 53)**; Hyrule Field 155 → 140, −143 µs (−1.6%, t −8.9, MDE 41). That is
 ~10 µs per removed draw against §8.40's conservative ~11: the draw prices add. Market pixel-identical;
 Hyrule Field 26 pixels at ±1 level on alternate frames (depth ties on the horizon band and Link's boot).
-Clean in real play (nothing visible; speed unresolved, MDE ~500 µs). **Open: whether to default it.**
+Clean in real play (nothing visible; speed unresolved, MDE ~500 µs). **Now the GLES2 default** (owner's
+call; the first default that is not exact). Frozen Market: 145 draws, window CPU ~13.5 ms at 1000 MHz.
 Before that, §8.40: **grouping by texture was the next build.** At
 the Market 159 of 228 draws sit in runs of consecutive opaque, depth-written, non-decal draws, and 85 of
 those have the same texture set and program as an earlier draw of their run (`BENCH group`); sorting
@@ -241,9 +242,8 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       Field 155 → 140, −143 µs (−1.6%, t −8.9, MDE 41); ~10 µs per removed draw, so §8.37-8.40's prices
       add. Market pixel-identical in-process; Hyrule Field 26 pixels at ±1 level from depth ties; clean
       in real play with the owner (pause menu, ImGui, pre-rendered rooms), speed unresolved there.
-    - **Decide `LeanGroup`'s default.** It is the first candidate that is not exact: depth ties can
-      resolve the other way (±1 level so far). If defaulted, check it took effect with `bench.sh run`
-      and a draw count of ~145 at the Market (TESTING.md §6).
+    - ~~**Decide `LeanGroup`'s default.**~~ **Default 1 on GLES2** (owner's call). Checked: with the key
+      absent, a soaked Market `run` draws 145 and reads 13.51 ms window CPU at 1000 MHz.
     - **Maybe: sort a run's buckets by program too.** Grouping kept 48 of 51 program switches (~5.8 µs
       each, §8.40); ordering buckets by program within a run would take some at the price of more
       reordering. Count first: how many switches a program-major order would leave.

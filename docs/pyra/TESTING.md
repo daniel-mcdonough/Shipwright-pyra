@@ -379,7 +379,9 @@ BENCH period mde_us=...
   it off. Frozen Market: 159, 76, 12, 76; `lg_draws` above `lg_buckets` means buckets outgrew their
   chunks. **With it on, `draws` on the work line still counts `DrawTriangles` calls; read real draws
   from `glDrawArrays` on the glfn line** (Market 228 → 145).
-- `gSettings.LeanGroup` (§8.41, default 0, GLES2 with `LeanGLState=3`): deferred, grouped opaque draws.
+- **Since 2026-09-25 late evening `gSettings.LeanGroup` defaults to 1 on GLES2** (§8.41, with
+  `LeanGLState=3`): deferred, grouped opaque draws. The frozen Market draws **145** per frame, not 228,
+  and its window CPU reads ~13.5 ms at 1000 MHz, not ~14.4. Set it to 0 only to A/B against the original.
   **Not exact**: where two opaque surfaces tie in depth the other may win (Hyrule Field: 26 pixels at ±1
   level on alternate frames). Compare dumps at both frame phases and expect that, not zero. The `.vbo`
   trace stays in `DrawTriangles` order, so `vbocmp.py` does not see the reordering.
