@@ -2987,3 +2987,114 @@ before the repeat; **8** draws the repeat with the first width one larger, then 
 - **Price an attribute-pointer re-specification** the same way (a mode that re-issues the program's
   unchanged `glVertexAttribPointer`s between mode 3's draws). If it is the ~4.5 µs, a single vertex
   layout for every program (padding the unused attributes) would remove it without reordering anything.
+
+## 8.40 Pointers and programs price the rest of a draw; 85 of the Market's 228 draws could merge by texture
+
+Measured 2026-09-25 afternoon, the device free for the session, frozen Market pinned at 1000 MHz, soaked
+to 70 °C with `SOH_BENCH_WARMUP=2400`, the die let down to 62-65 °C before each run. All 36 segments were
+on the pin; no pair was dropped. `LeanTexReuse=1` is the default here, so the Market draws 228 per frame.
+The two tasks §8.39 left: price an attribute-pointer re-specification, and count what grouping by
+texture could remove before building any reordering.
+
+### The probes
+
+`gSettings.ProbeSkipDraw` 9, 10 and 11 (libultraship `dd32139f`, mode 10 as below from `3d5a2408`), each
+A/B'd against mode 3 (every draw twice) as in §8.38, so the delta is only what the extra calls add to the
+repeat:
+
+- **9**: re-issue every attribute pointer of the current program with the values it already holds.
+- **10**: point each of them elsewhere (stride + 4) and straight back, as mode 5 does for a bind. Mode 10
+  first re-issued only the first pointer; it was changed before it ran, once mode 9 showed an unchanged
+  pointer costs nothing, because the game's own re-specifications are real changes.
+- **11**: `glUseProgram` of the last other program drawn with, and back.
+
+| 6 pairs each, Δ against mode 3 | Δ window CPU | t | MDE | extra calls per frame | per draw |
+|---|---|---|---|---|---|
+| mode 9, pointers re-issued unchanged (A 16,092 µs) | +40 µs (+0.3%) | 0.5 | 220 | 1304 `glVertexAttribPointer` | < 1 µs |
+| mode 10, pointers away and back (A 16,047 µs) | **+561 µs (+3.5%)** | 20.0 | 72 | 2620 `glVertexAttribPointer` | **~2.4 µs** |
+| mode 11, program away and back (A 16,067 µs) | **+1335 µs (+8.3%)** | 45.3 | 76 | 458 `glUseProgram` | **~5.8 µs** |
+
+Mode 9's run was noisy: one pair read −385 µs, the other five +87 to +155 µs. Either way it is well
+under a microsecond per draw. Mode 11 moved the swap −162 µs (t −11.1) and `eof_cpu_us` −12 µs; the
+window CPU is what it measures.
+
+- **The driver skips an unchanged attribute pointer, but not a changed one.** Pointing every attribute
+  of the program (~5.7 per draw) away and back costs ~2.4 µs at the next draw.
+- **A program switch costs ~5.8 µs at the next draw**, the same as a texture bind (§8.38), even when the
+  draw ends up on the program it started with.
+
+### What a state-changing draw costs, now
+
+The game makes 51 program switches and 202 pointer re-specifications per Market frame, and the pointer
+changes come with the program switches (~4 each). Averaged over the 229 state-changing draws at 1000 MHz:
+
+| | µs |
+|---|---|
+| the call (§8.37) | 4.3 |
+| its vertices (§8.37) | 2.2 |
+| texture bind, 225 per frame × 5.5 (§8.38) | ~5.4 |
+| uniform uploads, 85 × 1.2 (§8.39) | ~0.5 |
+| program switch, 51 × 5.8 | ~1.3 |
+| attribute pointers, 51 changes × ~2.4 | ~0.5 |
+| **accounted** | **~14.2 of 17.1** |
+
+*Reasoning, not measured:* the ~3 µs left is depth, blend and polygon-offset changes (35 `glEnable`, 21
+`glDepthMask` per frame) and whatever the prices fail to add linearly. §8.39 already saw one validation
+per draw, not one per call. None of it is a lever on its own. **One vertex layout for every program, the
+change §8.39 hoped for, would save ~0.1 ms per frame: not worth it.**
+
+### What grouping by texture could remove
+
+`BENCH group <seg>` (same commit): a **run** is a maximal sequence of consecutive draws that are opaque
+(no blend), depth-tested with depth writes, not decal and not "invisible", with no viewport, scissor or
+framebuffer change between. The backend bumps an epoch at every framebuffer switch, clear, copy, resolve
+and frame start (`gBenchFbEpoch`), which ends a run. Within such a run only equal depths make the order
+visible. Each draw's texture set is the cache entries of the textures its program samples, with their mask
+and blend textures. The counts are per frame, and identical in every segment and on the host's native
+build (TESTING.md §6):
+
+| | Market | Hyrule Field (host) |
+|---|---|---|
+| draws per frame | 228 | ~155 |
+| runs | 11 | 13 |
+| draws in runs | **159** | 48 |
+| … whose texture set an earlier draw of the run had (`tex_dup`) | **86** | 15 |
+| … with the same program as well (`key_dup`) | **85** | 15 |
+| texture-set changes inside runs, as issued → sorted by texture set | **148 → 62** | 35 → 20 |
+
+- **At the Market, 85 draws per frame (37%) could join an earlier draw of their run**: same textures,
+  same program, same depth and blend state. The per-draw uniforms come only from the textures and the
+  program (`SetPerDrawUniforms`), so a merged draw draws the same thing. Sampler parameters live on the
+  texture object and are set in place (4 per frame); a real implementation has to end a run on one.
+- Hyrule Field is mostly blended or decal: only 48 of its draws are in runs, and 15 could merge.
+- *Estimate, not measured:* a merged draw keeps its vertices (~2.2 µs) and drops the rest. If the draws
+  that merge cost the 17.1 µs average, that is ~15 µs × 85 ≈ 1.3 ms of the Market's ~14.1 ms window CPU
+  (~9%). Most of them are texture-only changes (175 of 228 draws are split by `tex_new` alone), priced
+  at ~4.3 + 5.5 + ~1 µs of uniforms, so ~11 µs × 85 ≈ 0.9 ms (~6%) is the conservative figure. Hyrule
+  Field: ~0.15-0.2 ms (~2%).
+
+### Is reordering worth its risk?
+
+**Yes, at the Market: 6-9% of window CPU is more than any lever left except moving GL to another core,
+and it composes with that one.** The risk is specific and testable:
+
+- **Depth ties.** With `GL_LESS` the earlier of two draws wins where their depths are equal. Moving a
+  draw earlier changes that only where two opaque, non-decal surfaces coincide exactly. The in-process
+  dumps would show it in the frozen fixtures, and a real-play session is still needed.
+- **State that is not in the key.** Sampler parameters (set on the texture object), texture uploads into
+  a live id, and anything the backend does outside `DrawTriangles` must end a run. If it lives in the
+  backend, which already shadows every piece of state, the barriers are in one class.
+- **Its own cost.** It copies each run's vertices once more into per-key buckets (~159 draws × ~6
+  triangles), which is small next to 85 × 11-15 µs.
+
+The right shape is a CVar-gated deferral in the GLES2 backend: `DrawTriangles` on a groupable state
+appends the vertices to a bucket keyed by (texture ids per unit, program); anything non-groupable, and
+every state or framebuffer call that could change what an earlier draw sees, replays the buckets in
+first-appearance order and restores the shadow. A/B it frozen at both fixtures, dump both, then real
+play.
+
+### What this leaves
+
+- Build the grouping (`gSettings.LeanGroup`, default 0) and A/B it. The estimate is 0.9-1.3 ms at the
+  Market; if it lands well under 0.9 ms, the draw prices do not add up the way this section assumes.
+- Then the two-core design: GL at ~4.7 ms per Market frame (§8.36) is ~3.6 ms after grouping.

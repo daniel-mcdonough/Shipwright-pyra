@@ -3,11 +3,18 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26 (early)**, after §8.37-8.39: **what a draw costs, and why.** A Market draw that
+Last revised **2026-09-25 (afternoon)**, after §8.40: **grouping by texture is the next build.** At
+the Market 159 of 228 draws sit in runs of consecutive opaque, depth-written, non-decal draws, and 85 of
+those have the same texture set and program as an earlier draw of their run (`BENCH group`); sorting
+would cut texture changes in runs from 148 to 62. Estimated 0.9-1.3 ms of the ~14.1 ms window CPU
+(6-9%); Hyrule Field only 15 draws (~2%). The rest of a draw is priced: an attribute pointer changed
+and back is ~2.4 µs per draw (`ProbeSkipDraw=10`, t 20.0; unchanged ones are free, mode 9), a program
+switch and back ~5.8 µs (mode 11, t 45.3). Of a 17.1 µs state-changing draw ~14.2 µs is now accounted
+for; one vertex layout for all programs would save ~0.1 ms, so it is not worth building.
+Before that, §8.37-8.39: **what a draw costs, and why.** A Market draw that
 changes state is ~17.1 µs of CPU at 1000 MHz: ~4.3 µs the call, ~2.2 µs its vertices, ~5.5 µs a texture
 bind (validated at the draw even when the bind restores the same texture, §8.38), ~1.2 µs per uniform
-upload (whatever the value, §8.39, but only 85 per frame), and **~4.5 µs still unexplained**; the 202
-attribute-pointer calls per frame are next to price. 225 of the Market's draws change a texture
+upload (whatever the value, §8.39, but only 85 per frame). 225 of the Market's draws change a texture
 (`BENCH batch`, §8.37). Item H's same-texture splits were 33 of 261 draws: `gSettings.LeanTexReuse=1`
 removes them, −158 µs (−1.1%, t −18.2) window CPU, pixel-identical, clean in real play, now the default.
 Before that, §8.36: **the draw calls are a quarter of the main thread.**
@@ -212,18 +219,27 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       state-changing Market draw is ~17.1 µs: call 4.3, vertices 2.2, texture bind 5.5, the rest ~5.
     - ~~**Price a uniform upload the same way**~~ **Done (§8.39): ~1.2 µs at the next draw, same value or
       not (t 11.5 / 9.9).** 85 per frame at the Market, ~0.1 ms: not the missing ~5 µs, of which ~4.5 is left.
-    - **Price an attribute-pointer re-specification** (202 `glVertexAttribPointer` per Market frame, nearly
-      one per draw): a `ProbeSkipDraw` mode that re-issues the program's unchanged pointers between mode 3's
-      draws, against mode 3. If it is the ~4.5 µs, one vertex layout for all programs removes it without
-      reordering.
-    - **Could opaque draws be grouped by texture?** Before building any reordering, count (a `BENCH`
-      counter) how many draws in runs of consecutive opaque, depth-tested, non-decal draws share a
-      texture with an earlier draw in the same run, i.e. how many sorting could remove. Reordering
-      changes the GPU's order; only such runs are candidates. Each draw it merges saves a bind
-      (~5.5 µs, §8.38) and a call (~4.3 µs). Do the attribute-pointer probe first: if one vertex layout
-      takes ~4.5 µs off every state-changing draw without reordering, that is the safer change.
-    - **Then the two-core design.** The draw cost is not simply removable: §8.36's ~4.7 ms of GL per
-      Market frame stands, less item H's ~0.16 ms.
+    - ~~**Price an attribute-pointer re-specification**~~ **Done (§8.40):** unchanged pointers are free
+      (mode 9, +40 µs, t 0.5, MDE 220); pointed away and back ~2.4 µs per draw (mode 10, +561 µs, t 20.0,
+      MDE 72). The game changes them only with its 51 program switches: ~0.1 ms. One vertex layout for
+      all programs is not worth building. Also priced: a program switch and back, ~5.8 µs per draw (mode
+      11, +1335 µs, t 45.3, MDE 76), ~0.3 ms per frame. ~14.2 of a 17.1 µs draw is accounted for.
+    - ~~**Could opaque draws be grouped by texture?**~~ **Counted (§8.40), `BENCH group` line: yes, at the
+      Market.** 159 of 228 draws are in 11 runs of opaque, depth-written, non-decal draws; 85 share
+      texture set and program with an earlier draw of the run; texture changes in runs 148 → 62 if
+      sorted. Hyrule Field: 48 draws in runs, 15 could merge. Estimate 0.9-1.3 ms Market, ~0.2 ms Field.
+    - **Build the grouping: `gSettings.LeanGroup`, default 0, in the GLES2 backend.** `DrawTriangles` on a
+      groupable state (depth test and write, no decal, no blend) appends its vertices to a bucket keyed by
+      (texture ids per unit, program); a non-groupable draw, and every call that could change what an
+      earlier draw sees (sampler parameters, texture upload into a live id, framebuffer switch, clear,
+      copy, viewport, scissor, end of frame, ImGui), replays the buckets in first-appearance order and
+      re-establishes the shadow. Check `BENCH group`'s numbers become the draw count (228 → ~143).
+      Validate: frozen A/B at both fixtures, in-process dumps at both (depth ties are the one expected
+      source of difference; look at where any differing pixels are), then real play with the owner, in
+      scenes with framebuffer effects and the pause menu. If the Market saves well under 0.9 ms, the
+      draw prices of §8.37-8.40 do not add the way §8.40 assumes; say so.
+    - **Then the two-core design.** §8.36's ~4.7 ms of GL per Market frame, less item H's ~0.16 ms,
+      less whatever grouping takes (~0.9-1.3 ms estimated).
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
       on 2026-09-24 and took over the desktop at 1920×1080 — check before the next host run.

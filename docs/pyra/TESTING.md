@@ -357,6 +357,9 @@ BENCH period mde_us=...
   5 and 6 (§8.38) repeat it after binding another texture to unit 0 and back, or with the other texture
   bound; A/B them against 3, not 0.
   7 and 8 (§8.39) repeat it after re-uploading the texture-size uniform unchanged, or changed; against 3.
+  9 and 10 (§8.40) repeat it after re-issuing the program's attribute pointers unchanged, or pointed
+  elsewhere and back; 11 after `glUseProgram` of another program and back. Against 3. The driver skips an
+  unchanged pointer (mode 9 reads ~0), so only an away-and-back probe prices a real change.
 - `BENCH batch <seg>` (§8.37): draws per frame by the set of state changes that split each from the
   previous batch. `cause=any/alone` per cause, then the commonest sets. `tex_same` is a reload of the
   texture already bound (NEXT.md item H); `other` should read ~1 (the frame's last draw). If `other`
@@ -364,6 +367,12 @@ BENCH period mde_us=...
 - **Since 2026-09-25 night `gSettings.LeanTexReuse` defaults to 1** (§8.37): no batch split on a
   same-texture reload. The frozen Market draws **228** per frame, not 261, and `tex_same` reads 0. Set it
   to 0 only to A/B against the original.
+- `BENCH group <seg>` (§8.40): what sorting by texture could remove. `runs` are maximal sequences of
+  consecutive opaque, depth-written, non-decal draws with no viewport, scissor or framebuffer change
+  between (the backend bumps `gBenchFbEpoch` at every framebuffer switch, clear, copy and frame start);
+  `draws` in them; `tex_dup`/`key_dup` the draws whose texture set / texture set and program an earlier
+  draw of the run had; `tex_chg` → `tex_chg_sorted` texture-set changes inside runs as issued and if
+  sorted. Frozen Market: 11, 159, 86, 85, 148 → 62. The host's native build gives the same numbers.
 - `BENCH lookup <seg>` (§8.31): `calls` is resource lookups by name or CRC made by the render thread,
   counted once each at their outermost entry (a `ResourceMgr_*` helper, a bridge function or a
   `ResourceManager` method). `ResourceMgr_OTRSigCheck` is scoped too and is a prefix check, not a
