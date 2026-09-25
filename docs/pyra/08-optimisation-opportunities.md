@@ -2956,3 +2956,34 @@ unchanged uniform would price it the same way.
   them: ~1.2 ms per frame. Only fewer binds reduce it: grouping draws by texture (reordering, NEXT.md),
   or fewer distinct textures per frame (atlases; not a small change).
 - Price the uniform part the same way before deciding anything about uniforms.
+
+## 8.39 A uniform upload costs ~1.2 µs at the next draw; uniforms are not the missing ~5 µs
+
+Same session and conditions as §8.38 (frozen Market, 1000 MHz, soaked, 65 °C between runs, all 24
+segments on the pin, `LeanTexReuse=1`, 228 draws).
+
+`gSettings.ProbeSkipDraw` 7 and 8 (libultraship `b931969e`), against mode 3 as in §8.38, on draws whose
+program samples a texture (226 of 228): **7** re-uploads the texture-size uniform with the value it holds
+before the repeat; **8** draws the repeat with the first width one larger, then restores it.
+
+| 6 pairs each, Δ against mode 3 | Δ window CPU | t | MDE | extra `glUniform2fv` | per draw |
+|---|---|---|---|---|---|
+| mode 7, same value (A 15,908 µs) | **+280 µs (+1.8%)** | 11.5 | 63 | 226 | **~1.2 µs** |
+| mode 8, different value (A 15,806 µs) | **+296 µs (+1.9%)** | 9.9 | 77 | 452 | **~1.3 µs** |
+
+- **A uniform upload costs ~1.2 µs at the next draw, whatever the value** — the driver re-validates on the
+  call, as with binds (§8.38), but at a fifth of a bind's price. Mode 8's second upload per draw (the
+  restore) lands before the next real draw and did not add a second 1.2 µs there, which fits "dirty once,
+  validated once per draw".
+- The game makes 85 such uploads per frame at the Market (`LeanGLState` ≥ 2 already skips unchanged
+  ones): ~0.1 ms, ~0.5 µs averaged over the 229 state-changing draws. **§8.38's remaining ~5 µs is ~4.5 µs
+  unexplained.**
+- What is left per frame to account for it: 202 `glVertexAttribPointer` (shadowed; re-specified when a
+  program's layout or stride changes), 51 `glUseProgram`, and depth/blend/polygon-offset changes (35
+  `glEnable`, 21 `glDepthMask`, ...). The attribute pointers are the only one near one per draw.
+
+### What this leaves
+
+- **Price an attribute-pointer re-specification** the same way (a mode that re-issues the program's
+  unchanged `glVertexAttribPointer`s between mode 3's draws). If it is the ~4.5 µs, a single vertex
+  layout for every program (padding the unused attributes) would remove it without reordering anything.

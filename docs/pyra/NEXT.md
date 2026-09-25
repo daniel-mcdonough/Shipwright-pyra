@@ -204,8 +204,12 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - ~~**Does a texture bind alone cost the ~9 µs of validation?**~~ **Done (§8.38): ~5.5 µs, and a bind
       of the texture straight back costs the same (5.3 µs, t 56.0) as a real change (5.8 µs, t 63.9).** A
       state-changing Market draw is ~17.1 µs: call 4.3, vertices 2.2, texture bind 5.5, the rest ~5.
-    - **Price a uniform upload the same way** (a `ProbeSkipDraw` mode that re-uploads an unchanged
-      texture-size uniform between mode 3's draws). The likeliest part of the remaining ~5 µs.
+    - ~~**Price a uniform upload the same way**~~ **Done (§8.39): ~1.2 µs at the next draw, same value or
+      not (t 11.5 / 9.9).** 85 per frame at the Market, ~0.1 ms: not the missing ~5 µs, of which ~4.5 is left.
+    - **Price an attribute-pointer re-specification** (202 `glVertexAttribPointer` per Market frame, nearly
+      one per draw): a `ProbeSkipDraw` mode that re-issues the program's unchanged pointers between mode 3's
+      draws, against mode 3. If it is the ~4.5 µs, one vertex layout for all programs removes it without
+      reordering.
     - **Could opaque draws be grouped by texture?** Before building any reordering, count (a `BENCH`
       counter) how many draws in runs of consecutive opaque, depth-tested, non-decal draws share a
       texture with an earlier draw in the same run, i.e. how many sorting could remove. Reordering
