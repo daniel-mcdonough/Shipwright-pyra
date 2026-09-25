@@ -4,7 +4,7 @@ The numbered reports are a record of what happened. This file is the opposite: a
 rewritten as things land. If it disagrees with a report, this file is newer.
 
 Last revised **2026-09-25 (evening)**, after §8.41: **grouping by texture is built and measured.**
-`gSettings.LeanGroup=1` (GLES2 backend, default 0) defers opaque, depth-written, non-decal draws into
+`gSettings.LeanGroup=1` (GLES2 backend, now the default) defers opaque, depth-written, non-decal draws into
 buckets by program and textures and replays each run in one arena: Market draws 228 → 145, window CPU
 **−840 µs (−5.8%, t −41.1, MDE 53)**; Hyrule Field 155 → 140, −143 µs (−1.6%, t −8.9, MDE 41). That is
 ~10 µs per removed draw against §8.40's conservative ~11: the draw prices add. Market pixel-identical;
