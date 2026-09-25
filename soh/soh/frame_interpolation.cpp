@@ -6,6 +6,7 @@
 #include <memory>
 #include <memory_resource>
 #include <optional>
+#include <chrono>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
@@ -422,6 +423,44 @@ PmrRecorder pmr_recorder;
 
 #ifdef SOH_BENCHMARK
 bool corrupt_pending;
+
+// §8.34, benchmark builds only: two probes for why LeanInterp=1 moved the Market's timed window
+// (+295 us, §8.31). Both run here, once per game tick, outside the window, and change no picture.
+// gSettings.ProbeSpinUs=N spins N us of CPU: gives back the game-side time the arena saved, to test
+// whether the window grew because the GPU had less slack. gSettings.ProbeTouchKB=N writes one of two
+// N KB buffers (alternating per tick, as the arena's two recordings do) and reads both: the arena's
+// cache traffic without the arena, to test the L2 guess.
+void BenchWindowProbes() {
+    const int spin_us = CVarGetInteger("gSettings.ProbeSpinUs", 0);
+    if (spin_us > 0) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::microseconds(spin_us);
+        while (std::chrono::steady_clock::now() < end) {
+        }
+    }
+    const int touch_kb = CVarGetInteger("gSettings.ProbeTouchKB", 0);
+    if (touch_kb > 0) {
+        static vector<uint32_t> buf[2];
+        static int which;
+        const size_t words = (size_t)touch_kb * 1024 / sizeof(uint32_t);
+        for (auto& b : buf) {
+            if (b.size() != words) {
+                b.assign(words, 0);
+            }
+        }
+        which ^= 1;
+        static volatile uint32_t sink;
+        uint32_t sum = 0;
+        for (size_t i = 0; i < words; i += 16) { // one store per 64-byte line
+            buf[which][i] = (uint32_t)i;
+        }
+        for (auto& b : buf) {
+            for (size_t i = 0; i < words; i += 16) {
+                sum += b[i];
+            }
+        }
+        sink = sum;
+    }
+}
 #endif
 
 struct InterpolateCtx {
@@ -748,6 +787,7 @@ void FrameInterpolation_StartRecord(void) {
     // gSettings.ProbeInterpCorrupt=1, benchmark builds only: the positive control for LeanInterp=2.
     // Perturbs the first ToMtx of each tick in the pmr recording.
     corrupt_pending = CVarGetInteger("gSettings.ProbeInterpCorrupt", 0) != 0;
+    BenchWindowProbes();
     // gSettings.ProbeSkipInterp=1 (§8.29), benchmark builds only, read once per game tick. Records
     // nothing, so FrameInterpolation_Interpolate returns an empty map and GfxSpMatrix never finds a
     // replacement - while InterpolationFPS, and with it the number of frames each tick emits, is
