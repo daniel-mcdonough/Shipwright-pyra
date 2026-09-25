@@ -39,6 +39,16 @@ void Benchmark_SetupDebugSave(void);
 void Benchmark_FrameBegin(void);
 void Benchmark_FrameEnd(void);
 
+// Logic/render split of one game tick (SOH_BENCH_SPLIT=<ticks per log line>). Independent of the
+// fixture phases, so it also runs under SOH_BENCH_WATCH while someone plays. The marks are:
+//   SPLIT_TICK_BEGIN    top of the tick, before input and Graph_Update
+//   SPLIT_RENDER_BEGIN  Graph_Update done; Graph_ProcessGfxCommands entered
+//   SPLIT_RENDER_END    RunCommands done - every interpolated frame drawn and swapped
+//   SPLIT_TICK_END      audio hand-off waited for; the tick is over
+// `frames` is only read at SPLIT_RENDER_END: the frames that tick rendered.
+enum { SPLIT_TICK_BEGIN, SPLIT_RENDER_BEGIN, SPLIT_RENDER_END, SPLIT_TICK_END };
+void Benchmark_SplitMark(int mark, int frames);
+
 #ifdef __cplusplus
 }
 #endif

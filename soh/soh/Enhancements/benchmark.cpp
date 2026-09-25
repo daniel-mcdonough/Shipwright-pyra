@@ -1407,4 +1407,163 @@ extern "C" void Benchmark_FrameEnd(void) {
     }
 }
 
+// -------------------------------------------------------------------------------------------------
+// Logic/render split (SOH_BENCH_SPLIT)
+// -------------------------------------------------------------------------------------------------
+//
+// The question this answers: if game logic for tick N+1 ran on the second core while tick N was
+// interpreted and submitted, how much could that buy? The ceiling is (L + R) / max(L, R), and it
+// needs L and R measured with logic actually running - the static fixture freezes Play_Update and
+// so reports R alone. Thread CPU time is the primary figure: wall time folds in the swap and the
+// frame limiter, which are blocked time a pipeline would not remove from either side.
+//
+// "Logic" is Graph_StartFrame, input and Graph_Update, which includes Play_Draw building the
+// display list: that is game code, and it would move with logic in a pipeline. "Render" is
+// Graph_ProcessGfxCommands up to the audio wait: frame interpolation, the interpreter over every
+// interpolated frame, GL submission, ImGui and the swap.
+
+namespace {
+
+struct SplitTick {
+    uint32_t logicCpu, logicWall, renderCpu, renderWall, audioWait, tickWall, otherCpu, frames;
+};
+
+int gSplitEvery = -1; // -1 unread, 0 off
+std::vector<SplitTick> gSplitTicks;
+uint64_t gSplitCpu[4] = {}, gSplitProc[4] = {};
+Clock::time_point gSplitWall[4];
+Clock::time_point gSplitPrevTickBegin{};
+int gSplitFrames = 0;
+bool gSplitArmed = false;
+int gSplitMinKHz = -1, gSplitMaxKHz = -1;
+
+uint32_t MicrosBetween(Clock::time_point a, Clock::time_point b) {
+    return (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+}
+
+template <typename F> double SplitMedian(F field) {
+    std::vector<uint32_t> v;
+    v.reserve(gSplitTicks.size());
+    for (const auto& t : gSplitTicks) {
+        v.push_back(field(t));
+    }
+    return MedianMicros(v) / 1000.0;
+}
+
+template <typename F> double SplitP95(F field) {
+    std::vector<uint32_t> v;
+    v.reserve(gSplitTicks.size());
+    for (const auto& t : gSplitTicks) {
+        v.push_back(field(t));
+    }
+    return PercentileMicros(v, 0.95) / 1000.0;
+}
+
+template <typename F> double SplitMean(F field) {
+    uint64_t sum = 0;
+    for (const auto& t : gSplitTicks) {
+        sum += field(t);
+    }
+    return gSplitTicks.empty() ? 0.0 : (double)sum / gSplitTicks.size() / 1000.0;
+}
+
+void SplitReport() {
+    const auto L = [](const SplitTick& t) { return t.logicCpu; };
+    const auto R = [](const SplitTick& t) { return t.renderCpu; };
+    uint64_t sumL = 0, sumR = 0, sumMax = 0, frames = 0, wall = 0;
+    for (const auto& t : gSplitTicks) {
+        sumL += t.logicCpu;
+        sumR += t.renderCpu;
+        sumMax += std::max(t.logicCpu, t.renderCpu);
+        frames += t.frames;
+        wall += t.tickWall;
+    }
+    // Two ceilings. Per-tick pairs L(N+1) with R(N) and so charges a slow tick on either side in
+    // full; the aggregate figure assumes a queue deep enough to smooth those out.
+    const double perTick = sumMax ? (double)(sumL + sumR) / sumMax : 0.0;
+    const double aggregate = std::max(sumL, sumR) ? (double)(sumL + sumR) / std::max(sumL, sumR) : 0.0;
+    const double secs = wall / 1e6;
+    SPDLOG_INFO("Benchmark split ticks={} tick_hz={:.2f} fps={:.2f} frames_per_tick={:.2f} "
+                "logic_cpu_ms med={:.2f} mean={:.2f} p95={:.2f} logic_wall_ms med={:.2f} "
+                "render_cpu_ms med={:.2f} mean={:.2f} p95={:.2f} per_frame={:.2f} render_wall_ms med={:.2f} "
+                "audio_wait_ms mean={:.3f} other_threads_cpu_ms mean={:.2f} tick_wall_ms mean={:.2f} "
+                "logic_share={:.1f}% pipeline_ceiling per_tick={:.2f}x aggregate={:.2f}x "
+                "cpu_mhz={}-{} temp_c={:.1f} scene=0x{:02X}",
+                gSplitTicks.size(), secs > 0 ? gSplitTicks.size() / secs : 0.0, secs > 0 ? frames / secs : 0.0,
+                (double)frames / gSplitTicks.size(), SplitMedian(L), SplitMean(L), SplitP95(L),
+                SplitMedian([](const SplitTick& t) { return t.logicWall; }), SplitMedian(R), SplitMean(R),
+                SplitP95(R), frames ? sumR / 1000.0 / frames : 0.0,
+                SplitMedian([](const SplitTick& t) { return t.renderWall; }),
+                SplitMean([](const SplitTick& t) { return t.audioWait; }),
+                SplitMean([](const SplitTick& t) { return t.otherCpu; }),
+                SplitMean([](const SplitTick& t) { return t.tickWall; }),
+                (sumL + sumR) ? 100.0 * sumL / (sumL + sumR) : 0.0, perTick, aggregate, KHzToMHz(gSplitMinKHz),
+                KHzToMHz(gSplitMaxKHz), ReadTempMilliC() / 1000.0,
+                gPlayState != nullptr ? (unsigned)gPlayState->sceneNum : 0xFFu);
+    gSplitTicks.clear();
+    gSplitMinKHz = gSplitMaxKHz = -1;
+}
+
+} // namespace
+
+extern "C" void Benchmark_SplitMark(int mark, int frames) {
+    if (gSplitEvery < 0) {
+        gSplitEvery = gCfg.enabled ? EnvInt("SOH_BENCH_SPLIT", 0) : 0;
+        if (gSplitEvery > 0) {
+            SPDLOG_INFO("Benchmark split: logging logic/render CPU every {} ticks", gSplitEvery);
+        }
+    }
+    if (gSplitEvery <= 0) {
+        return;
+    }
+
+    gSplitWall[mark] = Clock::now();
+    gSplitCpu[mark] = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
+    if (mark == SPLIT_TICK_BEGIN || mark == SPLIT_TICK_END) {
+        gSplitProc[mark] = CpuMicros(CLOCK_PROCESS_CPUTIME_ID);
+    }
+
+    switch (mark) {
+        case SPLIT_TICK_BEGIN:
+            gSplitArmed = true;
+            break;
+        case SPLIT_RENDER_END:
+            gSplitFrames = frames;
+            break;
+        case SPLIT_TICK_END: {
+            if (!gSplitArmed) {
+                break;
+            }
+            gSplitArmed = false;
+            const uint64_t mainCpu = gSplitCpu[SPLIT_TICK_END] - gSplitCpu[SPLIT_TICK_BEGIN];
+            const uint64_t procCpu = gSplitProc[SPLIT_TICK_END] - gSplitProc[SPLIT_TICK_BEGIN];
+            SplitTick t;
+            t.logicCpu = (uint32_t)(gSplitCpu[SPLIT_RENDER_BEGIN] - gSplitCpu[SPLIT_TICK_BEGIN]);
+            t.logicWall = MicrosBetween(gSplitWall[SPLIT_TICK_BEGIN], gSplitWall[SPLIT_RENDER_BEGIN]);
+            t.renderCpu = (uint32_t)(gSplitCpu[SPLIT_RENDER_END] - gSplitCpu[SPLIT_RENDER_BEGIN]);
+            t.renderWall = MicrosBetween(gSplitWall[SPLIT_RENDER_BEGIN], gSplitWall[SPLIT_RENDER_END]);
+            t.audioWait = MicrosBetween(gSplitWall[SPLIT_RENDER_END], gSplitWall[SPLIT_TICK_END]);
+            // Begin-to-begin, so the time between ticks (save states, the thread loop) is counted.
+            t.tickWall = gSplitPrevTickBegin.time_since_epoch().count() == 0
+                             ? MicrosBetween(gSplitWall[SPLIT_TICK_BEGIN], gSplitWall[SPLIT_TICK_END])
+                             : MicrosBetween(gSplitPrevTickBegin, gSplitWall[SPLIT_TICK_BEGIN]);
+            t.otherCpu = procCpu > mainCpu ? (uint32_t)(procCpu - mainCpu) : 0;
+            t.frames = (uint32_t)gSplitFrames;
+            gSplitPrevTickBegin = gSplitWall[SPLIT_TICK_BEGIN];
+            gSplitTicks.push_back(t);
+
+            const int khz = ReadCpuKHz();
+            if (khz >= 0 && (gSplitMinKHz < 0 || khz < gSplitMinKHz)) {
+                gSplitMinKHz = khz;
+            }
+            gSplitMaxKHz = std::max(gSplitMaxKHz, khz);
+
+            if ((int)gSplitTicks.size() >= gSplitEvery) {
+                SplitReport();
+            }
+            break;
+        }
+    }
+}
+
 #endif // SOH_BENCHMARK

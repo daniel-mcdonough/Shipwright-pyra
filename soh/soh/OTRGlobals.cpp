@@ -1802,6 +1802,9 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 extern "C" void ResourceMgr_RefreshLeanLookup();
 
 extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_RENDER_BEGIN, 0);
+#endif
     ResourceMgr_RefreshLeanLookup();
     {
         std::unique_lock<std::mutex> Lock(audio.mutex);
@@ -1851,6 +1854,9 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
     }
 
     RunCommands(commands, mtx_replacements);
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_RENDER_END, (int)mtx_replacements.size());
+#endif
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;
@@ -1861,6 +1867,9 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
             audio.cv_from_thread.wait(Lock);
         }
     }
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_TICK_END, 0);
+#endif
 
     bool curAltAssets = CVarGetInteger(CVAR_SETTING("AltAssets"), 1);
     if (prevAltAssets != curAltAssets) {

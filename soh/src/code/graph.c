@@ -9,6 +9,9 @@
 #include "soh/Enhancements/gameconsole.h"
 #include "soh/OTRGlobals.h"
 #include "libultraship/bridge.h"
+#ifdef SOH_BENCHMARK
+#include "soh/Enhancements/benchmark.h"
+#endif
 
 #define GFXPOOL_HEAD_MAGIC 0x1234
 #define GFXPOOL_TAIL_MAGIC 0x5678
@@ -482,6 +485,9 @@ static void RunFrame() {
             // uint64_t ticksA, ticksB;
             // ticksA = GetPerfCounter();
 
+#ifdef SOH_BENCHMARK
+            Benchmark_SplitMark(SPLIT_TICK_BEGIN, 0);
+#endif
             Graph_StartFrame();
 
             PadMgr_ThreadEntry(&gPadMgr);
