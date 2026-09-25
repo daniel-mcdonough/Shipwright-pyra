@@ -3,7 +3,7 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-25 (morning)**, after §8.32: **§8.31's "LeanCVar changes the picture" was the
+Last revised **2026-09-25 (late morning)**, after §8.32: **§8.31's "LeanCVar changes the picture" was the
 benchmark's camera override not holding.** The freeze does not stop `Camera_Update`, which wrote the
 game's own look-at over the override each tick until it happened to stop — and that turned on
 uninitialised reads in the camera code, so unrelated code changes flipped fixtures by 0.006° of yaw
@@ -139,13 +139,27 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - ~~malloc/free~~ **Counted (§8.31)** with `scripts/pyra/allocshim.c` (the m4 kernel has no
       uprobes): 3202 per frame at the Market, 1776 at Hyrule Field; CVar keys 711, lookups ~1430,
       texture paths 441 (gone with `LeanTexLoad`, now the default). What is left after the two
-      lookup changes is ~1550, 711 of them CVar keys.
+      lookup changes is ~1550, 711 of them CVar keys. **With `LeanCVar` (§8.32): 291 per frame at
+      the Market**, ~225 of them frame interpolation's replacement map.
+    - **The interpolation replacement map** (~225 allocations per frame, the largest block of
+      heap traffic left). Size it with a skip before building anything; a pre-reserved or
+      arena-backed map is the obvious candidate, and it has to stay exact in motion (§8.30's
+      entry-by-entry check).
     - ~~**CVar reads without the key string**~~ **Done (§8.32): exact, default 1.** −257 µs (−1.5%)
       Market, −186 µs (−1.7%) Hyrule Field at 1000 MHz. §8.31's picture change was the camera
       override (TESTING.md trap 19), not the CVar code.
     - **§8.30's window regression holds** (+295 µs, t 6.4, MDE 109, 8 pairs at 1000 MHz, growing
-      through the run). Test the L2 guess: arena buffers sized to the recording (~230 KB) instead
-      of 256 KB-and-double, or drop the unused recorder's storage.
+      through the run). Re-measure it first with the camera fix in (§8.32: the Market drew the
+      game's camera in some builds and the fixture's in others). Then test the L2 guess: arena
+      buffers sized to the recording (~230 KB) instead of 256 KB-and-double, or drop the unused
+      recorder's storage.
+    - **Earlier visual checks after §8.32.** Same-binary, in-process comparisons from before the
+      camera fix still stand where they read identical: a flipped camera shows as a difference, it
+      cannot hide one. Comparisons *across builds* (e.g. "within launch noise of the unmodified
+      build") are not trustworthy; redo one only if something rests on it.
+    - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
+      real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
+      on 2026-09-24 and took over the desktop at 1920×1080 — check before the next host run.
     - ~~Interpreter rest: count commands per opcode first.~~ **Counted and timed (§8.31):** 10,927
       commands per frame; geometry dominates; no non-geometry handler reaches 1 ms
       (`G_SETTIMG_OTR_HASH` ~0.64 ms, `G_LOADBLOCK` ~0.47 ms before `LeanTexLoad`). Not skip-probed.
