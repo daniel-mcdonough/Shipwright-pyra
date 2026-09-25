@@ -212,8 +212,13 @@ trap 3.
 `seg<k>-f<n>.ppm` at frames n and n+1 of every segment (n = `SOH_BENCH_DUMP_FRAME`, default 300),
 so both arms are captured at the same frame whatever their speed, with no screen grab. Compare with
 `docs/pyra/tools/dumpcmp.py <dir>`. The frozen Market is not perfectly still: consecutive frames of
-one arm differ in ~15-21 pixels (a short animation cycle), so compare the same frame index across
-arms and read the within-arm numbers as the floor. The grab method below is what §8.22-8.31 used.
+one arm differ in ~15-36 pixels (a short animation cycle), so compare the same frame index across
+arms and read the within-arm numbers as the floor. Segments can start on different phases of the
+game's 2-frames-per-3-ticks interpolation cycle, so frame n of one segment may match frame n+1 of
+another: look at both. At Hyrule Field mask the sky (rows 216 and up of a 360-row dump, which is
+stored bottom-up). If a comparison differs, `<frame>.ppm.vbo` and `<frame>.ppm.mtx` hold every
+draw's vertices and every matrix of that frame; `tools/vbocmp.py` and `tools/mtxcmp.py` diff them.
+The grab method below is what §8.22-8.31 used.
 
 Run an A/B with long segments and grab frames during each, so the pose cannot differ between arms.
 Segment boundaries are not logged, so time the grabs from `Benchmark measuring` in `run.log`:
@@ -469,6 +474,20 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
 18. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
     teardown, seen every run 2026-09-24, with or without that day's changes). The results are
     already written by then. Ignore it, or fix it separately; it is not a benchmark problem.
+
+19. **Until §8.32 the camera override did not reliably hold.** The freeze does not stop
+    `Camera_Update` (it runs after `Play_Update`'s frame-advance skip label) and the camera wrote its
+    own look-at over the override every tick, until it happened to stop - which turned on
+    uninitialised reads in the camera code, so an unrelated code change could flip a fixture
+    between the game's camera and the requested one. At the Market the two differ by 0.006° of yaw
+    and 122k pixels: §8.31's "LeanCVar changes the picture" was this. The override is now applied
+    from `OnPlayDrawBegin`, just before `View_Apply`. Timings are unaffected at that size; a visual
+    comparison across builds made before the fix is not trustworthy. `SOH_BENCH_VIEW_LOG=<file>`
+    logs the eye and look-at of every viewing matrix built, to check.
+
+20. **The host is not a stand-in for the device's picture.** The host drew the same picture for
+    `LeanCVar` 0 and 1 while the device did not (trap 19: stack contents differ by platform). Take
+    visual checks on the device.
 
 ## 6. Recipes
 

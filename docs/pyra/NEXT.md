@@ -3,16 +3,17 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-25 (early morning)**, after §8.31: **two thirds of the Market's 3200 heap
-allocations per frame are lookups by name.** `gSettings.LeanTexLoad=1` (now the default) skips a
-path copy per texture load: −596 µs (−3.1%) Market, −561 µs (−4.8%) Hyrule Field at 1000 MHz,
-pixel-identical. `gSettings.LeanGameLookup=1` caches the game's ~110 lookups by path per frame,
-exactly (0 mismatches in motion, control fires, pixel-identical): **−1160 µs (−7.3%) Market, −428 µs
-(−4.4%) Hyrule Field at 1250 MHz, −528 µs (−5.6%, t −3.5) in 17 minutes of real play** — now the
-default. Heap allocations per frame at the Market: 3202 → 970. `gSettings.LeanCVar=1` (−252 µs
-Market) **changes the picture** for a reason not found; not shipped. §8.30's window regression holds
-(+295 µs, t 6.4, 8 pairs). Uprobes do not exist on the m4 kernel; `scripts/pyra/allocshim.c` counts
-allocations instead. Before that, §8.30: **the interpolation recording now lives
+Last revised **2026-09-25 (morning)**, after §8.32: **§8.31's "LeanCVar changes the picture" was the
+benchmark's camera override not holding.** The freeze does not stop `Camera_Update`, which wrote the
+game's own look-at over the override each tick until it happened to stop — and that turned on
+uninitialised reads in the camera code, so unrelated code changes flipped fixtures by 0.006° of yaw
+(122k pixels). The override is now applied just before `View_Apply`. `SOH_BENCH_DUMP` replaces the
+timed screen grabs with same-frame dumps plus vertex and matrix traces. **`gSettings.LeanCVar=1` is
+exact and now the default: −257 µs (−1.5%, t −9.1) Market, −186 µs (−1.7%, t −6.4) Hyrule Field at
+1000 MHz** (the Field contradicts §8.31's −526 µs). Heap allocations per frame at the Market: 970 → 291.
+Before that, §8.31: two thirds of the Market's 3200 heap allocations per frame were lookups by name;
+`LeanTexLoad=1` (−3 to −5%) and `LeanGameLookup=1` (−7.3% Market, −5.6% real play) became defaults.
+Before that, §8.30: **the interpolation recording now lives
 in a per-recording arena (`gSettings.LeanInterp=1`, the default)**: −1365 µs render-thread CPU at
 the Market (−8.0%, t −110, MDE 32), −266 µs at Hyrule Field (−2.7%, t −13.1). It is exact: 0 of
 139,324 replacement-map entries differ in motion on the device, and the positive control fires.
@@ -139,11 +140,9 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
       uprobes): 3202 per frame at the Market, 1776 at Hyrule Field; CVar keys 711, lookups ~1430,
       texture paths 441 (gone with `LeanTexLoad`, now the default). What is left after the two
       lookup changes is ~1550, 711 of them CVar keys.
-    - **CVar reads without the key string** (`gSettings.LeanCVar=1`, −252 µs Market at 1000 MHz):
-      **changes the frozen picture** (505k pixels, mean 0.48/255); the pre-change build matches mode
-      0. Modes 3 and 4 rule out both lookups; the getters skipping `Get()` is what differs, and why
-      that matters is not known. Find it before measuring further. The Field's LeanCVar numbers
-      are also unstable within a run.
+    - ~~**CVar reads without the key string**~~ **Done (§8.32): exact, default 1.** −257 µs (−1.5%)
+      Market, −186 µs (−1.7%) Hyrule Field at 1000 MHz. §8.31's picture change was the camera
+      override (TESTING.md trap 19), not the CVar code.
     - **§8.30's window regression holds** (+295 µs, t 6.4, MDE 109, 8 pairs at 1000 MHz, growing
       through the run). Test the L2 guess: arena buffers sized to the recording (~230 KB) instead
       of 256 KB-and-double, or drop the unused recorder's storage.

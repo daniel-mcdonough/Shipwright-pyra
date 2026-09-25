@@ -2291,6 +2291,9 @@ with the CVar absent showed `GetBaseTexturePath` gone from the allocation table.
 
 ### CVar reads: not exact, not shipped
 
+> **Corrected in §8.32:** it is exact. The picture change below was the benchmark's camera override
+> failing to hold, which any code change could flip; `LeanCVar=1` is now the default.
+
 `gSettings.LeanCVar=1` finds CVars through a transparent hash on the `const char*` and returns a raw
 pointer, removing the key string and the `shared_ptr` copy — all 713 allocations. Pinned to 1000 MHz,
 6 pairs: **Market −252 µs (−1.3%, t −5.5, MDE 117)**; Hyrule Field −526 µs, but not stable (pairs 0–1
@@ -2347,3 +2350,107 @@ recorder's storage) is now worth testing.
 - **The CVar reads** (~250 µs at the Market): why skipping `Get()` changes the picture.
 - **The remaining heap traffic** with both on: 970 per frame at the Market, 679 of them CVar key
   strings and ~225 the replacement map.
+
+## 8.32 LeanCVar never changed the picture: the camera override did not hold
+
+Measured 2026-09-24 late to 09-25, the device free for the session. §8.31 found `gSettings.LeanCVar=1`
+changed the frozen Market's picture (505k pixels) and left it off. The cause was not in
+`ConsoleVariable` at all. **The benchmark's camera override did not reliably hold**: the game's own
+camera wrote over it every tick until it happened to stop, and whether it stopped depended on stack
+contents that any code change moves. With the override fixed, `LeanCVar=1` is exact at both fixtures,
+−1.5% Market and −1.7% Hyrule Field render-thread CPU, and now the default.
+
+### A deterministic visual check
+
+§8.22–8.31's in-process check grabbed the screen with `xwd` at wall-clock times. `SOH_BENCH_DUMP=<dir>`
+replaces it: the renderer writes the game's render target (the MSAA-resolved copy when
+multisampled) at frames n and n+1 of every segment, so both arms are compared at the same frame
+whatever their speed. `tools/dumpcmp.py` compares them. During a dumped frame every draw's vertex
+data goes to `<frame>.ppm.vbo` and every `G_MTX` to `<frame>.ppm.mtx` (`tools/vbocmp.py`,
+`tools/mtxcmp.py`).
+
+- **Host** (desktop GL, native benchmark build): `LeanCVar` 0 vs 1 differed only by the frozen
+  Market's own animation cycle (15–21 pixels, the same between consecutive frames of one arm).
+- **Device**: 121,925 of 230,400 pixels differ, mean 0.55/255, max 191; the two arm-0 segments are
+  identical, and a second launch reproduces it. So §8.31's result was real on the device, and the
+  host is not a stand-in for it (TESTING.md trap 20).
+
+### The bisect
+
+| arm (one run, one segment each) | vs mode 0 |
+|---|---|
+| 5: non-zero, every getter on the original path | same |
+| 6: only `GetInteger` lean | **differs** (122k) |
+| 7, 8, 9: only Float / String / Color lean | same |
+| 1 | **differs** |
+
+`MALLOC_PERTURB_=165` changed nothing (122k again), so not uninitialised heap. Then the name bisect
+failed in an informative way: sending every name down the lean `GetInteger` path through a hash-bucket
+selector (the same work as mode 6 plus a hash, a mutex and a map) **no longer changed the picture** —
+and neither did mode 1 in that binary, nor a mode that filled 4 KB of stack below `GetInteger` with
+0x00 or 0xFF. Across launches the pictures fell into two classes: **P**, arm 0 of the binaries built
+before the bisect code, and **Q**, every other arm of every binary. Changing `GetInteger`'s machine
+code, on any path, turned P into Q.
+
+### What differs: the camera
+
+The vertex trace of P against Q: 240 of 261 draws differ, only in clip-space x, z and w, never y or
+any colour or texture coordinate; the arm-0 control, 0 of 261. The matrix trace: 53 of 366 differ,
+the first the viewing matrix, a pure yaw about the eye at (0, 64, 0). From the fixture's EYE and AT
+the look direction is (0.862263, −0.506463):
+
+| | from the matrix |
+|---|---|
+| Q | 0.8622589, −0.5064545 — the fixture, to 16.16 fixed point |
+| P (the shipped code's picture) | 0.8621674, −0.5066071 — 0.006° off |
+
+A log of the eye and look-at of every viewing matrix built (`SOH_BENCH_VIEW_LOG`) settled it. In P
+the look-at stays at the game's own camera, (−134.5329, 64, 79.0530), for all 1,220 views of the run;
+in Q it switches to the override, (−134.5, 64, 79.0), after 447.
+
+**Why.** The freeze sets `frameAdvCtx.enabled`, and `Play_Update` then jumps to a label *after which*
+`Camera_Update` still runs every tick. `Camera_Update` ends by writing its eye and look-at into
+`play->view` unless the camera's status makes it return early. The harness wrote the override after
+each frame, so it survived only while the camera was not writing, and the camera stopped at some tick
+or never. The camera modes are full of decomp-faithful uninitialised locals, and `CVarGetInteger` is
+called all through the camera code, so what those locals read changes with `GetInteger`'s stack use.
+Not chased to the variable: it is the original game's behaviour, and the harness should not depend
+on it.
+
+**Fix:** the benchmark applies the override from `OnPlayDrawBegin`, which `Play_Draw` calls after the
+update and just before `View_Apply`. Verified: the override lands on every frozen frame (247 views of
+the game's camera during settle, then 1,746 of the override), arms 0 and 6 are identical, and the
+picture is Q to launch noise (6.4k pixels in the usual region; 122k against P).
+
+What this means for earlier sections: the timings stand — a 0.006° yaw moves nothing measurable,
+and within one run the camera was whichever it was for both arms. Visual comparisons *across builds*
+before this fix are not trustworthy (TESTING.md trap 19). §8.31's Hyrule Field `LeanCVar` number
+(−526 µs, "not stable", the window moving as much as the thread in pairs 2–5) fits the fixture
+flipping camera mid-run; not verified.
+
+### LeanCVar=1, measured again
+
+**Picture**, device, dumps: Market 0 pixels against arm 0 at the same interpolation phase; Hyrule
+Field 0 pixels outside the sky (the clouds scroll: the arm-0 control differs there as much).
+
+| `LeanCVar` 0 → 1, 6 pairs at 1000 MHz, all segments on the pin | Δ render-thread CPU | t | MDE | Δ period | Δ window |
+|---|---|---|---|---|---|
+| Market | **−257 µs (−1.5%)** | −9.1 | 73 | −66 µs, t −0.3 | −28 µs, t −0.5 |
+| Hyrule Field | **−186 µs (−1.7%)** | −6.4 | 75 | −249 µs, t −4.6 | +106 µs, t 1.5 (MDE 177) |
+
+The Market matches §8.31 (−252 µs). **Hyrule Field contradicts it**: −186 µs, not −526 µs, and
+every pair negative (−58 to −263). It holds no state across frames, so no real-play A/B.
+**`LeanCVar` now defaults to 1.** The raw pointer does not keep a CVar alive while it is read, as the
+`shared_ptr` copy did; that matters only if another thread erases a CVar mid-read, and the original
+already races on the map itself then.
+
+**Default check:** one Market segment with the CVar absent from the config, `allocshim.so` loaded:
+653 CVar reads per frame counted (the lean path's count; mode 0 reads 676), and **291 heap
+allocations per frame, from 970** — 3202 before §8.31. What is left is mostly the interpolation map.
+
+### What this leaves
+
+- The window regression from §8.30 (+295 µs, t 6.4) — the L2 guess, still to test.
+- The rest of the heap traffic: ~225 per frame for the interpolation replacement map.
+- The camera code's uninitialised reads are real in play too: any build can move them. Harmless to
+  the harness now; for the port, a curiosity rather than a task.
