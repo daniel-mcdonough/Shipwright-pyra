@@ -620,12 +620,16 @@ void WriteResults() {
         // Grouping by texture (§8.40): runs of consecutive opaque, depth-written, non-decal draws with
         // no viewport, scissor or framebuffer change; draws in them, draws whose texture set / texture
         // set and program an earlier draw of the run already had, and texture-set changes between
-        // consecutive draws as issued and if each run were sorted by texture set.
+        // consecutive draws as issued and if each run were sorted by texture set. lg_*: what
+        // gSettings.LeanGroup did (§8.41) - draws deferred, glDrawArrays its replays issued, replays.
         snprintf(line, sizeof(line),
-                 "BENCH group %zu runs=%.1f draws=%.1f tex_dup=%.1f key_dup=%.1f tex_chg=%.1f tex_chg_sorted=%.1f\n",
+                 "BENCH group %zu runs=%.1f draws=%.1f tex_dup=%.1f key_dup=%.1f tex_chg=%.1f tex_chg_sorted=%.1f "
+                 "lg_deferred=%.1f lg_draws=%.1f lg_flushes=%.1f lg_buckets=%.1f\n",
                  i, PerFrame(seg, seg.counters[BENCH_GRP_RUNS]), PerFrame(seg, seg.counters[BENCH_GRP_DRAWS]),
                  PerFrame(seg, seg.counters[BENCH_GRP_TEX_DUP]), PerFrame(seg, seg.counters[BENCH_GRP_KEY_DUP]),
-                 PerFrame(seg, seg.counters[BENCH_GRP_TEX_CHG]), PerFrame(seg, seg.counters[BENCH_GRP_TEX_CHG_SORTED]));
+                 PerFrame(seg, seg.counters[BENCH_GRP_TEX_CHG]), PerFrame(seg, seg.counters[BENCH_GRP_TEX_CHG_SORTED]),
+                 PerFrame(seg, seg.counters[BENCH_LG_DEFERRED]), PerFrame(seg, seg.counters[BENCH_LG_DRAWS]),
+                 PerFrame(seg, seg.counters[BENCH_LG_FLUSHES]), PerFrame(seg, seg.counters[BENCH_LG_BUCKETS]));
         text += line;
         // Inside the lighting loop (§8.27): light iterations over lit vertices, directional and
         // positional; texgen and fog vertices; light-direction recomputes.
