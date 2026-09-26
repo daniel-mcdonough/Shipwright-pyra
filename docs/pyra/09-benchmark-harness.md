@@ -136,6 +136,7 @@ last arm persisted into the saved config.
 | `SOH_BENCH_OUT` | unset | write results here as well as to the log |
 | `SOH_BENCH_EXIT` | `1` | quit when finished |
 | `SOH_BENCH_WATCH` | `0` | authoring mode: never freeze, never measure, log the viewpoint every 60 frames so a fixture can be walked to (§9.9) |
+| `SOH_BENCH_SPLIT` | `0` (off) | log the logic/render split every this many ticks (report 8 §8.33), and the main thread's blocks per tick (`split_blocks`, §8.43). Works in watch mode. The blocks also appear per segment as `BENCH split` with `gSettings.ProbeSplit=1`, which is how an A/B prices them (~50-65 µs per frame) |
 
 ## 9.4 Output
 

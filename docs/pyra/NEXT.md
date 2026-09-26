@@ -3,7 +3,16 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26**, after a review of what the CPU accounting covers (no new measurements):
+Last revised **2026-09-26 evening**, after §8.43 (task 0 (a) done): **the whole main thread is now
+accounted for, block by block.** Frozen, uncapped, 1000 MHz, CPU per frame: the Market's 16.18 ms is
+`Interpreter::Run` 12.58 (78%), `Play_Draw` with the interpolation recording 1.33,
+`FrameInterpolation_Interpolate` 0.57, ImGui 0.63 (new frame 0.43, end 0.20), after-draw 0.34, input
+0.22, eof 0.30 and ~0.3 of small blocks. Hyrule Field: 10.61 ms, `Run` 8.11 (76%), `Play_Draw` 0.76,
+ImGui 0.59, after-draw 0.34, input 0.20. The blocks sum to `thread_us` within 2.4 µs. Input, after-draw
+and ImGui are a flat ~1.2 ms per frame whatever the scene, and none of them is explained yet. Parts (b)
+and (c) need the owner playing; the instrument for them is built.
+
+Before that, a review of what the CPU accounting covered (no new measurements):
 **the timed window is well priced, and the rest of the main thread is not.** Frozen Market at the cap,
 1000 MHz: render thread 16.8 ms on-CPU per frame, of which ~13.5 ms is inside the timed window and priced
 block by block (§8.26-8.41). The ~3 ms outside it (derived: `thread_us − window_us`; §8.20 measured the
@@ -162,7 +171,11 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
 
 0. **Complete the CPU picture before designing the two-core split** (added 2026-09-26). Three parts,
    all measurement:
-   - **(a) Split the main thread's CPU outside the timed window** on the frozen Market and Hyrule
+   - ~~**(a) Split the main thread's CPU outside the timed window**~~ **Done (§8.43).** Fifteen
+     contiguous marks, `BENCH split` per segment, closure within 2.4 µs of `thread_us` at both
+     fixtures. Outside the window: 2.65 ms Market, 1.60 ms Hyrule Field; the table is in §8.43. The
+     marks cost +48 µs (t 1.9, MDE 66) Market and +65 µs (t 4.3, MDE 39) Hyrule Field. The original
+     brief, for the record: split the main thread's CPU outside the timed window on the frozen Market and Hyrule
      Field. The window is `Benchmark_FrameBegin`/`FrameEnd` around `DrawAndRunGraphicsCommands` in
      `RunCommands` (`OTRGlobals.cpp`). Outside it, per tick: `Play_Draw` building the display list,
      `Graph_ProcessGfxCommands`' set-up and the interpolation recording and walk
@@ -171,12 +184,15 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
      rather than adding a new instrument. The blocks have to sum to `thread_us − window_us` within
      the MDE. If they don't, something is missing: find it before going further. Price the extra
      marks with one A/B against the unmarked build, as P5 says.
-   - **(b) Whole-machine attribution in real play**: `~/git/dragonbox-pyra/device/pyra-cpu-attribution.sh`
+   - **(b) Whole-machine attribution in real play** (next; the script now takes `-t soh.elf` for
+     the game's threads and prints busy time per core): `~/git/dragonbox-pyra/device/pyra-cpu-attribution.sh`
      during a real-play session (the owner playing, watch mode, pinned), with SoH's threads named
      (`/proc/<pid>/task/*/comm` and `stat`): main, audio, and any SDL/driver threads, then Xorg,
      PulseAudio, the window manager, kernel threads and IRQs. On other workloads PulseAudio and Xorg
      were 12-14% of the machine each (`cpu-optimization.md` §3.1); for SoH this has never been taken.
-   - **(c) Does real play miss the 30 fps cap, and where?** Frame-period histogram (`LUS_FPS_LOG` or
+   - **(c) Does real play miss the 30 fps cap, and where?** (next, in the same session as (b): watch
+     blocks now carry `hist_ms`, `max_ms` and `slow`/`slow_cpu_pct`/`slow_swap_ms`, and
+     `SOH_BENCH_SPLIT=150` adds the §8.43 blocks per 5 s window.) Frame-period histogram (`LUS_FPS_LOG` or
      the watch-mode blocks) over a session that reaches thermal equilibrium, logging the clock and die
      temperature next to each block. Name the scenes and clocks where frames go over 33.3 ms, and say
      for each whether the main thread was on-CPU (CPU-bound) or waiting (swap/GPU).
@@ -186,6 +202,13 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    find them, the two-core design goes ahead, sized against the scenes (c) named.
    *Superseded as the gate by 0T (the owner's goal is heat, not frames); (c) is still needed, as
    the list of scenes each clock has to hold.*
+
+0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43), only if 0T needs CPU
+   back. Input (~0.2 ms per frame, 0.3 per tick), after-draw (0.34 ms, `Play_Main`'s and
+   `Graph_Update`'s tails) and ImGui (~0.6 ms: `Gui::StartDraw` 0.4, `EndDraw` 0.2, with every menu
+   closed) are ~1.2 ms per Market frame, 7% of the thread, and the same in both scenes. Also: `gui_start`
+   is only 64-70% on-CPU and `interp` 39-51% (the audio wake is the guess there). Find a skip that leaves
+   the frame drawable for each and A/B it; don't size them from the marks (they include the marks' cost).
 
 0T. **The thermal track: the lowest clock that holds the game** (added 2026-09-26). Judge every arm by
    **battery watts and die °C** at equilibrium, with fps as a pass/fail floor. Method: the hardware

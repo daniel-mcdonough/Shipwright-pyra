@@ -3261,3 +3261,103 @@ drawing that quad unblended, or skipping the colour clear it fully covers. None 
 - The GPU's power domain never turns off (hardware repo `experiments/power-budget/`), so GPU work
   removed saves dynamic power only. For heat and battery the render thread's 16.8 ms is still the
   larger target.
+
+## 8.43 The whole main thread, block by block: the interpreter is 78%; ImGui, input and post-draw are a flat 1.2 ms
+
+*Part (a) of NEXT.md task 0. Parts (b), whole-machine attribution in real play, and (c), where real play
+is heaviest, are not done yet; they need the owner playing. This section will grow to cover them.*
+
+**Question.** Only the timed window (`Benchmark_FrameBegin`/`FrameEnd` around
+`DrawAndRunGraphicsCommands`) had been priced. The Market's render thread is ~16.2 ms of CPU per frame
+uncapped, and ~2.7 ms of it was outside the window with no breakdown. Where does every microsecond go?
+
+**Instrument.** §8.33's four `SOH_BENCH_SPLIT` marks became fifteen contiguous ones. Each mark reads the
+thread's CPU clock and the monotonic clock and charges the time since the previous mark, whichever mark
+that was, to the block it ends. Nothing can fall between two blocks, so the check that the instrument
+sees everything is against the *independent* per-segment `thread_us` and `window_us` of the `BENCH
+oncpu` line. The window's inner stages come from a hook in libultraship (`gBenchSplitHook`, null unless
+the split runs) after `Gui::StartDraw`, `Interpreter::StartFrame`, `Interpreter::Run` and
+`Gui::EndDraw`. A mark that does not run folds its time into the next block: outside gameplay there is
+no Play_Update mark. Each segment writes one `BENCH split` line, per frame period, CPU/wall;
+`docs/pyra/tools/splitblocks.py` averages an arm and prints the closure checks.
+`gSettings.ProbeSplit=1` turns the marks on without the per-tick log, so an A/B against 0 prices them.
+
+**Method.** `bench.sh ab gSettings.ProbeSplit 0 1`, frozen fixtures, uncapped, 1000 MHz pin
+(`PYRA_PIN_FREQ=1000000`), `SOH_BENCH_WARMUP=2400`, 6 pairs each. Every segment of both runs was on the
+pin; no pair dropped. **The Market soak never reached 70 °C at 1000 MHz**: it gave up after 20,000 frames
+at 67.0 °C, and the segments ran 67.0-68.7 °C. Hyrule Field was run with `SOH_BENCH_SOAK_C=66` and ran
+67.4-72.1 °C. The block values are the means of the six `ProbeSplit=1` segments.
+
+### What the marks cost
+
+| `ProbeSplit` 0 → 1 | Market Δ | t | MDE | Hyrule Field Δ | t | MDE |
+|---|---|---|---|---|---|---|
+| render-thread CPU | +48 µs (+0.3%) | 1.9 | 66 | **+65 µs (+0.6%)** | 4.3 | 39 |
+| window CPU | +18 µs | 0.8 | 59 | +29 µs | 1.4 | 55 |
+
+About 12 marks per frame (9 per tick at 0.667 ticks per frame, 6 per frame in the frame loop), so roughly
+4-5 µs each. That is several times what trap 16's ~0.3 µs per clock read predicts; not investigated. The
+blocks include their marks' cost, so each block reads a few µs high. The conclusions below do not depend
+on it.
+
+### The table
+
+CPU and wall µs per frame period, frozen, uncapped, 1000 MHz. Ticks per frame 0.667 (a tick is 1.5
+frames at `InterpolationFPS=30`), so per-tick blocks are 1.5× these per tick.
+
+| block (in the order a tick runs them) | what it is | Market CPU | wall | Hyrule Field CPU | wall |
+|---|---|---|---|---|---|
+| `input` | `Graph_StartFrame`, `PadMgr_ThreadEntry` | 218 | 242 | 199 | 218 |
+| `update` | `Graph_Update`'s head, `Play_Main` to the end of `Play_Update` (frozen: camera only) | 72 | 82 | 65 | 70 |
+| `draw` | `FrameInterpolation_StartRecord`, `Play_Draw`, `StopRecord` | **1,332** | 1,489 | **764** | 884 |
+| `post_draw` | rest of `Play_Main`, `GameState_Update`'s and `Graph_Update`'s tails | 335 | 368 | 335 | 393 |
+| `interp` | lookup refresh, audio notify, `FrameInterpolation_Interpolate` | 566 | **1,101** | 159 | **407** |
+| `events` | `HandleEvents` | 48 | 51 | 43 | 53 |
+| `between_frames`, `recycle`, `audio_wait`, `between` | the loop, map recycling, audio hand-off, save states/AltAssets | 75 | 84 | 37 | 42 |
+| **outside the window** | | **2,646** | | **1,601** | |
+| `gui_start` | `Benchmark_FrameBegin`, frame-ready check, mouse, `Gui::StartDraw` (ImGui new frame, menus) | **426** | 612 | **404** | 630 |
+| `fb_start` | `Interpreter::StartFrame` | 25 | 27 | 25 | 27 |
+| `run` | `Interpreter::Run`: the display list interpreted and submitted to GL | **12,582** | 14,243 | **8,106** | 9,141 |
+| `gui_end` | `Gui::EndDraw`: ImGui render and the present pass | 200 | 225 | 181 | 198 |
+| `eof` | `Interpreter::EndFrame` (flush, swap), `Benchmark_FrameEnd` | 303 | 5,305 | 298 | 5,099 |
+| **window** | | **13,536** | | **9,013** | |
+| **sum** | | **16,181** | 23,830 | **10,615** | 17,162 |
+
+**Closure.** The blocks sum to `thread_us` within **−1.4 µs** (sd 2.2) at the Market and **+2.4 µs** (sd
+2.3) at Hyrule Field. The five window blocks exceed `window_us` by 19 µs at both, which is
+`Benchmark_FrameBegin`/`FrameEnd` and two marks sitting just inside the window's edges. Outside the window
+the blocks give 2,646 / 1,601 µs against `thread_us − window_us` of 2,666 / 1,618. The wall sum equals
+`period_us` (23,830 against 23,832; 17,162 against 17,158). Nothing on the main thread is unaccounted for.
+
+### Reading it
+
+- **The interpreter and its GL submission are 78% of the thread at the Market (76% at Hyrule Field).**
+  That is still where the CPU is. Per §8.36, about a third of it is the GL driver.
+- **`Play_Draw` with the interpolation recording is 1.33 ms at the Market, 0.76 ms at Hyrule Field.**
+  It is the largest block outside the window, and it scales with the scene.
+- **ImGui costs ~0.6 ms of CPU per frame with every menu closed**: 426 + 200 µs at the Market and
+  404 + 181 at Hyrule Field, 3.9% and 5.5% of the thread. It barely moves with the scene, so it is a
+  fixed price per rendered frame. `gui_start` alone is 400+ µs. It is also only 64-70% on-CPU: ~190-225
+  µs per frame of it is the thread waiting. That is not explained yet; the frame-ready check and the
+  SDL/X calls in the new frame are the candidates.
+- **Input is ~0.2 ms per frame, ~0.3 ms per tick**, and the same in both scenes. Starting the frame and
+  polling one controller should not take that. Unexplained.
+- **`post_draw` is 335 µs in both scenes**: scene-independent work after `Play_Draw`, in `Play_Main`'s
+  tail (`func_800C4344`, the game-interactor hooks) and `Graph_Update`'s. Unexplained.
+- **`interp` is only half on-CPU**: 566 µs of CPU in 1,101 µs of wall at the Market, 159 in 407 at Hyrule
+  Field. The block starts by waking the audio thread, so the likely reading is the audio thread
+  preempting the main thread on the same core. That costs latency, not CPU. It matters for a two-core
+  design and not for heat. Not verified.
+- **Together, input, `post_draw` and ImGui are ~1.2 ms per frame at the Market**, 7% of the thread, and
+  flat across scenes. None of it has been sized by skipping it. Per the method (§8.26-8.28), sampling
+  and marks do not size a candidate; a skip probe does.
+
+### What this leaves
+
+- (b) and (c) of task 0, with the owner playing. The instrument is ready: `SOH_BENCH_SPLIT` in watch mode
+  now also logs `Benchmark split_blocks`, the same blocks per tick for each window. Watch blocks now
+  carry a frame-period histogram (`hist_ms`), the longest frame, and for frames over 40 ms (`slow`) the
+  render thread's CPU share and swap time across them. `pyra-cpu-attribution.sh -t soh.elf` (hardware
+  repo) names the game's threads and splits busy time per core.
+- Skip probes for the flat blocks (ImGui's new frame, input, `post_draw`) if the thermal track needs CPU
+  back. Each is under 0.5 ms; together ~1.2 ms per frame.

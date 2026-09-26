@@ -165,7 +165,12 @@ PYRA_WATCH_PIN=1 ./scripts/pyra/bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 S
 ./scripts/pyra/bench.sh watch stop                     # also restores the governor
 ```
 
-Keep `SOH_BENCH_UNCAP=0` — uncapped play runs the game too fast — and `PYRA_WATCH_PIN=1`. Under
+Keep `SOH_BENCH_UNCAP=0` — uncapped play runs the game too fast — and `PYRA_WATCH_PIN=1`.
+Since §8.43 every block line also carries `hist_ms=34:a/40:b/50:c/67:d/+:e` (frames by end-to-end
+period, upper edges in ms), `max_ms`, and for the frames over 40 ms `slow`, `slow_ms`, `slow_cpu_pct`
+(render-thread CPU across those periods: high means computing, low means waiting) and `slow_swap_ms`.
+Add `SOH_BENCH_SPLIT=<ticks>` for §8.33's logic/render line plus a `Benchmark split_blocks` line: the
+§8.43 blocks in CPU ms per tick for the same window. It costs ~50-65 µs per frame, so leave it off in an A/B. Under
 the cap the frame period is the cap, so compare **`thread_cpu_us`** (render-thread CPU per frame)
 across adjacent ABBA pairs; blocks differ a lot in content, so it takes ~50 pairs (~17 minutes) to
 resolve a ~10% effect. Every block line carries `scene=` and `cpu_min_mhz`/`cpu_max_mhz`.
@@ -409,6 +414,14 @@ BENCH period mde_us=...
   (`cmp`/`mismatch` on the interp line; `gSettings.ProbeInterpCorrupt=2` is its control).
 - `eof_cpu_us` on the `BENCH oncpu` line (§8.36): the render thread's CPU time from the backend's
   `EndFrame` through the swap, per frame. ~280 µs at both fixtures: the swap's 5 ms is waiting.
+- `BENCH split <seg>` (§8.43), only with `gSettings.ProbeSplit=1` or `SOH_BENCH_SPLIT` set: the whole
+  main thread in fifteen contiguous blocks, per frame period, as `cpu/wall` µs, in the order a tick runs
+  them (`input update draw post_draw interp events between_frames gui_start fb_start run gui_end eof
+  recycle audio_wait`, plus `between`, the gap between ticks). `cpu_sum_us` must equal the oncpu line's
+  `thread_us` (it does, within ~2 µs) and the window blocks `gui_start`..`eof` its `window_us` plus ~19 µs
+  of harness. What each block contains is in `benchmark.h` and the §8.43 table. The marks cost ~50-65 µs
+  of CPU per frame (§8.43): **don't time anything else with them on.** `python3 docs/pyra/tools/splitblocks.py
+  run.log <arm> [MHz]` averages an arm's segments and prints the closure checks.
 - `gSettings.ProbeSkipDraw` (benchmark builds only, §8.36): 1 = no `glDrawArrays` in the GLES2
   backend's `DrawTriangles`, 2 = none of its GL work. **Wrong picture by design** (nothing is drawn).
   At the Market mode 1 is −4.1 ms of render-thread CPU: the draw calls are a quarter of the thread.
@@ -606,7 +619,17 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     `LeanCVar` 0 and 1 while the device did not (trap 19: stack contents differ by platform). Take
     visual checks on the device.
 
+21. **At a 1000 MHz pin the Market does not reach 70 °C.** §8.43's soak gave up after 20,000 frames
+    (~8 minutes) at 67.0 °C. The run was still valid, since every segment was on the pin at 67-69 °C,
+    but it spent the time for nothing. At 1000 MHz use `SOH_BENCH_SOAK_C=66`; Hyrule Field then ran
+    67-72 °C.
+
 ## 6. Recipes
+
+**"Where does the main thread's time go?"** — `bench.sh ab gSettings.ProbeSplit 0 1 <fixture>`, then
+`splitblocks.py run.log 1 1000` for the blocks and `pairs.py run.log 0 1000` for what the marks cost
+(§8.43). For the whole machine and the other threads, run `~/git/dragonbox-pyra/device/pyra-cpu-attribution.sh
+-d 120 -t soh.elf` on the device while the game runs: per process, per core, and SoH's threads by name.
 
 **"What shape is the game's data?"** — run the fixture **natively on the host** (§8.30). The host
 benchmark build (`cmake --build build-cmake --target soh`) runs the same fixtures, and its `BENCH`

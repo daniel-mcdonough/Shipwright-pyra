@@ -105,6 +105,7 @@ check the date.
 | `ShaderOpts` 3 is worth −3.59% / −2.40% / nothing by scene | 08 §8.17, §8.18, NEXT | **no** — capped. Uncapped: −4.85% Market, −4.55% Hyrule Field; Kokiri not re-measured, 08 §8.20 |
 | The CPU was pinned at 1.25 GHz during benchmark runs | 09, 08 §8.14–§8.19 | **only when the die was above ~77 °C** — `pyra-thermal.service` rewrote the ceiling every 2 s; fixed with the userspace governor, 08 §8.20 |
 | A 20% slower CPU costs the frame only ~2% | 08 §8.19, NEXT | **unverified** — taken on the leaky pin, 08 §8.20 |
+| The main thread outside the timed window is unaccounted for (~2.7 ms at the Market) | NEXT task 0, 08 §8.33 | **split** — fifteen blocks closing on `thread_us` within 2.4 µs; Play_Draw 1.33 ms, ImGui 0.63 ms, input 0.22 ms, 08 §8.43 |
 
 ## The reports
 
