@@ -63,6 +63,8 @@ carries a hardware playbook that covers both projects:
   the model, the second stops closed questions being re-derived.
 - `gpu-optimization.md` + `rendering-guidelines.md` — read before touching the renderer.
 - `profiling-guide.md` — read before measuring anything.
+- [`experiments/gpu-tools/`](../../../dragonbox-pyra/experiments/gpu-tools/README.md) — PVRTune (GPU busy time per kick) and apitrace (frame capture) on the
+  Pyra. Commands are in TESTING.md §3; first result in report 08 §8.42.
 
 Their convention is worth adopting here too: every claim marked **Measured**, **Spec** or
 reasoning, and corrections kept visible rather than edited away.

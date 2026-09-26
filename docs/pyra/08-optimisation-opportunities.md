@@ -3200,3 +3200,64 @@ every pair of this run.
   the next draw). Sorting a run's buckets by program would take some, at the price of more reordering.
   Not measured.
 - The two-core design: GL was ~4.7 ms per Market frame (§8.36), ~3.9 ms with grouping.
+
+## 8.42 The GPU is 20% busy at the 30 fps cap, and presenting the picture costs more than drawing it
+
+Every GPU-side number before this was indirect: `swap_us`, the resolution A/B (§8.19), the
+skip-draw probes (§8.36). §8.21 said "no GPU-side tracing on this part". That was never tried, and it
+was wrong. Imagination's legacy PVRTune for SGX (SDK 17.1, `PVRPerfServerDeveloper` v14.143) runs on
+the stock `5.6.19-m4` kernel and DDK and streams HWPerf data: a start and end for every TA (tiling)
+and 3D (fragment) kick, plus derived counters. apitrace records the game's GL stream on the device
+and replays it on the desktop. Setup and commands:
+`~/git/dragonbox-pyra/experiments/gpu-tools/README.md`, and TESTING.md §3.
+
+### Frozen Market at the cap
+
+`SOH_BENCH_UNCAP=0`, all defaults (LeanGroup on), 1000 MHz pin, die 61-63 °C, 900 measured frames,
+42 s of steady capture. `bench.sh` segment: period 33,434 µs (29.91 fps), render thread on-CPU
+16.8 ms (50.2%), 145 `glDrawArrays`.
+
+| | per frame | share of the period |
+|---|---|---|
+| GPU busy, TA or 3D | **6.9 ms** | **20.5%** |
+| 3D | 5.5 ms | 16.4% |
+| TA | 1.7 ms | 5.1% |
+
+**The frame is not GPU-bound, and nothing at the cap is near it.** The render thread's CPU is 2.4× the
+GPU's busy time. Uncapped (~24 ms period, §8.41) the GPU would be at most ~30% busy.
+
+### Two renders per frame
+
+A frame is two 3D renders, 29.9 and 29.6 per second, each four 3D kicks. The apitrace capture names
+them:
+
+| render | 3D per frame, mean (median, p95) | preceded by | what it is |
+|---|---|---|---|
+| scene | **2.64 ms** (2.64, 3.24) | 11 TA kicks, spread through the CPU's frame | the 145 draws into `mGameFb`, 640×360 |
+| present | **2.87 ms** (2.81, 4.26) | 1 TA kick | `glBindFramebuffer(0)`, a colour+depth clear at 1280×720, and **one** ImGui `glDrawElements` of 6 indices sampling `mGameFb`, with `GL_BLEND` on (`SRC_ALPHA, ONE_MINUS_SRC_ALPHA`) |
+
+**Drawing one blended full-screen quad costs the GPU more than drawing the Market.** It is most likely
+NEXT.md item 4 (~3.4 ms of the swap that does not scale with the game's pixels, §8.19), and it matches
+§8.19's shape: quartering the game's pixels moved the swap only 1.3 ms, because the present pass
+does not shrink with them. Item F (let the display controller scale) targets this pass. So would
+drawing that quad unblended, or skipping the colour clear it fully covers. None of these is measured.
+
+### What is not established
+
+- What the four 3D kicks per render are (the MP2's two cores, a split render, a separate resolve).
+  The tables sum them.
+- Whether the eglSwapBuffers copy/flip is inside the present pass's 2.87 ms or somewhere the
+  HWPerf stream does not show.
+- PVRTune's "GPU clock speed" counter reads 270-410 MHz and moves with load; the clock is a fixed
+  425.47 MHz (hardware repo `experiments/gpu-clock/`). Its derived counters that divide by that clock
+  (cycles per pixel, per vertex) are suspect for the same reason. The per-kick timestamps are not.
+- An on-device GL-only replay (`eglretrace --loop`) runs, but at ~2 fps: it is parsing a 4.4 GB
+  trace, and `--loop` did not take on the full trace. No number from it.
+
+### What this leaves
+
+- The present pass: blending off for the game quad, no colour clear under it, or scaling in the
+  display controller (item F). Each is a PVRTune capture before and after, and a pixel check.
+- The GPU's power domain never turns off (hardware repo `experiments/power-budget/`), so GPU work
+  removed saves dynamic power only. For heat and battery the render thread's 16.8 ms is still the
+  larger target.

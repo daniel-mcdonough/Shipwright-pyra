@@ -119,7 +119,7 @@ Market and Hyrule Field bracket the answer between them. Kokiri has not been re-
 Kokiri houses and shop, have a `…Background_…` resource). For a change that could touch that path, use
 watch mode and go indoors.
 
-## 3. The four things you can run
+## 3. The things you can run
 
 ### A/B a CVar — the main tool
 
@@ -248,6 +248,65 @@ grabs of the *same* arm 23 s apart differed in 262,618 pixels, all at y ≤ 300 
 seen only ~600 over 150 s, cause of the difference unknown). Mask the sky or take a same-arm
 control at the same spacing. With `REPS=2` a third pair in segment 3 (arm A again) gives a same-arm
 control at a similar time distance: slow drift (the sky at Hyrule Field) shows up there too.
+
+### GPU: how busy is it, and what does a frame draw?
+
+Two tools, both set up in `~/git/dragonbox-pyra/experiments/gpu-tools/` (its README has the
+background and the build). Use them for GPU questions, not the swap time: `swap_us` is time the
+render thread spends blocked, and on this tiler it mixes GPU work, presentation and the frame cap.
+First results: report 08 §8.42.
+
+**PVRTune: GPU busy time per frame.** Imagination's server reads the SGX's HWPerf stream: a start and
+an end for every TA (tiling) and 3D (fragment) kick. It is already on the device in `~/gpu-tools/`.
+The desktop GUI is in the hardware repo's `experiments/gpu-tools/pvrtune/` (git-ignored). Record to a
+file on the device while any `bench.sh` run goes, then export on the host:
+
+```sh
+G=~/git/dragonbox-pyra/experiments/gpu-tools
+ssh -n "$PYRA_HOST" 'cd ~/gpu-tools; rm -f cap.pvrtune; { LD_LIBRARY_PATH=/opt/omap5-sgx-ddk-um-linux/lib \
+  nohup ./PVRPerfServerDeveloper --sendto=/home/pyra/gpu-tools/cap.pvrtune --qat=300 --pid \
+  > perf.log 2>&1 < /dev/null & }'
+PYRA_PIN_FREQ=1000000 ./scripts/pyra/bench.sh run $MARKET SOH_BENCH_UNCAP=0 SOH_BENCH_WARMUP=300 SOH_BENCH_FRAMES=900
+ssh -n "$PYRA_HOST" 'pkill -INT -f PVRPerfServer'          # -INT, so the file is closed
+scp "$PYRA_HOST":gpu-tools/cap.pvrtune $G/captures/
+( cd $G/captures && ../pvrtune/GUI/Linux_x86_64/PVRTuneDeveloperGUI cap.pvrtune \
+    --export-csv-timing=cap-timing.csv --export-csv-counters=cap-counters.csv )
+$G/pvrtune_frames.py $G/captures/cap-timing.csv 12 54   # seconds into the capture: pick the steady part
+```
+
+`pvrtune_frames.py` prints GPU busy (TA or 3D) as a share of wall time, and 3D time per frame split
+into the scene render (the 640×360 game framebuffer) and the present render (the 1280×720 window
+pass). The counters CSV has the tool's derived rates every 500 ms: tiler/renderer active %, frames per
+second, vertex and pixel load, HSR efficiency, memory words/s, per-CPU load. The GUI shows the same
+data live, as a timeline: run the server without `--sendto` and connect to port 6520 from the GUI.
+
+- Its help flag is `-h`. `--help` is ignored and the server starts and waits.
+- In file mode the server records one counter group (`--group=N`, default 0). The timing events do
+  not depend on the group.
+- The "GPU clock speed" counter reads 270-410 MHz. The clock is a fixed 425.47 MHz, so don't trust
+  that counter, or the per-cycle counters derived from it. The kick timestamps are fine.
+- It is a separate process reading a driver buffer and has not been priced as a perturbation. Don't
+  run it during an A/B you are timing.
+
+**apitrace: what the frame draws, call by call.** An `LD_PRELOAD` wrapper records every EGL/GL call.
+`bench.sh run` passes the variables straight through:
+
+```sh
+./scripts/pyra/bench.sh run $MARKET SOH_BENCH_UNCAP=0 SOH_BENCH_WARMUP=30 SOH_BENCH_FRAMES=30 \
+    LD_PRELOAD=/home/pyra/apitrace/lib/apitrace/wrappers/egltrace.so \
+    TRACE_FILE=/home/pyra/gpu-tools/soh-market.trace
+scp "$PYRA_HOST":gpu-tools/soh-market.trace ~/.cache/pyra-traces/     # 4.4 GB for 460 frames
+qapitrace ~/.cache/pyra-traces/soh-market.trace                       # step through draws, state, textures
+apitrace dump --calls=<from>-<to> ~/.cache/pyra-traces/soh-market.trace   # or read it as text
+```
+
+- A traced run is huge and slow (~2 fps, 4.4 GB for a 460-frame Market run with the 400-frame
+  settle). Its timings mean nothing.
+- The desktop replays it on Mesa and draws the right picture. `apitrace trim` output does **not**
+  replay: it leaves out the EGL context and the textures. `gltrim` keeps nearly everything.
+- Replay on the device needs the patched `eglretrace` (the DDK's DRI3 WSEGL aborts in
+  `eglWaitNative`) and `LD_LIBRARY_PATH=~/ddk-shim`. It works but runs at ~2 fps, parsing the trace.
+  No timing from it yet.
 
 ## 4. Reading the output
 
@@ -574,6 +633,10 @@ the soak. Two numbers, not one.
 **"Did this change the picture?"** — `shotcheck.sh` at the busiest fixture you have, then read the
 control number before the result number.
 
+**"Is the GPU the limit?"** — take a PVRTune capture (§3) and read GPU busy against the frame
+period. At the Market at the cap it is 20.5% (§8.42). The resolution A/B below is the indirect way,
+from before PVRTune worked.
+
 **"Is this scene fill-bound at all?"** — A/B `gSettings.InternalResolution 0.5 0.25`. It is the
 direct test: a quarter of the pixels, every fragment cost with them. Read the `period` lines and
 check `fb=` alternates. At the shipped 0.5× neither Market nor Hyrule Field is (4.9% / 6.3%,
@@ -631,11 +694,8 @@ sudo perf report -i rec.data --no-children --sort dso,sym --stdio
   and the counts **overstate** what removing that instruction saves, by ~3× in §8.26 — and
   **understate** a dependent chain by ~2.5× in §8.27 (lighting: sampled ~0.33 ms with the
   transform, measured ~0.8 ms alone). Use the result to pick a candidate, and an A/B to size it.
-- **GPU-side: PVRTune works (2026-09-26).** Its server streams per-kick TA/3D timing on the stock
-  kernel and DDK; apitrace records the game for a desktop frame debugger. Setup, commands and the
-  CSV export are in `~/git/dragonbox-pyra/experiments/gpu-tools/README.md`. First result, frozen Market
-  at the 30 fps cap: the GPU is busy 6.9 ms of 33.4 ms, and the 1280×720 present quad (2.87 ms of 3D)
-  costs more than the scene (2.64 ms).
+- **GPU-side:** PVRTune and apitrace work. See §3, "GPU: how busy is it", and report 08 §8.42.
+  (This line used to say no GPU profiler worked here. Nobody had tried until 2026-09-26.)
 
 Run it on the frozen Market fixture, uncapped, on the userspace pin, after the soak — and cover
 both ends of a run, because the Market's frame period creeps +4% across five minutes at a fixed
@@ -658,6 +718,7 @@ arm values. An A/B cannot answer this: it sets the CVar itself.
 | | |
 |---|---|
 | [`NEXT.md`](NEXT.md) | the live queue. Newer than any report. |
+| `~/git/dragonbox-pyra/experiments/gpu-tools/` | PVRTune and apitrace on the Pyra: build, background, the analysis script. |
 | [09](09-benchmark-harness.md) | the harness: design, validation, every env var, the fixtures. |
 | [08](08-optimisation-opportunities.md) | results, and §8.18 on why one fixture is not a measurement. |
 | [10](10-save-file-corruption.md) | the save bug and `fdguard.c`. |
