@@ -468,7 +468,12 @@ traversal. Each arm's wall-clock delta bounds one layer from above. The driver m
 when nothing is drawn, so watch `swap_us` to catch the arms where GPU work changed rather than
 CPU work.
 
-### Not available, so do not plan around it
+### ~~Not available, so do not plan around it~~ Available since 2026-09-26
+
+**Withdrawn:** PVRTune's HWPerf timing and apitrace both work on the device
+(`~/git/dragonbox-pyra/experiments/gpu-tools/`). Frozen Market, 30 fps cap: GPU busy 20.5% (6.9 ms
+per frame); the present pass, one blended 1280×720 ImGui quad, is 2.87 ms of 3D against the scene's
+2.64 ms. Item F and item 4 above are that pass. The old text, kept for the record:
 
 There is **no GPU-side tracing on this part** — no PVRTune, no frame debugger, nothing beyond
 `GL_EXT_occlusion_query_boolean` and A/B (`~/git/dragonbox-pyra/docs/profiling-guide.md` §3.2,

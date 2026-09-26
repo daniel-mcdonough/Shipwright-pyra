@@ -631,8 +631,11 @@ sudo perf report -i rec.data --no-children --sort dso,sym --stdio
   and the counts **overstate** what removing that instruction saves, by ~3× in §8.26 — and
   **understate** a dependent chain by ~2.5× in §8.27 (lighting: sampled ~0.33 ms with the
   transform, measured ~0.8 ms alone). Use the result to pick a candidate, and an A/B to size it.
-- No GPU-side profiler is known to work on this part (`~/git/dragonbox-pyra/docs/profiling-guide.md`
-  §3.2). The DDK does ship `libPVRScopeServices.so`, which is PowerVR's counter library; untried.
+- **GPU-side: PVRTune works (2026-09-26).** Its server streams per-kick TA/3D timing on the stock
+  kernel and DDK; apitrace records the game for a desktop frame debugger. Setup, commands and the
+  CSV export are in `~/git/dragonbox-pyra/experiments/gpu-tools/README.md`. First result, frozen Market
+  at the 30 fps cap: the GPU is busy 6.9 ms of 33.4 ms, and the 1280×720 present quad (2.87 ms of 3D)
+  costs more than the scene (2.64 ms).
 
 Run it on the frozen Market fixture, uncapped, on the userspace pin, after the soak — and cover
 both ends of a run, because the Market's frame period creeps +4% across five minutes at a fixed
