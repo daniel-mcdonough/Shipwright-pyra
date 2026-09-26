@@ -13,7 +13,7 @@ Before that, after §8.44 (task 0T (1) and (2) done, no code): **875 MHz holds 3
 at the Market fixture and 750 does not** (3.9% of frames lost, although the render thread averages only
 19.2 ms). Battery watts against 30 fps at 1000 MHz (4.43 W, 67.7 °C; desktop idle 2.62 W, 47 °C): 30/875
 −0.17 W, 30/750 −0.34 W and −2.7 °C, **20/750 −0.70 W and −5.6 °C** (0.6% lost), 20/625 −0.81 W,
-20/500 −0.91 W and −8.2 °C (2.4% lost). The GPU now runtime-suspends (the hardware repo's 0034 GPU-power module, loaded by hand for its soak; not yet the default), and the idle floor
+20/500 −0.91 W and −8.2 °C (2.4% lost). The GPU now runtime-suspends (the hardware repo's 0034 GPU-power module; loaded by hand for its soak then, installed as the m4-kbdled default on 09-26), and the idle floor
 fell 1.1 W and ~9 °C. **Owner's call: 30 fps at 875 MHz, or 20 fps at 625-750 MHz.** Either way the next
 step is a real-play check of the chosen arm in the Market, Kokiri Forest and Hyrule Field.
 
@@ -268,6 +268,18 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
      (`pyra-gamemode`) is the obvious place, not the game.
    - **(5) If 30 fps at 750 MHz is wanted**: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750
      against 35 at 875). 0A, 0S, then the two-core design, in that order.
+   - **(6) Undervolt the chosen point, 625 MHz** (added 2026-09-26; hardware repo
+     `experiments/undervolt/`). Each clock step's voltage is a fixed device-tree value (625 MHz = 0.900 V,
+     50 mV per 125 MHz step), not calibrated for this chip. The rail follows the table (read back
+     from the PMIC). `pyra_undervolt.ko` changes one point's voltage at runtime and puts it back on unload
+     or reboot. It is built, and one 10 mV step reached the PMIC and reverted. Next: step 625 MHz down from
+     0.900 V in 10 mV steps. Each step has to pass `stress-ng --verify` on both cores, cold and hot, and
+     `SOH_BENCH_DUMP` frozen-Market frames pixel-identical to a 0.900 V reference. Back off 20-30 mV from the
+     first failure, then `thermcost` ABBA at 20/625, stock against undervolted. Expected 0.05-0.15 W
+     (~2% of CPU switching power per 10 mV), not measured. It also makes any later
+     clock drop worth more. Too little voltage gives silent wrong results, then a crash:
+     it cannot damage the chip, but it can corrupt the card, so the tested backup of 09-26
+     (hardware repo `docs/card-backup-restore.md`) comes first. Needs the device free for a few hours.
    The original brief of (1)-(3), for the record:
    - **(1) Pin 750 MHz, no code.** Estimate: Market render thread ~22 ms per frame (16.8 ms × 4/3,
      less for memory stalls that don't scale with the clock), plus ~2 ms of logic in play and the
@@ -285,7 +297,7 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
      it against the lowest clock that failed, in the scenes where it failed, using 0(a)/(b)'s table.
    **Limit to keep in view:** the idle floor sets most of the die temperature (56-60 °C at desktop
    idle; the game adds ~1.5 W and 11-15 °C). CPU work moves play temperatures by degrees, not tens.
-   The GPU never powers down, even at idle (`experiments/power-budget/`); that is outside this repo.
+   The GPU runtime-suspends at idle since the hardware repo's 0034 (installed as the default on 09-26).
 
 00. ~~**Real-play A/B of `gSettings.LeanGLState` 0 vs 3, then default it.**~~ **Done (§8.25):
     −2020 µs (−13.6%) of render-thread CPU over 25 real-play pairs, t −4.7. No GL errors and no
