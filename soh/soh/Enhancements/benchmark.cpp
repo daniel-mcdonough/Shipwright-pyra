@@ -404,6 +404,10 @@ struct Segment {
 
 using Clock = std::chrono::steady_clock;
 
+uint32_t MicrosBetween(Clock::time_point a, Clock::time_point b) {
+    return (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+}
+
 // Reads the clock and folds it into the segment's extremes; returns the reading. Both ends
 // matter: pyra-thermal.service can raise the ceiling above a pin as well as lower it.
 int SampleCpu(Segment& seg) {
@@ -1024,12 +1028,30 @@ struct WatchBlock {
     uint64_t threadCpuStart = 0;
     Clock::time_point wallStart{};
     int cpuMinKHz = -1, cpuMaxKHz = -1;
+    // Frame periods, end of frame to end of frame (§8.43): a histogram, and for the frames over
+    // kWatchSlowMicros the render thread's CPU time and swap time across that period, which say
+    // whether a slow frame was computing or waiting.
+    uint32_t hist[5] = {};
+    uint32_t slow = 0, maxMicros = 0;
+    uint64_t slowMicros = 0, slowCpuMicros = 0, slowSwapMicros = 0;
 };
 WatchBlock gWatch;
 int gWatchBlockIndex = 0;
+// Histogram bin upper edges, in µs; the last bin is everything above. 34 ms is the 30 fps cap with
+// the limiter's jitter; 40 ms (20% over) is what counts as a slow frame.
+constexpr uint32_t kWatchHistEdges[4] = { 34000, 40000, 50000, 66700 };
+constexpr uint32_t kWatchSlowMicros = 40000;
+uint64_t gWatchLastCpu = 0;
+Clock::time_point gWatchLastWall{};
 
 void WatchBlockFrame(uint32_t micros, uint64_t windowCpu) {
     const int inBlock = gPhaseFrames % kWatchBlockFrames;
+    const uint64_t cpuNow = CpuMicros(CLOCK_THREAD_CPUTIME_ID);
+    const Clock::time_point wallNow = Clock::now();
+    const uint32_t frameMicros = gWatchLastWall.time_since_epoch().count() == 0 ? 0 : MicrosBetween(gWatchLastWall, wallNow);
+    const uint64_t frameCpu = gWatchLastCpu == 0 ? 0 : cpuNow - gWatchLastCpu;
+    gWatchLastCpu = cpuNow;
+    gWatchLastWall = wallNow;
     if (inBlock == 0) {
         if (gWatch.frames > 0 && gPlayState != nullptr) {
             const double n = (double)gWatch.frames;
@@ -1039,14 +1061,19 @@ void WatchBlockFrame(uint32_t micros, uint64_t windowCpu) {
             SPDLOG_INFO("Benchmark watch-block {} arm={} frames={} period_us={:.1f} window_us={:.1f} "
                         "window_cpu_us={:.1f} thread_cpu_pct={:.1f} thread_cpu_us={:.1f} lookup_hit={:.1f} "
                         "lookup_miss={:.2f} lookup_flush={} res_loads_window={:.2f} draws={:.1f} scene={} "
-                        "cpu_min_mhz={} cpu_max_mhz={} temp_c={:.1f}",
+                        "cpu_min_mhz={} cpu_max_mhz={} temp_c={:.1f} hist_ms=34:{}/40:{}/50:{}/67:{}/+:{} max_ms={:.1f} "
+                        "slow={} slow_ms={:.1f} slow_cpu_pct={:.1f} slow_swap_ms={:.1f}",
                         gWatchBlockIndex, gCfg.abCVar.empty() ? std::string("single") : gCfg.abValues[ArmIndexForSegment(gWatchBlockIndex)],
                         gWatch.frames, gWatch.periodMicros / n, gWatch.windowMicros / n, gWatch.windowCpuMicros / n,
                         wall > 0.0 ? 100.0 * threadCpu / wall : 0.0, threadCpu / n,
                         gWatch.counters[BENCH_LOOKUP_HIT] / n, gWatch.counters[BENCH_LOOKUP_MISS] / n,
                         gWatch.counters[BENCH_LOOKUP_FLUSH], gWatch.counters[BENCH_RES_LOADS_WINDOW] / n,
                         gWatch.counters[BENCH_DRAWS] / n, gPlayState->sceneNum, KHzToMHz(gWatch.cpuMinKHz),
-                        KHzToMHz(gWatch.cpuMaxKHz), ReadTempMilliC() / 1000.0);
+                        KHzToMHz(gWatch.cpuMaxKHz), ReadTempMilliC() / 1000.0, gWatch.hist[0], gWatch.hist[1],
+                        gWatch.hist[2], gWatch.hist[3], gWatch.hist[4], gWatch.maxMicros / 1000.0, gWatch.slow,
+                        gWatch.slow ? gWatch.slowMicros / 1000.0 / gWatch.slow : 0.0,
+                        gWatch.slowMicros ? 100.0 * gWatch.slowCpuMicros / gWatch.slowMicros : 0.0,
+                        gWatch.slow ? gWatch.slowSwapMicros / 1000.0 / gWatch.slow : 0.0);
             gWatchBlockIndex++;
         }
         gWatch = WatchBlock{};
@@ -1063,6 +1090,20 @@ void WatchBlockFrame(uint32_t micros, uint64_t windowCpu) {
         gWatch.wallStart = Clock::now();
     }
     gWatch.frames++;
+    if (frameMicros > 0) {
+        int bin = 0;
+        while (bin < 4 && frameMicros > kWatchHistEdges[bin]) {
+            bin++;
+        }
+        gWatch.hist[bin]++;
+        gWatch.maxMicros = std::max(gWatch.maxMicros, frameMicros);
+        if (frameMicros > kWatchSlowMicros) {
+            gWatch.slow++;
+            gWatch.slowMicros += frameMicros;
+            gWatch.slowCpuMicros += frameCpu;
+            gWatch.slowSwapMicros += gBenchSwapMicros;
+        }
+    }
     gWatch.periodMicros += gPeriodMicros;
     gWatch.windowMicros += micros;
     gWatch.windowCpuMicros += windowCpu;
@@ -1568,10 +1609,6 @@ Clock::time_point gSplitPrevTickBegin{};
 int gSplitFrames = 0;
 bool gSplitArmed = false;
 int gSplitMinKHz = -1, gSplitMaxKHz = -1;
-
-uint32_t MicrosBetween(Clock::time_point a, Clock::time_point b) {
-    return (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
-}
 
 template <typename F> double SplitMedian(F field) {
     std::vector<uint32_t> v;
