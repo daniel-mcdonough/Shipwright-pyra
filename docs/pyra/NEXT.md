@@ -5,14 +5,15 @@ rewritten as things land. If it disagrees with a report, this file is newer.
 
 Last revised **2026-09-26, last**, after §8.45: **the owner chose 20 fps at 625 MHz, and it holds real play**:
 0.7% of frames lost over 13 minutes and eight scenes, against 0.6% for 30 fps at 1000 MHz (§8.43), for
-−0.81 W (§8.44). Thin at the Market (0.7 min, 1.5%). Next: ship it as a per-game profile in the launcher
-(`~/git/pyra-gamemode`), and a longer Market stretch at 625 if the owner wants it settled.
+−0.81 W (§8.44). Thin at the Market (0.7 min, 1.5%). Shipping it is launcher work, a TODO in
+`~/git/pyra-gamemode/TODO.md` (per-game CPU profiles); a longer Market stretch at 625 if the owner wants it
+settled. Next in this repo: the present pass (item I), or 0A/0S only if 30 fps at 750 MHz is ever wanted.
 
 Before that, after §8.44 (task 0T (1) and (2) done, no code): **875 MHz holds 30 fps
 at the Market fixture and 750 does not** (3.9% of frames lost, although the render thread averages only
 19.2 ms). Battery watts against 30 fps at 1000 MHz (4.43 W, 67.7 °C; desktop idle 2.62 W, 47 °C): 30/875
 −0.17 W, 30/750 −0.34 W and −2.7 °C, **20/750 −0.70 W and −5.6 °C** (0.6% lost), 20/625 −0.81 W,
-20/500 −0.91 W and −8.2 °C (2.4% lost). The GPU now runtime-suspends (owner's kernel fix), and the idle floor
+20/500 −0.91 W and −8.2 °C (2.4% lost). The GPU now runtime-suspends (the hardware repo's 0034 GPU-power module, loaded by hand for its soak; not yet the default), and the idle floor
 fell 1.1 W and ~9 °C. **Owner's call: 30 fps at 875 MHz, or 20 fps at 625-750 MHz.** Either way the next
 step is a real-play check of the chosen arm in the Market, Kokiri Forest and Hyrule Field.
 

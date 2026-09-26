@@ -3484,7 +3484,8 @@ CPU work pays when the clock and voltage can drop a step. What does each step sa
 hold the game?
 
 **Method.** `thermcost.sh clock` (hardware repo, extended for this), run on the device on battery,
-2026-09-26, kernel `5.6.19-m4-kbdled` #10 (GPU runtime suspend now works; it did not on 09-25). The load is
+2026-09-26, kernel `5.6.19-m4-kbdled` #10 with the hardware repo's GPU idle-power module (0034) loaded by hand for its soak, so
+the GPU runtime-suspends (it did not on 09-25; 0034 is not yet the default). §8.43's play session and §8.45 had it too. The load is
 the Market fixture with logic running (`SOH_BENCH_STATIC=0`, fixed camera), default CVars, the game's cap.
 Watts: ABBA 60 s blocks inside one game process, only the clock changing, first 15 s dropped, 4 blocks per
 arm. Die temperature: 10-minute holds, last 3 minutes, slopes ≤0.2 °C/min. fps: the game's own count
@@ -3516,7 +3517,7 @@ repeated at the end of the run read −0.04 W and +0.1 °C: no drift worth corre
   1000 MHz does at 30. 500 MHz at 20 loses 2.4% (19.5 fps), the same kind of miss as 750 at 30.
 - **Render CPU scales a little less than the clock**: ×1.28 from 1000 to 750 MHz (clock ×1.33), ×1.46 from
   750 to 500 (×1.5).
-- **The idle floor fell by 1.1 W and ~9 °C** since 2026-09-25 (GPU runtime suspend, lower backlights; not
+- **The idle floor fell by 1.1 W and ~9 °C** since 2026-09-25 (the 0034 GPU module, lower backlights; not
   separated). PROMPT.md's "the idle floor sets most of the die temperature" is weaker now: the game is 1.8 W
   of a 4.4 W total, and 20 °C of die temperature over the desktop.
 
