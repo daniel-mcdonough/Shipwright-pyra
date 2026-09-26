@@ -3,7 +3,17 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26**, after §8.42: **the GPU can be profiled, and it is 20% busy at the cap.**
+Last revised **2026-09-26**, after a review of what the CPU accounting covers (no new measurements):
+**the timed window is well priced, and the rest of the main thread is not.** Frozen Market at the cap,
+1000 MHz: render thread 16.8 ms on-CPU per frame, of which ~13.5 ms is inside the timed window and priced
+block by block (§8.26-8.41). The ~3 ms outside it (derived: `thread_us − window_us`; §8.20 measured the
+block at 5.7-6.1 ms of wall time uncapped, on older defaults) has never been split, nor have the other
+threads (~2.5 ms per tick, §8.33) or the rest of the machine while SoH runs. And §8.33 found the main
+thread on-CPU only 28-45% of the time at the cap, so nobody has shown that real play ever misses 30 fps
+for CPU reasons. The two-core design rests on that. **New task 0 below: complete the CPU picture, then
+decide whether the two-core design is worth anything.**
+
+Before that, §8.42: **the GPU can be profiled, and it is 20% busy at the cap.**
 PVRTune's HWPerf timing and apitrace both work on the device (TESTING.md §3, "GPU: how busy is it";
 hardware repo `experiments/gpu-tools/`). Frozen Market, 30 fps cap, 1000 MHz: GPU busy (TA or 3D)
 **6.9 ms of the 33.4 ms period (20.5%)**; render thread on-CPU 16.8 ms. The frame is CPU-bound by
@@ -145,6 +155,31 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
 
 ### Do this first
 
+0. **Complete the CPU picture before designing the two-core split** (added 2026-09-26). Three parts,
+   all measurement:
+   - **(a) Split the main thread's CPU outside the timed window** on the frozen Market and Hyrule
+     Field. The window is `Benchmark_FrameBegin`/`FrameEnd` around `DrawAndRunGraphicsCommands` in
+     `RunCommands` (`OTRGlobals.cpp`). Outside it, per tick: `Play_Draw` building the display list,
+     `Graph_ProcessGfxCommands`' set-up and the interpolation recording and walk
+     (`FrameInterpolation_*`), `HandleEvents`, the audio hand-off, and whatever else the loop runs.
+     Extend `SOH_BENCH_SPLIT`'s marks (§8.33) with thread-CPU marks at each of those boundaries
+     rather than adding a new instrument. The blocks have to sum to `thread_us − window_us` within
+     the MDE. If they don't, something is missing: find it before going further. Price the extra
+     marks with one A/B against the unmarked build, as P5 says.
+   - **(b) Whole-machine attribution in real play**: `~/git/dragonbox-pyra/device/pyra-cpu-attribution.sh`
+     during a real-play session (the owner playing, watch mode, pinned), with SoH's threads named
+     (`/proc/<pid>/task/*/comm` and `stat`): main, audio, and any SDL/driver threads, then Xorg,
+     PulseAudio, the window manager, kernel threads and IRQs. On other workloads PulseAudio and Xorg
+     were 12-14% of the machine each (`cpu-optimization.md` §3.1); for SoH this has never been taken.
+   - **(c) Does real play miss the 30 fps cap, and where?** Frame-period histogram (`LUS_FPS_LOG` or
+     the watch-mode blocks) over a session that reaches thermal equilibrium, logging the clock and die
+     temperature next to each block. Name the scenes and clocks where frames go over 33.3 ms, and say
+     for each whether the main thread was on-CPU (CPU-bound) or waiting (swap/GPU).
+   **Decision this feeds:** if (c) finds no CPU-bound misses at equilibrium, the two-core design buys
+   nothing a player sees. CPU work then only buys heat and power, and the ranking should follow the
+   (a)/(b) numbers by CPU-ms saved per frame on *either* core, not main-thread latency. If (c) does
+   find them, the two-core design goes ahead, sized against the scenes (c) named.
+
 00. ~~**Real-play A/B of `gSettings.LeanGLState` 0 vs 3, then default it.**~~ **Done (§8.25):
     −2020 µs (−13.6%) of render-thread CPU over 25 real-play pairs, t −4.7. No GL errors and no
     visible glitches. Now the GLES2 default; desktop GL keeps 0 because a core profile rejects
@@ -254,7 +289,7 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - **Maybe: sort a run's buckets by program too.** Grouping kept 48 of 51 program switches (~5.8 µs
       each, §8.40); ordering buckets by program within a run would take some at the price of more
       reordering. Count first: how many switches a program-major order would leave.
-    - **Then the two-core design.** §8.36's ~4.7 ms of GL per Market frame, less item H's ~0.16 ms,
+    - **Then the two-core design, gated on task 0 (c).** §8.36's ~4.7 ms of GL per Market frame, less item H's ~0.16 ms,
       less grouping's ~0.84 ms (§8.41): ~3.7 ms.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
@@ -323,6 +358,7 @@ In order:
    larger, and report 7's real-play absolutes have never been re-taken on a trustworthy rig, so
    the gap between the frozen 31.4 FPS and what the game actually does is itself unmeasured.
    `period_us − mean_us` is already logged per segment; what is missing is any breakdown of it.
+   **Now task 0 (a) above.**
 
 ### Worth doing
 
