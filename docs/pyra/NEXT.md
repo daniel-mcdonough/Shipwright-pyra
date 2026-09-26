@@ -3,7 +3,12 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26 late**, after §8.44 (task 0T (1) and (2) done, no code): **875 MHz holds 30 fps
+Last revised **2026-09-26, last**, after §8.45: **the owner chose 20 fps at 625 MHz, and it holds real play**:
+0.7% of frames lost over 13 minutes and eight scenes, against 0.6% for 30 fps at 1000 MHz (§8.43), for
+−0.81 W (§8.44). Thin at the Market (0.7 min, 1.5%). Next: ship it as a per-game profile in the launcher
+(`~/git/pyra-gamemode`), and a longer Market stretch at 625 if the owner wants it settled.
+
+Before that, after §8.44 (task 0T (1) and (2) done, no code): **875 MHz holds 30 fps
 at the Market fixture and 750 does not** (3.9% of frames lost, although the render thread averages only
 19.2 ms). Battery watts against 30 fps at 1000 MHz (4.43 W, 67.7 °C; desktop idle 2.62 W, 47 °C): 30/875
 −0.17 W, 30/750 −0.34 W and −2.7 °C, **20/750 −0.70 W and −5.6 °C** (0.6% lost), 20/625 −0.81 W,
@@ -254,7 +259,7 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    Extend it for the arms below rather than writing a new script. The frame-rate floor is
    `SOH_BENCH_SPLIT` windows or `LUS_FPS_LOG`, read in the scenes 0(c) names, not only the Market.
    **(1) and (2) done (§8.44)**; see the header. What is left of 0T:
-   - **(4) Real-play check of the owner's choice** (30/875 or 20/625-750): watch mode pinned at that clock
+   - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock
      (`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=<kHz>`, plus `SOH_BENCH_AB_CVAR=gSettings.InterpolationFPS
      SOH_BENCH_AB_VALUES=20,20` for 20 fps), `SOH_BENCH_SPLIT=150`, the owner playing through the Market,
      Kokiri Forest and Hyrule Field; `watchsplit.py watch.log <MHz>` against §8.43's 1000 MHz table (0.81%
