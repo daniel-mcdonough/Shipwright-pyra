@@ -3,7 +3,15 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26 night**, after §8.43 (b) and (c), task 0 done: **real play holds 30 fps at 1000
+Last revised **2026-09-26 late**, after §8.44 (task 0T (1) and (2) done, no code): **875 MHz holds 30 fps
+at the Market fixture and 750 does not** (3.9% of frames lost, although the render thread averages only
+19.2 ms). Battery watts against 30 fps at 1000 MHz (4.43 W, 67.7 °C; desktop idle 2.62 W, 47 °C): 30/875
+−0.17 W, 30/750 −0.34 W and −2.7 °C, **20/750 −0.70 W and −5.6 °C** (0.6% lost), 20/625 −0.81 W,
+20/500 −0.91 W and −8.2 °C (2.4% lost). The GPU now runtime-suspends (owner's kernel fix), and the idle floor
+fell 1.1 W and ~9 °C. **Owner's call: 30 fps at 875 MHz, or 20 fps at 625-750 MHz.** Either way the next
+step is a real-play check of the chosen arm in the Market, Kokiri Forest and Hyrule Field.
+
+Before that, §8.43 (b) and (c), task 0 done: **real play holds 30 fps at 1000
 MHz.** 22.9 minutes, the owner playing, twelve scenes, die 52 → 72 °C: 0.8% of frames over 40 ms (one
 every ~4 s, spread out, none steadily in any scene), 0.17% over 67 ms. The main thread averages 12.1 ms
 of CPU per 33.5 ms frame (Market 17.6, Hyrule Field 13.4, the temples ~9.8); the whole machine is 22 ms
@@ -245,6 +253,16 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    pinned with `userspace` + `scaling_setspeed` because `pyra-thermal` overrides min==max pins).
    Extend it for the arms below rather than writing a new script. The frame-rate floor is
    `SOH_BENCH_SPLIT` windows or `LUS_FPS_LOG`, read in the scenes 0(c) names, not only the Market.
+   **(1) and (2) done (§8.44)**; see the header. What is left of 0T:
+   - **(4) Real-play check of the owner's choice** (30/875 or 20/625-750): watch mode pinned at that clock
+     (`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=<kHz>`, plus `SOH_BENCH_AB_CVAR=gSettings.InterpolationFPS
+     SOH_BENCH_AB_VALUES=20,20` for 20 fps), `SOH_BENCH_SPLIT=150`, the owner playing through the Market,
+     Kokiri Forest and Hyrule Field; `watchsplit.py watch.log <MHz>` against §8.43's 1000 MHz table (0.81%
+     of frames over 40 ms). Then decide how to ship the clock: a per-game pin in the launcher
+     (`pyra-gamemode`) is the obvious place, not the game.
+   - **(5) If 30 fps at 750 MHz is wanted**: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750
+     against 35 at 875). 0A, 0S, then the two-core design, in that order.
+   The original brief of (1)-(3), for the record:
    - **(1) Pin 750 MHz, no code.** Estimate: Market render thread ~22 ms per frame (16.8 ms × 4/3,
      less for memory stalls that don't scale with the clock), plus ~2 ms of logic in play and the
      swap wait: ~28-30 ms against 33.3. Probably holds at the Market, marginal in heavier scenes.

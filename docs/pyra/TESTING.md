@@ -263,6 +263,28 @@ seen only ~600 over 150 s, cause of the difference unknown). Mask the sky or tak
 control at the same spacing. With `REPS=2` a third pair in segment 3 (arm A again) gives a same-arm
 control at a similar time distance: slow drift (the sky at Hyrule Field) shows up there too.
 
+### Watts and die temperature — needs the device on battery and left alone
+
+The only power instrument is the battery gauge, so every figure is a difference between arms, and the
+device must be off the charger (the script waits for `bq24297/online` to read 0). It runs entirely on the
+device, so a dropped network doesn't stop it:
+
+```sh
+scp ~/git/dragonbox-pyra/experiments/power-budget/thermcost.sh "$PYRA_HOST":thermcost/
+ssh -n "$PYRA_HOST" 'cd ~/thermcost && SOH_DIR=/home/pyra/soh-bench2 setsid nohup ./thermcost.sh clock > driver.log 2>&1 < /dev/null &'
+# ~85 minutes later (the log ends "done, restored"):
+scp "$PYRA_HOST":'thermcost/thermcost-clock.*' "$PYRA_HOST":'thermcost/thermcost-run-*.log' .
+python3 ~/git/dragonbox-pyra/experiments/power-budget/thermclock.py .
+```
+
+`clock` mode (§8.44) runs ABBA 60 s blocks for watts, 10-minute holds for die temperature, and reads the
+game's fps per clock from its `BENCH split` lines. Edit its phase list for other arms; keep ABBA inside one
+game process, because a restart is a load and a cold start. 20 fps goes through the harness's A/B CVar
+(`gSettings.InterpolationFPS`, one value); the CVar lands when the fixture's segment starts, ~45 s after
+launch, so the script warms for 60 s first. It backs up and restores `shipofharkinian.json`, the
+governor and both backlights. Absolute watts depend on the backlights and wifi: compare arms within one run.
+Die temperature needs the holds: a 60 s block is far from equilibrium.
+
 ### GPU: how busy is it, and what does a frame draw?
 
 Two tools, both set up in `~/git/dragonbox-pyra/experiments/gpu-tools/` (its README has the

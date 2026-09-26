@@ -3458,7 +3458,8 @@ ms of each 33.5 ms period (36%), the Market 17.3-17.6 ms (52%), and the whole ma
 per frame across two cores (33% of each). If the work scaled with the clock, 750 MHz would put the Market
 at ~23.5 ms and the session at ~16 ms per frame, inside the budget; 500 MHz would put the Market at ~35
 ms, which misses at 30 fps and holds at 20. Memory stalls do not scale with the clock, so these are
-upper bounds. The scenes 0T has to hold are the Market and Kokiri Forest (heaviest CPU, most slow
+upper bounds. *(§8.44 contradicts the verdict for 750 MHz: the mean fits, the busy ticks do not. 750 MHz loses
+3.9% of frames at the Market fixture; 875 MHz holds.)* The scenes 0T has to hold are the Market and Kokiri Forest (heaviest CPU, most slow
 frames per minute) and Hyrule Field (the most play time, the longest frames). The spikes, not the
 means, will decide whether a lower clock drops visible frames. **For heat, the audio stack is the
 largest target after the interpreter**: 3.7 ms per frame across three processes, none of it measured
@@ -3472,3 +3473,62 @@ for what it does.
   synthesis thread. Not measured; a candidate for 0T if the clock drop falls short.
 - Skip probes for the flat blocks (ImGui's new frame, input, `post_draw`) if the thermal track needs CPU
   back. Each is under 0.5 ms; together ~1.2 ms per frame.
+
+## 8.44 The clock track: 875 MHz holds 30 fps at the Market, 750 does not; 20 fps at 750 MHz is −0.7 W and −5.6 °C
+
+*NEXT.md task 0T, parts (1) and (2), no code. Hardware repo `experiments/power-budget/` (README, the
+data, `thermclock.py`) has the full table.*
+
+**Question.** The owner's goal is heat, not frame rate. Both A15 cores share one clock and one rail, so
+CPU work pays when the clock and voltage can drop a step. What does each step save, and which ones still
+hold the game?
+
+**Method.** `thermcost.sh clock` (hardware repo, extended for this), run on the device on battery,
+2026-09-26, kernel `5.6.19-m4-kbdled` #10 (GPU runtime suspend now works; it did not on 09-25). The load is
+the Market fixture with logic running (`SOH_BENCH_STATIC=0`, fixed camera), default CVars, the game's cap.
+Watts: ABBA 60 s blocks inside one game process, only the clock changing, first 15 s dropped, 4 blocks per
+arm. Die temperature: 10-minute holds, last 3 minutes, slopes ≤0.2 °C/min. fps: the game's own count
+per ~5 s `BENCH split` window. 20 fps is `gSettings.InterpolationFPS=20` through the harness's A/B CVar
+(one value, one segment); a separate process, so 30 against 20 comes from the holds only. The first hold
+repeated at the end of the run read −0.04 W and +0.1 °C: no drift worth correcting.
+
+| arm | watts (ABBA) | Δ W | t | hold °C (cpu/gpu) | fps | frames lost | render CPU per frame |
+|---|---|---|---|---|---|---|---|
+| desktop idle, ondemand | 2.62 | | | 47 / 50 | | | |
+| 30 fps, 1000 MHz | 4.352 | | | 67.7 / 69.9 | 29.70 | 1.0% | 15.0 ms |
+| 30 fps, 875 MHz | 4.179 | −0.173 | −51 | | 29.57 | 1.4% | 16.7 ms |
+| 30 fps, 750 MHz | 4.016 | −0.336 | −73 | 65.0 / 67.7 | **28.82** | **3.9%** | 19.2 ms |
+| 20 fps, 750 MHz | 3.712 | (hold: −0.70 vs 30/1000) | | 62.1 / 64.9 | 19.88 | 0.6% | 18.5 ms |
+| 20 fps, 625 MHz | 3.597 | −0.115 vs 20/750 | −10.5 | | 19.85 | 0.8% | 21.9 ms |
+| 20 fps, 500 MHz | 3.504 | −0.208 vs 20/750 | −35 | 59.5 / 62.7 | 19.52 | 2.4% | 27.0 ms |
+
+**Reading it.**
+
+- **The game is 1.8 W above the desktop at 30 fps and 1000 MHz.** 30 fps at 875 MHz saves 0.17 W (~1.2
+  °C at the 7-9 °C/W the holds show), 750 MHz 0.34 W and 2.7 °C. 20 fps at 750 MHz saves 0.70 W and 5.6 °C,
+  and at 500 MHz 0.91 W and 8.2 °C, half the game's cost.
+- **750 MHz does not hold 30 fps at the Market** (28.8 fps, 145 of 159 windows under 29.5), although the
+  render thread averages 19.2 ms per frame, well under 33.3. §8.43 predicted ~23.5 ms and "inside the
+  budget"; the prediction was right about the mean and wrong about the verdict. A tick runs logic, 1.5
+  frames and the swap in series on one thread; at 750 MHz the busy windows (p95 40 ms of a 50 ms tick)
+  miss vsync. **875 MHz holds** (1.4% lost against 1.0% at 1000, which is the fixture's own floor).
+- **20 fps is the larger lever**: −0.30 W at the same clock, and 625-750 MHz lose fewer frames at 20 than
+  1000 MHz does at 30. 500 MHz at 20 loses 2.4% (19.5 fps), the same kind of miss as 750 at 30.
+- **Render CPU scales a little less than the clock**: ×1.28 from 1000 to 750 MHz (clock ×1.33), ×1.46 from
+  750 to 500 (×1.5).
+- **The idle floor fell by 1.1 W and ~9 °C** since 2026-09-25 (GPU runtime suspend, lower backlights; not
+  separated). PROMPT.md's "the idle floor sets most of the die temperature" is weaker now: the game is 1.8 W
+  of a 4.4 W total, and 20 °C of die temperature over the desktop.
+
+**Limits.** One fixture, fixed camera. The render CPU column is the split line's render side, not the
+whole thread, so it does not compare with §8.43's table. §8.43 did find real play at the Market heavier
+than the frozen fixture (17.6 against 16.2 ms of main-thread CPU); this fixture runs the logic but not the
+camera, so real play is likely a little heavier again, and 875 MHz is marginal until checked in the
+scenes §8.43 named (the Market, Kokiri Forest, Hyrule Field), with the owner playing. The frames-lost
+figure counts missed frames per 5 s window; it does not say how visible they are. The choice between
+30 fps at 875 MHz (−0.17 W) and 20 fps at 625-750 MHz (−0.7 to −0.8 W) is the owner's.
+
+**What would move it.** At 30 fps, anything that shortens the busy tick's worst windows lets 750 MHz hold
+(0.16 W and ~1 °C more than 875). The candidates, all unbuilt: the audio stack (§8.43, 3.7 ms per frame
+of the machine, 1.2 ms of it on the game's own threads), the flat blocks (~1.3 ms), and the two-core
+split, which is sized by this table now: it has to take ~5 ms off the Market's worst ticks at 750 MHz (p95 40 ms per tick, against 875's 35).
