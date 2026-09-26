@@ -184,7 +184,7 @@ frames over 34/40/67 ms per scene, what the slow frames were made of (render-thr
 and the `split_blocks` table by scene with a whole-session column. For the rest of the machine at the same
 time, copy the hardware repo's `device/pyra-cpu-attribution.sh` to the device and run
 `~/pyra-cpu-attribution.sh -d 300 -t soh.elf` there (with nohup, several windows back to back). Its process
-table before hardware-repo commit bd638f6 dropped any process whose CPU ticks crossed a digit, soh.elf
+table before hardware-repo commit 92f809b dropped any process whose CPU ticks crossed a digit, soh.elf
 included; the thread and per-core tables were fine.
 
 ### Author a new fixture — needs the owner holding the device

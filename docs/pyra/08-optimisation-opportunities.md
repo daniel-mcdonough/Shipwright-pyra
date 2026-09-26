@@ -3369,7 +3369,7 @@ it. Alongside, `pyra-cpu-attribution.sh -d 300 -n 25 -t soh.elf` ran four times 
 busy time as "residual", while its own thread table gave soh.elf 139 s. The script sorted its samples by
 pid with `sort -k1,1n`, which is not stable: ties fall back to comparing the whole line as text, so once
 a process's tick count crossed a digit (9999 → 10000) its first and last samples swapped and it read as
-idle. Fixed in the hardware repo (bd638f6) during window 2; windows 3 and 4 below use the fix. The
+idle. Fixed in the hardware repo (92f809b) during window 2; windows 3 and 4 below use the fix. The
 thread and per-core tables were never affected. The sampler itself costs 0.85% of a core.
 
 **The whole machine, per frame period.** Windows 3 and 4 (10 minutes, mostly the Fire Temple, Lake Hylia

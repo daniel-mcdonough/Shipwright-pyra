@@ -197,7 +197,7 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    - ~~**(b) Whole-machine attribution in real play**~~ **Done (§8.43).** soh.elf ~59% of busy time
      (main thread 11.3 ms per frame, audio synthesis 1.2, Pulse client threads 0.6), pulseaudio 1.9 ms,
      Xorg 1.5, marco 0.9, PVR workers 0.6, IRQs ~1 ms; 22 ms of core time per frame, cores even. The
-     script dropped any process whose ticks crossed a digit (unstable sort); fixed, hardware repo bd638f6.
+     script dropped any process whose ticks crossed a digit (unstable sort); fixed, hardware repo 92f809b.
      The original brief:
      ( the script now takes `-t soh.elf` for
      the game's threads and prints busy time per core): `~/git/dragonbox-pyra/device/pyra-cpu-attribution.sh`
