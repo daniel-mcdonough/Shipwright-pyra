@@ -3,7 +3,17 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26 evening**, after §8.43 (task 0 (a) done): **the whole main thread is now
+Last revised **2026-09-26 night**, after §8.43 (b) and (c), task 0 done: **real play holds 30 fps at 1000
+MHz.** 22.9 minutes, the owner playing, twelve scenes, die 52 → 72 °C: 0.8% of frames over 40 ms (one
+every ~4 s, spread out, none steadily in any scene), 0.17% over 67 ms. The main thread averages 12.1 ms
+of CPU per 33.5 ms frame (Market 17.6, Hyrule Field 13.4, the temples ~9.8); the whole machine is 22 ms
+of core time per frame, 33% of each core. A slow frame is ~2× the CPU of a normal one plus 7-19 ms of
+swap plus ~20 ms off the CPU, not measured; the main thread is preempted ~555 times a second. **The
+audio stack (the game's synthesis thread, its Pulse client threads and pulseaudio) is 3.7 ms per frame**,
+more than Xorg and the WM together. The thermal track (0T) is next; the scenes to hold are the Market,
+Kokiri Forest and Hyrule Field.
+
+Before that, §8.43 (a): **the whole main thread is now
 accounted for, block by block.** Frozen, uncapped, 1000 MHz, CPU per frame: the Market's 16.18 ms is
 `Interpreter::Run` 12.58 (78%), `Play_Draw` with the interpolation recording 1.33,
 `FrameInterpolation_Interpolate` 0.57, ImGui 0.63 (new frame 0.43, end 0.20), after-draw 0.34, input
@@ -184,13 +194,21 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
      rather than adding a new instrument. The blocks have to sum to `thread_us − window_us` within
      the MDE. If they don't, something is missing: find it before going further. Price the extra
      marks with one A/B against the unmarked build, as P5 says.
-   - **(b) Whole-machine attribution in real play** (next; the script now takes `-t soh.elf` for
+   - ~~**(b) Whole-machine attribution in real play**~~ **Done (§8.43).** soh.elf ~59% of busy time
+     (main thread 11.3 ms per frame, audio synthesis 1.2, Pulse client threads 0.6), pulseaudio 1.9 ms,
+     Xorg 1.5, marco 0.9, PVR workers 0.6, IRQs ~1 ms; 22 ms of core time per frame, cores even. The
+     script dropped any process whose ticks crossed a digit (unstable sort); fixed, hardware repo bd638f6.
+     The original brief:
+     ( the script now takes `-t soh.elf` for
      the game's threads and prints busy time per core): `~/git/dragonbox-pyra/device/pyra-cpu-attribution.sh`
      during a real-play session (the owner playing, watch mode, pinned), with SoH's threads named
      (`/proc/<pid>/task/*/comm` and `stat`): main, audio, and any SDL/driver threads, then Xorg,
      PulseAudio, the window manager, kernel threads and IRQs. On other workloads PulseAudio and Xorg
      were 12-14% of the machine each (`cpu-optimization.md` §3.1); for SoH this has never been taken.
-   - **(c) Does real play miss the 30 fps cap, and where?** (next, in the same session as (b): watch
+   - ~~**(c) Does real play miss the 30 fps cap, and where?**~~ **Done (§8.43): not at 1000 MHz.** 0.81%
+     of frames over 40 ms, spread across blocks; heavier blocks have more. Slow frames are CPU spike +
+     swap + ~20 ms off-CPU, not one of them. Hold-list for 0T: Market, Kokiri Forest, Hyrule Field.
+     `docs/pyra/tools/watchsplit.py watch.log` reads it all by scene. The original brief: ( in the same session as (b): watch
      blocks now carry `hist_ms`, `max_ms` and `slow`/`slow_cpu_pct`/`slow_swap_ms`, and
      `SOH_BENCH_SPLIT=150` adds the §8.43 blocks per 5 s window.) Frame-period histogram (`LUS_FPS_LOG` or
      the watch-mode blocks) over a session that reaches thermal equilibrium, logging the clock and die
@@ -202,6 +220,17 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    find them, the two-core design goes ahead, sized against the scenes (c) named.
    *Superseded as the gate by 0T (the owner's goal is heat, not frames); (c) is still needed, as
    the list of scenes each clock has to hold.*
+
+0A. **The audio stack, 3.7 ms per frame** (added 2026-09-26, §8.43 (b)), only if 0T needs CPU back:
+   pulseaudio 1.9 ms per frame for one stereo stream, the game's synthesis thread 1.2, its Pulse client
+   threads 0.6. Candidates, none measured: the stream's sample rate against the sink's (resampling), the
+   period/buffer sizes SDL asks for, and SDL's ALSA backend straight to the hardware instead of
+   PulseAudio. Check what the sink runs at before anything else.
+
+0P. **Why slow frames spend ~20 ms off the CPU** (§8.43 (c)), only if missed frames start to matter at
+   a lower clock: `perf sched record -a` over a real-play window, then who ran while the main thread was
+   runnable. The main thread is preempted ~555/s; pinning it and the audio thread to different cores is
+   the cheap test.
 
 0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43), only if 0T needs CPU
    back. Input (~0.2 ms per frame, 0.3 per tick), after-draw (0.34 ms, `Play_Main`'s and

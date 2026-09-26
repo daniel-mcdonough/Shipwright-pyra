@@ -3262,10 +3262,11 @@ drawing that quad unblended, or skipping the colour clear it fully covers. None 
   removed saves dynamic power only. For heat and battery the render thread's 16.8 ms is still the
   larger target.
 
-## 8.43 The whole main thread, block by block: the interpreter is 78%; ImGui, input and post-draw are a flat 1.2 ms
+## 8.43 The whole main thread, block by block: the interpreter is 78%; ImGui, input and post-draw are a flat 1.2 ms; real play holds 30 fps at 1000 MHz, and the audio stack is 3.7 ms a frame
 
-*Part (a) of NEXT.md task 0. Parts (b), whole-machine attribution in real play, and (c), where real play
-is heaviest, are not done yet; they need the owner playing. This section will grow to cover them.*
+*NEXT.md task 0, all three parts: (a) the frozen fixtures' main thread, block by block; (b) the whole
+machine in real play; (c) where real play is heaviest and whether it misses the cap. (b) and (c) are at
+the end, from one 23-minute session with the owner playing.*
 
 **Question.** Only the timed window (`Benchmark_FrameBegin`/`FrameEnd` around
 `DrawAndRunGraphicsCommands`) had been priced. The Market's render thread is ~16.2 ms of CPU per frame
@@ -3352,12 +3353,122 @@ the blocks give 2,646 / 1,601 µs against `thread_us − window_us` of 2,666 / 1
   flat across scenes. None of it has been sized by skipping it. Per the method (§8.26-8.28), sampling
   and marks do not size a candidate; a skip probe does.
 
+### (b) and (c): real play, the whole machine
+
+**Session.** 2026-09-26, the owner playing for 22.9 minutes (40,890 frames in 141 watch blocks, 193
+`split_blocks` windows), `PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=1000000 bench.sh watch start
+SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0 SOH_BENCH_SPLIT=150`, 30 fps cap, default CVars. Every block
+and window was on the 1000 MHz pin. Twelve scenes: Hyrule Field (7.8 min), the Fire Temple (4.4), Lake
+Hylia (2.6), the Market (1.8), the Shadow Temple (1.8), Kokiri Forest (1.5), the graveyard, Death
+Mountain Crater, the Kokiri shop, the Temple of Time and outside it, the Market entrance. The die went
+51.7 → 71.7 °C and was still rising ~1 °C per 5 minutes at the end, so this is near equilibrium, not at
+it. Alongside, `pyra-cpu-attribution.sh -d 300 -n 25 -t soh.elf` ran four times back to back.
+`docs/pyra/tools/watchsplit.py watch.log` reads the watch log by scene.
+
+**The attribution script dropped the game.** The first window listed soh.elf nowhere and left 76.7% of
+busy time as "residual", while its own thread table gave soh.elf 139 s. The script sorted its samples by
+pid with `sort -k1,1n`, which is not stable: ties fall back to comparing the whole line as text, so once
+a process's tick count crossed a digit (9999 → 10000) its first and last samples swapped and it read as
+idle. Fixed in the hardware repo (bd638f6) during window 2; windows 3 and 4 below use the fix. The
+thread and per-core tables were never affected. The sampler itself costs 0.85% of a core.
+
+**The whole machine, per frame period.** Windows 3 and 4 (10 minutes, mostly the Fire Temple, Lake Hylia
+and Hyrule Field), in ms of CPU per 33.5 ms frame period, summed over both cores:
+
+| what | ms per frame | share of busy |
+|---|---|---|
+| soh.elf main thread (game and render) | 11.3 | 51% |
+| soh.elf audio synthesis thread (unnamed, wakes ~20/s, one per tick) | 1.23 | 5.5% |
+| soh.elf's other threads (PulseMainloop 0.27, SDLAudioP2 0.12, two unnamed 0.12, PulseHotplug 0.05) | 0.56 | 2.5% |
+| pulseaudio | 1.91 | 8.6% |
+| Xorg | 1.45 | 6.6% |
+| marco (window manager) | 0.87 | 3.9% |
+| PVR kworkers (`pvr_workqueue`) and the `59000000.bb2d` IRQ thread | 0.63 | 2.9% |
+| funkeymonkey, pyra-thermal, dbus, blueman, systemd and the rest listed | ~0.5 | ~2% |
+| the sampler | 0.28 | 1.3% |
+| residual: hard IRQ 0.84, softirq 0.20, and short-lived or unlisted kernel threads | 2.79 | 12.6% |
+| **busy** | **22.1** | **33% of two cores** |
+
+The cores are even: cpu0 29-33% busy, cpu1 35-36%. By class, 68% of busy time is user, 27% system,
+3.8% hard IRQ. The main thread itself is 90% user (41,860 user against 4,710 system ticks over the
+session), so most of the system time is in the other processes and the driver's workers. **SoH is ~59% of
+the machine; the audio stack (the game's synthesis thread, its PulseAudio client threads and
+pulseaudio) is 3.7 ms per frame, a third as much as the main thread and more than Xorg and the WM
+together.** PulseAudio at 1.9 ms per frame for one stereo stream is the largest single item outside the
+game.
+
+**The main thread in play.** CPU µs per frame, from the `split_blocks` windows; the frozen column is (a)'s.
+
+| block | Market frozen | Market play | Hyrule Field frozen | Hyrule Field play | whole session |
+|---|---|---|---|---|---|
+| `input` | 218 | 261 | 199 | 265 | 263 |
+| `update` | 72 | **837** | 65 | **759** | 636 |
+| `draw` | 1,332 | 1,327 | 764 | 1,073 | 982 |
+| `post_draw` | 335 | 354 | 335 | 351 | 355 |
+| `interp` | 566 | 607 | 159 | 355 | 317 |
+| `events`, loop, recycle, audio hand-off | 123 | 269 | 80 | 252 | 248 |
+| `gui_start` | 426 | 513 | 404 | 514 | 497 |
+| `fb_start` | 25 | 27 | 25 | 26 | 26 |
+| `run` | 12,582 | 12,804 | 8,106 | 9,237 | 8,068 |
+| `gui_end` | 200 | 210 | 181 | 205 | 205 |
+| `eof` | 303 | 385 | 298 | 401 | 401 |
+| **sum** | **16,181** | **17,593** | **10,615** | **13,438** | **11,997** |
+
+13 windows at the Market, 64 in Hyrule Field, 193 in the session. The session's blocks give 11,997 µs per
+frame against the watch blocks' time-weighted `thread_cpu_us` of 12,063. Game logic (`update`) is the only
+block that grows much from frozen to play: 0.6-0.8 ms per frame, ~5% of the thread. `run` is 67% of the
+thread over the session and 73% at the Market. The flat blocks stay flat: input, `post_draw` and ImGui are
+~1.3 ms per frame in every scene, 11% of the session's main thread.
+
+**Where play misses the cap.** Frames by period from the watch blocks (the first bin, ≤34 ms, is on
+time; the limiter's jitter lands in 34-40 ms):
+
+| scene | min | thread CPU µs/frame | >34 ms | >40 ms | >67 ms | max ms | slow frames: period, render-thread CPU, swap, rest |
+|---|---|---|---|---|---|---|---|
+| Hyrule Field | 7.8 | 13,382 | 7.0% | 106 | 22 | 192 | 54 ms: 24 CPU, 11 swap, 20 |
+| Fire Temple | 4.4 | 9,719 | 5.8% | 33 | 6 | 117 | 56: 19, 18, 19 |
+| Lake Hylia | 2.6 | 11,443 | 6.8% | 25 | 6 | 81 | 56: 20, 15, 21 |
+| Market | 1.8 | 17,282 | 9.4% | 60 | 6 | 105 | 52: 28, 7, 17 |
+| Shadow Temple | 1.8 | 9,826 | 6.0% | 18 | 6 | 87 | 55: 18, 19, 18 |
+| Kokiri Forest | 1.5 | 12,579 | 8.0% | 38 | 10 | 168 | 60: 30, 11, 19 |
+| graveyard | 1.0 | 10,875 | 7.5% | 16 | 3 | 82 | 55: 23, 10, 22 |
+| six others | 2.0 | 8,000-14,000 | 6-9% | 35 | 9 | 143 | |
+| **all** | **22.9** | **12,063** | **7.0%** | **331 (0.81%)** | **68 (0.17%)** | | |
+
+- **30 fps holds at 1000 MHz.** 0.8% of frames are over 40 ms, about one every 4 seconds, and they are
+  spread out: 40 of 141 blocks have none, 66 have 1-3, 33 have 4-9, two have 10 or more (the first two blocks, the
+  game settling at the Market). The blocks with the most are the heavy ones (14-18.6 ms of thread CPU
+  against the session's 12.1), so load makes a miss more likely, but no scene misses steadily.
+- **A slow frame is a CPU spike plus time off the CPU, not either alone.** It averages 52-60 ms in the main scenes, of which
+  the render thread is on-CPU 18-30 ms, about twice a normal frame in the same scene. It spends 7-19 ms
+  in the swap, most in the temples, where more of the frame is waiting on the swap anyway. That leaves 17-27 ms
+  per slow frame that is neither the thread's CPU nor the swap. Not measured. Candidates: preemption
+  (below), the frame limiter's sleep overshooting, and loads.
+- **The main thread is preempted ~555 times a second.** Over the session it had 750,479 involuntary
+  context switches against 279,316 voluntary ones, on a machine 33% busy. The audio synthesis thread
+  has more involuntary switches (59,103) than voluntary ones (27,137). That fits (a)'s `interp` block
+  being half off-CPU (it wakes the audio thread) and the slow frames' unexplained time, and it is what
+  the scheduler does when pulseaudio, Xorg, marco, the PVR workers and the audio thread wake on the
+  main thread's core. It costs latency, not CPU, so it matters for missed frames and not for heat. Not
+  investigated: pinning the main thread and the audio thread to different cores is a cheap test if
+  missed frames ever matter.
+
+**What this means for the thermal track (NEXT.md 0T).** At 1000 MHz the session's main thread uses 12.1
+ms of each 33.5 ms period (36%), the Market 17.3-17.6 ms (52%), and the whole machine is 22 ms of core time
+per frame across two cores (33% of each). If the work scaled with the clock, 750 MHz would put the Market
+at ~23.5 ms and the session at ~16 ms per frame, inside the budget; 500 MHz would put the Market at ~35
+ms, which misses at 30 fps and holds at 20. Memory stalls do not scale with the clock, so these are
+upper bounds. The scenes 0T has to hold are the Market and Kokiri Forest (heaviest CPU, most slow
+frames per minute) and Hyrule Field (the most play time, the longest frames). The spikes, not the
+means, will decide whether a lower clock drops visible frames. **For heat, the audio stack is the
+largest target after the interpreter**: 3.7 ms per frame across three processes, none of it measured
+for what it does.
+
 ### What this leaves
 
-- (b) and (c) of task 0, with the owner playing. The instrument is ready: `SOH_BENCH_SPLIT` in watch mode
-  now also logs `Benchmark split_blocks`, the same blocks per tick for each window. Watch blocks now
-  carry a frame-period histogram (`hist_ms`), the longest frame, and for frames over 40 ms (`slow`) the
-  render thread's CPU share and swap time across them. `pyra-cpu-attribution.sh -t soh.elf` (hardware
-  repo) names the game's threads and splits busy time per core.
+- Why a slow frame spends ~20 ms neither on the CPU nor in the swap. `perf sched record -a` (trap: not
+  `-p`) across a real-play window would show who runs while the main thread is runnable.
+- The audio stack's 3.7 ms per frame: PulseAudio's resampling and period settings, and the game's
+  synthesis thread. Not measured; a candidate for 0T if the clock drop falls short.
 - Skip probes for the flat blocks (ImGui's new frame, input, `post_draw`) if the thermal track needs CPU
   back. Each is under 0.5 ms; together ~1.2 ms per frame.

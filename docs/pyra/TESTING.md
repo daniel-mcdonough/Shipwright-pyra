@@ -178,6 +178,15 @@ resolve a ~10% effect. Every block line carries `scene=` and `cpu_min_mhz`/`cpu_
 pin (1250 MHz unless given — **pass 1000 for a `PYRA_PIN_FREQ=1000000` run**, or every pair is dropped, as
 in §8.41's first pass) or across a scene change, and prints the delta with t and MDE (§8.30).
 
+For a session without an A/B (where play is heaviest, §8.43 (c)), pull the whole log and read it by scene:
+`scp "$PYRA_HOST:$PYRA_DIR/watch.log" . && python3 docs/pyra/tools/watchsplit.py watch.log [MHz]` gives
+frames over 34/40/67 ms per scene, what the slow frames were made of (render-thread CPU, swap, the rest),
+and the `split_blocks` table by scene with a whole-session column. For the rest of the machine at the same
+time, copy the hardware repo's `device/pyra-cpu-attribution.sh` to the device and run
+`~/pyra-cpu-attribution.sh -d 300 -t soh.elf` there (with nohup, several windows back to back). Its process
+table before hardware-repo commit bd638f6 dropped any process whose CPU ticks crossed a digit, soh.elf
+included; the thread and per-core tables were fine.
+
 ### Author a new fixture — needs the owner holding the device
 
 ```sh
