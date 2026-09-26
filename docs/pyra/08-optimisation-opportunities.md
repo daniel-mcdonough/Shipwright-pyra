@@ -3532,3 +3532,40 @@ figure counts missed frames per 5 s window; it does not say how visible they are
 (0.16 W and ~1 °C more than 875). The candidates, all unbuilt: the audio stack (§8.43, 3.7 ms per frame
 of the machine, 1.2 ms of it on the game's own threads), the flat blocks (~1.3 ms), and the two-core
 split, which is sized by this table now: it has to take ~5 ms off the Market's worst ticks at 750 MHz (p95 40 ms per tick, against 875's 35).
+
+## 8.45 20 fps at 625 MHz in real play: 0.7% of frames lost, the same as 30 fps at 1000 MHz
+
+*NEXT.md 0T (4), the owner's pick from §8.44, checked with the owner playing.*
+
+**Session.** 2026-09-26, 13.1 minutes of play (109 split windows), on battery, `PYRA_WATCH_PIN=1
+PYRA_PIN_FREQ=625000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0 SOH_BENCH_SPLIT=150
+SOH_BENCH_AB_CVAR=gSettings.InterpolationFPS SOH_BENCH_AB_VALUES=20,20`. Every window on the pin. Hyrule
+Field 6.1 min, the Fire Temple 2.0, Kokiri Forest 1.4, Lake Hylia, Lon Lon Ranch, Death Mountain Crater,
+**the Market only 0.7 min**. Die 51.7 → 59.3 °C; the 30 fps, 1000 MHz session (§8.43) was at ~65 °C at the
+same point, and 72 °C at 23 minutes (that one was on the charger, so not a clean comparison).
+
+**Instrument.** The watch blocks' `hist_ms` and `slow` assume 30 fps (every 50 ms frame counts as slow),
+so this reads the game's own frame count per split window instead: `watchsplit.py watch.log 625 20`. A
+window's loss is its shortfall below the target, never negative. `frames_per_tick` does not identify the
+target: some game state runs a tick per frame at ~30 fps even with the 20 setting (7 windows here, in
+Kokiri Forest and the Fire Temple; the same state shows in the 1000 MHz session). Not identified;
+menus or warp cutscenes are the guesses. Those windows count as zero loss.
+
+| scene | windows | 20 fps @ 625 MHz: lost | min fps | 30 fps @ 1000 MHz (§8.43): lost | min fps |
+|---|---|---|---|---|---|
+| Hyrule Field | 49 | 0.8% | 15.9 (the load into Lon Lon Ranch) | 0.6% | 28.9 |
+| Fire Temple | 18 | 0.3% | 19.4 | 0.3% | 29.5 |
+| Kokiri Forest | 11 | 0.7% | 19.1 | 1.1% | 28.7 |
+| Lake Hylia | 8 | 0.5% | 19.7 | 0.5% | 29.7 |
+| Market | 4 | 1.5% | 19.2 | 1.1% | 29.1 |
+| **all** | **107** | **0.7%** | | **0.6%** | |
+
+**Reading it.** 625 MHz at 20 fps holds real play as well as 1000 MHz at 30: 0.7% of frames lost against
+0.6%, and within half a point in every scene with more than a few windows. Main-thread CPU runs 15-26 ms per
+frame by scene against a 50 ms budget. With §8.44's −0.81 W, that makes it the cheapest tested setting that
+holds real play. **Not established:** the Market, with only 4 windows (1.5%). §8.44's fixture put the
+Market at 625 MHz and 20 fps at 0.8% lost, so it probably holds; a longer stretch there would settle it.
+
+**What this leaves.** Shipping the pin: a per-game profile in the launcher (`~/git/pyra-gamemode`), 625 MHz
+with `InterpolationFPS=20`, and ondemand or the desktop's governor back on exit. pyra-thermal's caps sit
+far above what this setting reaches.
