@@ -13,6 +13,9 @@
 #include "soh/ResourceManagerHelpers.h"
 #include "soh/SaveManager.h"
 #include "soh/framebuffer_effects.h"
+#ifdef SOH_BENCHMARK
+#include "soh/Enhancements/benchmark.h"
+#endif
 
 #include <libultraship/libultraship.h>
 
@@ -1729,12 +1732,18 @@ void Play_Main(GameState* thisx) {
     if ((HREG(80) != 10) || (HREG(81) != 0)) {
         Play_Update(play);
     }
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_UPDATE_DONE, 0);
+#endif
 
     PLAY_LOG(4583);
 
     FrameInterpolation_StartRecord();
     Play_Draw(play);
     FrameInterpolation_StopRecord();
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_DRAW_DONE, 0);
+#endif
 
     PLAY_LOG(4587);
 

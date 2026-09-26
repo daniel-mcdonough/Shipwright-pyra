@@ -1775,6 +1775,9 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
 
     // Process window events for resize, mouse, keyboard events
     wnd->HandleEvents();
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_EVENTS_DONE, 0);
+#endif
 
     auto intp = wnd->GetInterpreterWeak().lock().get();
     intp->mInterpolationIndex = 0;
@@ -1787,11 +1790,13 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
         // One iteration is one rendered frame and one buffer swap, which is the unit the
         // benchmark counts. A game tick emits InterpolationFPS/20 of them, so counting ticks
         // instead would measure something else entirely.
+        Benchmark_SplitMark(SPLIT_WIN_BEGIN, 0);
         Benchmark_FrameBegin();
 #endif
         wnd->DrawAndRunGraphicsCommands(Commands, m);
 #ifdef SOH_BENCHMARK
         Benchmark_FrameEnd();
+        Benchmark_SplitMark(SPLIT_WIN_END, 0);
 #endif
         intp->mInterpolationIndex++;
     }
@@ -1853,6 +1858,9 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         mtx_replacements.emplace_back();
     }
 
+#ifdef SOH_BENCHMARK
+    Benchmark_SplitMark(SPLIT_INTERP_DONE, 0);
+#endif
     RunCommands(commands, mtx_replacements);
     FrameInterpolation_RecycleMaps(mtx_replacements);
 #ifdef SOH_BENCHMARK

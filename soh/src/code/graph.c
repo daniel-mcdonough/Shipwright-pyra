@@ -491,6 +491,9 @@ static void RunFrame() {
             Graph_StartFrame();
 
             PadMgr_ThreadEntry(&gPadMgr);
+#ifdef SOH_BENCHMARK
+            Benchmark_SplitMark(SPLIT_INPUT_DONE, 0);
+#endif
 
             Graph_Update(&runFrameContext.gfxCtx, gGameState);
             // ticksB = GetPerfCounter();

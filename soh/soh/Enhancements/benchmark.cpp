@@ -326,6 +326,20 @@ enum class Phase {
     Done,
 };
 
+// The main thread cut into contiguous blocks by the split marks (benchmark.h, report 8 §8.43):
+// cumulative thread CPU and wall nanoseconds charged to the block each mark ends, and how often it
+// ran. Segments snapshot them at their first and last measured frame, like the other counters.
+enum { kSplitCpu, kSplitWall, kSplitRuns, kSplitFields };
+uint64_t gSplitBlocks[kSplitFields][SPLIT_MARK_COUNT] = {};
+const char* const kSplitBlockNames[SPLIT_MARK_COUNT] = {
+    "between", "post_draw", "recycle",  "audio_wait", "input",   "update", "draw", "interp",
+    "events",  "between_frames", "gui_start", "fb_start", "run", "gui_end", "eof",
+};
+
+std::vector<uint64_t> SplitBlocksSnapshot() {
+    return std::vector<uint64_t>(&gSplitBlocks[0][0], &gSplitBlocks[0][0] + kSplitFields * SPLIT_MARK_COUNT);
+}
+
 struct Segment {
     std::string arm;
     std::vector<uint32_t> frameMicros;
@@ -383,6 +397,8 @@ struct Segment {
     uint64_t cvarWritesStart = 0, cvarWritesEnd = 0, memoBadStart = 0, memoBadEnd = 0;
     // gBenchOpcodes at the same two points: display-list commands per opcode per frame.
     std::vector<uint64_t> opStart, opEnd, opNsStart, opNsEnd;
+    // gSplitBlocks at the same two points (§8.43); empty unless the split marks ran.
+    std::vector<uint64_t> splitStart, splitEnd;
     std::chrono::steady_clock::time_point wallStart{}, wallEnd{};
 };
 
@@ -799,6 +815,36 @@ void WriteResults() {
                      i, threadPct / 100.0 * PerFrame(seg, seg.periodMicros), threadPct, windowUs,
                      meanUs > 0.0 ? 100.0 * windowUs / meanUs : 0.0, procPct, PerFrame(seg, seg.eofCpuMicros));
             text += line;
+        }
+        // The main thread's blocks per frame period (§8.43), CPU/wall in microseconds, in the order a
+        // tick runs them. cpu_sum should equal thread_us on the oncpu line, and the six blocks from
+        // gui_start to eof its window_us plus the marks' own cost: the check that nothing is missing.
+        if (seg.splitStart.size() == seg.splitEnd.size() && !seg.splitEnd.empty() &&
+            seg.splitEnd[kSplitRuns * SPLIT_MARK_COUNT + SPLIT_WIN_END] >
+                seg.splitStart[kSplitRuns * SPLIT_MARK_COUNT + SPLIT_WIN_END]) {
+            static const int kOrder[SPLIT_MARK_COUNT] = {
+                SPLIT_TICK_BEGIN, SPLIT_INPUT_DONE, SPLIT_UPDATE_DONE, SPLIT_DRAW_DONE, SPLIT_RENDER_BEGIN,
+                SPLIT_INTERP_DONE, SPLIT_EVENTS_DONE, SPLIT_WIN_BEGIN,  SPLIT_GUI_START, SPLIT_FB_START,
+                SPLIT_RUN_DONE,   SPLIT_GUI_END,    SPLIT_WIN_END,     SPLIT_RENDER_END, SPLIT_TICK_END,
+            };
+            const auto per = [&](int field, int mark) {
+                const size_t k = (size_t)field * SPLIT_MARK_COUNT + mark;
+                return (double)(seg.splitEnd[k] - seg.splitStart[k]) / periods;
+            };
+            double cpuSum = 0.0, wallSum = 0.0;
+            for (int m = 0; m < SPLIT_MARK_COUNT; m++) {
+                cpuSum += per(kSplitCpu, m) / 1000.0;
+                wallSum += per(kSplitWall, m) / 1000.0;
+            }
+            snprintf(line, sizeof(line), "BENCH split %zu ticks=%.3f cpu_sum_us=%.1f wall_sum_us=%.1f", i,
+                     per(kSplitRuns, SPLIT_TICK_BEGIN), cpuSum, wallSum);
+            text += line;
+            for (int m : kOrder) {
+                snprintf(line, sizeof(line), " %s=%.1f/%.1f", kSplitBlockNames[m], per(kSplitCpu, m) / 1000.0,
+                         per(kSplitWall, m) / 1000.0);
+                text += line;
+            }
+            text += "\n";
         }
     }
 
@@ -1414,6 +1460,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().memoBadStart = gBenchMemoMismatch;
                 gRunSegments.back().opStart.assign(gBenchOpcodes, gBenchOpcodes + 256);
                 gRunSegments.back().opNsStart.assign(gBenchOpNanos, gBenchOpNanos + 256);
+                gRunSegments.back().splitStart = SplitBlocksSnapshot();
                 if (!gCfg.sitesDir.empty()) {
                     Ship::BenchLookupSitesBegin();
                 }
@@ -1450,6 +1497,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().memoBadEnd = gBenchMemoMismatch;
                 gRunSegments.back().opEnd.assign(gBenchOpcodes, gBenchOpcodes + 256);
                 gRunSegments.back().opNsEnd.assign(gBenchOpNanos, gBenchOpNanos + 256);
+                gRunSegments.back().splitEnd = SplitBlocksSnapshot();
                 if (!gCfg.sitesDir.empty()) {
                     const std::string path =
                         gCfg.sitesDir + "/lookup-sites-" + std::to_string(gRunSegments.size() - 1) + ".txt";
@@ -1499,8 +1547,23 @@ struct SplitTick {
 
 int gSplitEvery = -1; // -1 unread, 0 off
 std::vector<SplitTick> gSplitTicks;
-uint64_t gSplitCpu[4] = {}, gSplitProc[4] = {};
-Clock::time_point gSplitWall[4];
+uint64_t gSplitCpu[SPLIT_MARK_COUNT] = {}, gSplitProc[SPLIT_MARK_COUNT] = {};
+Clock::time_point gSplitWall[SPLIT_MARK_COUNT];
+// The block marks (§8.43): on for this tick, and the previous mark's clocks (0: charge nothing yet).
+bool gSplitBlocksOn = false;
+uint64_t gSplitLastCpuNs = 0, gSplitLastWallNs = 0;
+// gSplitBlocks at the previous per-tick report, so SplitReport can give the blocks per tick too.
+std::vector<uint64_t> gSplitReported;
+
+uint64_t Nanos(clockid_t clock) {
+    timespec ts{};
+    clock_gettime(clock, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
+}
+
+void SplitHook(int stage) {
+    Benchmark_SplitMark(SPLIT_GUI_START + stage, 0);
+}
 Clock::time_point gSplitPrevTickBegin{};
 int gSplitFrames = 0;
 bool gSplitArmed = false;
@@ -1569,6 +1632,20 @@ void SplitReport() {
                 (sumL + sumR) ? 100.0 * sumL / (sumL + sumR) : 0.0, perTick, aggregate, KHzToMHz(gSplitMinKHz),
                 KHzToMHz(gSplitMaxKHz), ReadTempMilliC() / 1000.0,
                 gPlayState != nullptr ? (unsigned)gPlayState->sceneNum : 0xFFu);
+    // The same window's blocks per tick (§8.43), CPU ms, when the block marks ran all through it.
+    const std::vector<uint64_t> now = SplitBlocksSnapshot();
+    if (gSplitReported.size() == now.size() && !gSplitTicks.empty()) {
+        std::string blocks;
+        char item[64];
+        for (int m = 0; m < SPLIT_MARK_COUNT; m++) {
+            snprintf(item, sizeof(item), " %s=%.3f", kSplitBlockNames[m],
+                     (double)(now[kSplitCpu * SPLIT_MARK_COUNT + m] - gSplitReported[kSplitCpu * SPLIT_MARK_COUNT + m]) /
+                         1e6 / gSplitTicks.size());
+            blocks += item;
+        }
+        SPDLOG_INFO("Benchmark split_blocks ticks={} cpu_ms_per_tick{}", gSplitTicks.size(), blocks);
+    }
+    gSplitReported = now;
     gSplitTicks.clear();
     gSplitMinKHz = gSplitMaxKHz = -1;
 }
@@ -1582,7 +1659,27 @@ extern "C" void Benchmark_SplitMark(int mark, int frames) {
             SPDLOG_INFO("Benchmark split: logging logic/render CPU every {} ticks", gSplitEvery);
         }
     }
-    if (gSplitEvery <= 0) {
+    if (mark == SPLIT_TICK_BEGIN) {
+        // Read once per tick, so gSettings.ProbeSplit can be A/B'd to price the marks themselves.
+        const bool on = gSplitEvery > 0 || CVarGetInteger("gSettings.ProbeSplit", 0) != 0;
+        if (on != gSplitBlocksOn) {
+            gSplitBlocksOn = on;
+            gSplitLastCpuNs = gSplitLastWallNs = 0;
+            gBenchSplitHook = on ? &SplitHook : nullptr;
+        }
+    }
+    if (gSplitBlocksOn) {
+        const uint64_t cpu = Nanos(CLOCK_THREAD_CPUTIME_ID);
+        const uint64_t wall = Nanos(CLOCK_MONOTONIC);
+        if (gSplitLastCpuNs != 0) {
+            gSplitBlocks[kSplitCpu][mark] += cpu - gSplitLastCpuNs;
+            gSplitBlocks[kSplitWall][mark] += wall - gSplitLastWallNs;
+            gSplitBlocks[kSplitRuns][mark]++;
+        }
+        gSplitLastCpuNs = cpu;
+        gSplitLastWallNs = wall;
+    }
+    if (gSplitEvery <= 0 || mark > SPLIT_TICK_END) {
         return;
     }
 
