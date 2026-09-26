@@ -12,6 +12,11 @@ threads (~2.5 ms per tick, §8.33) or the rest of the machine while SoH runs. An
 thread on-CPU only 28-45% of the time at the cap, so nobody has shown that real play ever misses 30 fps
 for CPU reasons. The two-core design rests on that. **New task 0 below: complete the CPU picture, then
 decide whether the two-core design is worth anything.**
+**The owner's goal is thermals, not frame rate** (2026-09-26). Both A15 cores share one clock and one
+rail (`smps123`: 1000 MHz 1.05 V, 750 MHz 0.95 V, 500 MHz 0.85 V), so CPU work pays off when it lets
+the clock, and so the voltage, drop a step. 1250 → 1000 MHz measured −0.3 W and −2-3 °C with 30 fps
+held (hardware repo `experiments/power-budget/`). **New task 0T: the thermal track**, starting with
+the two experiments that need no code. The two-core design is now gated on 0T, not on missed frames.
 
 Before that, §8.42: **the GPU can be profiled, and it is 20% busy at the cap.**
 PVRTune's HWPerf timing and apitrace both work on the device (TESTING.md §3, "GPU: how busy is it";
@@ -179,6 +184,32 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    nothing a player sees. CPU work then only buys heat and power, and the ranking should follow the
    (a)/(b) numbers by CPU-ms saved per frame on *either* core, not main-thread latency. If (c) does
    find them, the two-core design goes ahead, sized against the scenes (c) named.
+   *Superseded as the gate by 0T (the owner's goal is heat, not frames); (c) is still needed, as
+   the list of scenes each clock has to hold.*
+
+0T. **The thermal track: the lowest clock that holds the game** (added 2026-09-26). Judge every arm by
+   **battery watts and die °C** at equilibrium, with fps as a pass/fail floor. Method: the hardware
+   repo's `experiments/power-budget/thermcost.sh` (on battery, ABBA blocks of 60 s, first 15 s dropped,
+   pinned with `userspace` + `scaling_setspeed` because `pyra-thermal` overrides min==max pins).
+   Extend it for the arms below rather than writing a new script. The frame-rate floor is
+   `SOH_BENCH_SPLIT` windows or `LUS_FPS_LOG`, read in the scenes 0(c) names, not only the Market.
+   - **(1) Pin 750 MHz, no code.** Estimate: Market render thread ~22 ms per frame (16.8 ms × 4/3,
+     less for memory stalls that don't scale with the clock), plus ~2 ms of logic in play and the
+     swap wait: ~28-30 ms against 33.3. Probably holds at the Market, marginal in heavier scenes.
+     Against 1000 MHz: watts, °C, and the scenes where it drops frames. If the kernel carries the
+     intermediate steps (`scaling_available_frequencies` lists 875000), try 875 MHz as well.
+   - **(2) `InterpolationFPS` 20 at 750 and 500 MHz, no code.** One rendered frame per tick instead
+     of 1.5: about a third less render work on CPU and GPU, and a 50 ms budget. 500 MHz probably holds
+     single-threaded. The trade is a 20 fps picture, and that is **the owner's call**: bring the
+     numbers, don't pick. Compare watts and °C only. The frame period is not comparable between
+     20 and 30 (TESTING.md: it changes how many frames each tick emits).
+   - **(3) The two-core design, only if (1) and (2) fall short** of the clock the owner wants. The
+     split must come with the clock drop that pays for it (a pin, or `ondemand`, which follows the
+     busier core of the shared policy). At a fixed clock the hand-off adds CPU work and heat. Size
+     it against the lowest clock that failed, in the scenes where it failed, using 0(a)/(b)'s table.
+   **Limit to keep in view:** the idle floor sets most of the die temperature (56-60 °C at desktop
+   idle; the game adds ~1.5 W and 11-15 °C). CPU work moves play temperatures by degrees, not tens.
+   The GPU never powers down, even at idle (`experiments/power-budget/`); that is outside this repo.
 
 00. ~~**Real-play A/B of `gSettings.LeanGLState` 0 vs 3, then default it.**~~ **Done (§8.25):
     −2020 µs (−13.6%) of render-thread CPU over 25 real-play pairs, t −4.7. No GL errors and no
@@ -289,7 +320,7 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
     - **Maybe: sort a run's buckets by program too.** Grouping kept 48 of 51 program switches (~5.8 µs
       each, §8.40); ordering buckets by program within a run would take some at the price of more
       reordering. Count first: how many switches a program-major order would leave.
-    - **Then the two-core design, gated on task 0 (c).** §8.36's ~4.7 ms of GL per Market frame, less item H's ~0.16 ms,
+    - **Then the two-core design, gated on task 0T (3): only if it is needed to reach a lower clock.** §8.36's ~4.7 ms of GL per Market frame, less item H's ~0.16 ms,
       less grouping's ~0.84 ms (§8.41): ~3.7 ms.
     - Loose ends, not tasks: the camera code's uninitialised reads are the original game's and
       real in play too (any build can move them); the host build ignored `SOH_BENCH_FULLSCREEN=0`
