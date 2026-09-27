@@ -3,7 +3,12 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-27**, after §8.46: **the present pass and the swap.** Drawing the game quad without
+Last revised **2026-09-27**, after §8.47: **the audio stack is ~5 ms of core time a frame at 750 MHz, and not a
+frame-time lever.** The 32→48 kHz resampler is 0.44 ms of it. Pinning the main thread to either core costs
+~3.2 ms of period at the frozen Market (all device IRQs are on cpu0): don't pin. Next for the Market at 30/750:
+0S, the flat blocks.
+
+Before that, after §8.46: **the present pass and the swap.** Drawing the game quad without
 blending (`gSettings.LeanPresent=1`) is exact and −0.32 ms of GPU per frame: **now the GLES2 default.**
 Skipping the clear under it costs +1.6 ms; nearest filtering nothing. **The swap waits for the frame's GPU
 work** (item 5 answered: not pipelined, uncapped), so GPU time is frame time too, uncapped. Deferring the swap
@@ -250,16 +255,18 @@ over 40 ms against ~1.9% at 1000 MHz; the other scenes match 1000 MHz). So 0A an
 judged the same way: an A/B in **real play at the Market**, pinned at 750 MHz, reading frames over 40 ms
 and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's fixture overstated play.
 
-0A. **The audio stack, 3.7 ms per frame** (added 2026-09-26, §8.43 (b)), first for 30 fps at 750 MHz:
-   pulseaudio 1.9 ms per frame for one stereo stream, the game's synthesis thread 1.2, its Pulse client
-   threads 0.6. Candidates, none measured: the stream's sample rate against the sink's (resampling), the
-   period/buffer sizes SDL asks for, and SDL's ALSA backend straight to the hardware instead of
-   PulseAudio. Check what the sink runs at before anything else.
+0A. **The audio stack: sized (§8.47), not a frame-time lever.** ~5.0 ms of core time per frame at 750 MHz
+   (pulseaudio 2.5, synthesis thread 2.0, Pulse client threads 0.5), mostly on the other core. The sink is
+   48 kHz and the game 32 kHz, so pulseaudio resamples with `speex-float-1`: **0.44 ms per frame** (t ≈ 9.5),
+   not changed because the method is system-wide and music would lose quality. What is left is heat, not
+   frames: pulseaudio wakes ~126 + ~70 times a second (SDL's `SampleLength` sets the client's period,
+   untested), and SDL's ALSA backend straight to the AESS is untried.
 
-0P. **Why slow frames spend ~20 ms off the CPU** (§8.43 (c)), only if missed frames start to matter at
-   a lower clock: `perf sched record -a` over a real-play window, then who ran while the main thread was
-   runnable. The main thread is preempted ~555/s; pinning it and the audio thread to different cores is
-   the cheap test.
+0P. **Why slow frames spend ~20 ms off the CPU** (§8.43 (c)). ~~Pinning is the cheap test.~~ **Done (§8.47):
+   pinning the main thread alone to either core costs ~3.2 ms of period and +1.6 ms of its CPU per frame
+   at the frozen Market, 30/750** (both directions; all device IRQs are on cpu0). Don't pin. The main
+   thread is preempted ~760/s at 750 MHz. If slow frames matter again, `perf sched record -a` over a
+   real-play window names who ran while it was runnable.
 
 0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43), second for 30 fps at
    750 MHz. Input (~0.2 ms per frame, 0.3 per tick), after-draw (0.34 ms, `Play_Main`'s and

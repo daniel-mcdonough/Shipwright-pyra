@@ -3722,3 +3722,66 @@ only have hurt it if anything leaks across a block.
   stack, the flat blocks), judged in real play at the Market, where 3% of frames miss.
 - Item F (display-controller scaling) is the only way left to remove the present pass. It removes ~2 ms of
   GPU and, uncapped, of swap wait; at the cap only frames without slack would feel it.
+
+## 8.47 The audio stack at 750 MHz: the resampler is 0.44 ms a frame; pinning the main thread to either core costs 3 ms
+
+*NEXT.md 0A's first check and 0P's cheap test, for 30 fps at 750 MHz. Frozen Market only; no real play.*
+
+**The resampler.** The game's synthesis runs at the N64's 32 kHz (`OTRGlobals.cpp:867`, 1024-sample SDL
+buffer), and the `aess` sink takes only 48 kHz (`/etc/pulse/pyra-aess.pa`; the hardware repo's AESS work
+fixed it there), so pulseaudio converts every sample with `speex-float-1`, chosen system-wide for music.
+Priced alone: a silent `pacat` stream at 48 kHz against 32 kHz, 60 s each, ABABAB, 750 MHz pin, no game.
+pulseaudio 3.14% of a core at 48 kHz (3.40, 2.95, 3.07), 4.46% at 32 kHz (4.45, 4.48, 4.45): **+1.32% of a
+core (t ≈ 9.5, 3 pairs), 0.44 ms per 33.3 ms frame.** A cheaper method would cost every 44.1 kHz song on the
+machine its quality for at most that. Not changed.
+
+**The audio stack in the game.** Frozen Market, 30 fps cap, 750 MHz pin, 5400 frames, sampled 90 s with
+`pyra-cpu-attribution.sh -t soh.elf` plus per-thread `/proc` context-switch counts (three unpinned runs agree
+within a few percent; the first shown):
+
+| | % of a core | ms per frame |
+|---|---|---|
+| pulseaudio (sink thread 4.6, main 2.9) | 7.4 | 2.5 |
+| the game's synthesis thread | 5.8 | 2.0 |
+| the game's Pulse client threads | 1.6 | 0.5 |
+| **audio, total** | **14.8** | **~5.0** |
+| main thread | 61.1 | 20.6 |
+
+§8.43's 3.7 ms at 1000 MHz scales to ~4.9. The resampler is ~1.3 of pulseaudio's 7.4 points; the rest is the
+stream's traffic: pulseaudio's main thread wakes ~126 times a second and its sink thread ~70, where the
+2048-frame fragments need ~23. The frozen Market at 30/750 runs a 33.79-34.01 ms period (29.4-29.6 fps),
+render thread 20.6-20.9 ms of CPU per frame.
+
+**The main thread is preempted ~760 times a second** (759-773 over three unpinned runs; 555 at 1000 MHz,
+§8.43), ~25 times a frame, with ~137 voluntary switches. Both cores are about half busy (47-55%).
+
+**Every device interrupt lands on cpu0** (`/proc/interrupts`; `default_smp_affinity` is 3, but the
+WUGEN-routed lines all read 0 on CPU1). In the game, per second: SGX 717, the second i2c bus 446 (keyboard,
+both nubs, fuel gauge, charger, INA231), timer 371 (both cores), DISPC 60, USB 33, AESS 32.
+
+**Pinning.** A script re-applied `taskset` every 2 s from launch; each run started at or below 50 °C.
+
+| run | arm | period ms | main thread CPU ms/frame | window p95 ms | preempted /s | cpu0 / cpu1 busy |
+|---|---|---|---|---|---|---|
+| 0 | none | 33.83 | 20.72 | 33.7 | 773 | 51 / 52% |
+| 1 | main alone on cpu0; its other threads, pulseaudio, Xorg, marco on cpu1 | **37.11** | 22.27 | 45.1 | 798 | 83 / 66% |
+| 2 | none | 34.01 | 20.92 | 33.6 | 759 | 51 / 55% |
+| 3 | main alone on cpu1, everything else on cpu0 with the IRQs | **37.09** | 22.51 | 44.9 | 650 | 67 / 83% |
+
+**Pinning either way costs ~3.2 ms of period** (+3277, +3073 µs against the neighbouring unpinned run; the
+unpinned runs spread 0.2 ms) and +1.6 ms of main-thread CPU per frame; p95 goes from under the cap to 45 ms.
+Moving the main thread off the interrupt core took its preemptions from ~770 to 650 a second and made it
+no faster. The last pair (runs 4-5) was not run: two different pins moved the same way by 15× the spread.
+**Not established:** why a pinned main thread burns more CPU. The guesses are cross-core hand-offs with
+Xorg and the GPU driver's threads (unpinned, the scheduler can run a woken partner on the core just left,
+cache-hot) and a driver spin that lasts longer. The pinned core also ran ~20 points busier than the main
+thread accounts for, and nothing measured here says what that was.
+
+**What this leaves.**
+- 0P's cheap test is answered: affinity is not a lever on this stack. Don't pin SoH's threads in the launcher.
+- 0A, the audio stack, is ~5 ms of core time a frame at 750 MHz, but it sits mostly on the other core and the
+  main thread does not gain from keeping it off its own. What is left of it is pulseaudio's wake rate (SDL's
+  1024-sample buffer at 32 kHz is ~31 periods a second; `SampleLength` sets it, untested) and the synthesis thread's 2 ms, both
+  heat rather than frame time. For the Market's heavy ticks, 0S (the flat blocks) is next.
+- The second i2c bus takes ~450 interrupts a second in the game, all on cpu0. Which of its devices
+  raises them is not established (the nubs are the guess). That is machine-wide power, not SoH, and belongs to the hardware repo.
