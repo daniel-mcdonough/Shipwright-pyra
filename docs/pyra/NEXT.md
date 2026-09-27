@@ -268,12 +268,43 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    thread is preempted ~760/s at 750 MHz. If slow frames matter again, `perf sched record -a` over a
    real-play window names who ran while it was runnable.
 
-0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43), second for 30 fps at
-   750 MHz. Input (~0.2 ms per frame, 0.3 per tick), after-draw (0.34 ms, `Play_Main`'s and
-   `Graph_Update`'s tails) and ImGui (~0.6 ms: `Gui::StartDraw` 0.4, `EndDraw` 0.2, with every menu
-   closed) are ~1.2 ms per Market frame, 7% of the thread, and the same in both scenes. Also: `gui_start`
-   is only 64-70% on-CPU and `interp` 39-51% (the audio wake is the guess there). Find a skip that leaves
-   the frame drawable for each and A/B it; don't size them from the marks (they include the marks' cost).
+0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43). **Next, for 30 fps at
+   750 MHz at the Market** (0A and 0P are closed, §8.47). Three blocks, ~1.2 ms of main-thread CPU per
+   Market frame at 1000 MHz (7% of the thread), the same in both fixtures, none of them explained. §8.43's
+   table (frozen, uncapped, 1000 MHz, CPU µs per frame, Market / Hyrule Field):
+   - **`input` 218 / 199** (~0.3 ms per tick): `Graph_StartFrame()` then `PadMgr_ThreadEntry(&gPadMgr)`,
+     between the `SPLIT_TICK_BEGIN` and `SPLIT_INPUT_DONE` marks in `soh/src/code/graph.c` (~line 489).
+   - **`post_draw` 335 / 335**: from `SPLIT_DRAW_DONE` (after `Play_Draw`, `soh/src/code/z_play.c:1745`)
+     to `SPLIT_RENDER_BEGIN` (the top of `Graph_ProcessGfxCommands`, `soh/soh/OTRGlobals.cpp:1810`): the
+     rest of `Play_Main` (`func_800C4344`, the game-interactor hooks), then `GameState_Update`'s and
+     `Graph_Update`'s tails. The marks' meanings are listed in `soh/soh/Enhancements/benchmark.h:44-70`.
+   - **ImGui ~0.6 ms: `gui_start` 426 / 404, `gui_end` 200 / 181.** In
+     `Fast3dWindow::DrawAndRunGraphicsCommands` (`libultraship/src/fast/Fast3dWindow.cpp:205`):
+     `gui_start` is `IsFrameReady`, `GetMouseStateManager()->StartFrame()` and `Gui::StartDraw()` =
+     `StartFrame` (ImGui new frame) + `DrawMenu` + `CalculateGameViewport` (`Gui.cpp:800`); `gui_end` is
+     `Gui::EndDraw()` = `DrawGame` (the present quad: needed for a picture) + `EndFrame` +
+     `DrawFloatingWindows` + `CheckSaveCvars` (`Gui.cpp:809`). `gui_start` is only 64-70% on-CPU (~200 µs
+     a frame waiting, unexplained: the frame-ready check and the SDL/X calls are the candidates).
+
+   **Method** (the §8.26-8.29 skip-probe pattern): a benchmark-only CVar, e.g. `gSettings.ProbeSkipFlat`
+   with one bit per candidate, read under `#ifdef SOH_BENCHMARK` like `gSettings.ProbeSkipInterp`
+   (`soh/soh/frame_interpolation.cpp:770`) or `ProbeSkipLight` (`libultraship/src/fast/interpreter.cpp:1387`).
+   Each skip must leave the frozen frame drawable (wrong is fine in a probe). Split a block into its
+   calls when it is not obviously one thing, e.g. `DrawMenu` and `DrawFloatingWindows` separately from
+   ImGui's new-frame/render. In a frozen fixture skipping `PadMgr_ThreadEntry` should be harmless; check
+   the picture with `SOH_BENCH_DUMP` anyway. Don't size anything from the split marks: they cost ~4-5 µs
+   each and are inside the blocks (§8.43), and `ProbeSplit` must be OFF for any timed A/B.
+   - Gate 1, frozen: `bench.sh ab gSettings.ProbeSkipFlat 0 <bit>` at the Market and Hyrule Field, 6
+     pairs, uncapped, 1000 MHz pin (`PYRA_PIN_FREQ=1000000`, `SOH_BENCH_SOAK_C=66`, TESTING trap 21),
+     `pairs.py run.log 0 1000`; read `thread_us` (these blocks are mostly outside the timed window; the
+     ImGui ones are inside it, so read `win_cpu_us` too). Report t and MDE.
+   - Only a block worth ~0.3 ms or more earns a real fix. A fix must be exact (or the owner's call), then
+     the §8.22-8.24 ladder, and finally real play at the Market, 30 fps, 750 MHz (PROMPT task 1): frames
+     over 40 ms per arm and paired `thread_cpu_us` from `watchpairs.py blocks.txt 0 750`, the owner playing
+     longer at the Market than §8.46's 1,450 frames.
+   - Budget reality: the Market at 30/750 misses ~3% against ~1.9% at 1000; §8.44 puts the gap at ~5 ms off
+     the worst ticks. 0S's whole ~1.2 ms (×4/3 at 750, ~1.6 ms) will not close that by itself. If 0S comes up
+     short, the next lever is the two-core design (0T (3)), or the owner settles on 30/875 or 20/625.
 
 0T. **The thermal track: the lowest clock that holds the game** (added 2026-09-26). Judge every arm by
    **battery watts and die °C** at equilibrium, with fps as a pass/fail floor. Method: the hardware

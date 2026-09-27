@@ -662,6 +662,12 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     Three runs were lost to it before anyone looked. **Check every run:** `BENCH config window=` must
     read 1280x720 and every segment `fb=640x360->640x360`; look at the screen (`xwd`, §3) if not, and
     put `Window.Fullscreen` back to 1280×720 before the next run.
+23. **`pkill -f <script>` kills the shell that runs it** (2026-09-27). The pattern is on that shell's own
+    command line, so `pkill -f pinab.sh; ...` killed the command before it did anything else. Use
+    `pgrep -f '[p]inab.sh'` (the bracket keeps the pattern from matching itself) and `kill` the PIDs, and do the
+    same on the device. A related trap: an agent's background job can be killed at its tool timeout (10 min).
+    Drive any multi-run A/B longer than that with `setsid nohup <driver> > log 2>&1 < /dev/null &` on the host
+    as well as on the device, and poll the log.
 
 ## 6. Recipes
 
