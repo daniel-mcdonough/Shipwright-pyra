@@ -140,6 +140,17 @@ Five or six pairs resolves around 0.5% on a quiet device; a single noisy segment
 1.5%, which is why the `mde_us` line matters more than the `t`. If you need to separate "no
 effect" from "no effect this could see", add pairs.
 
+**Several probe arms in one run (§8.48).** `bench.sh run $MARKET SOH_BENCH_AB_CVAR=<cvar>
+SOH_BENCH_AB_VALUES=0,7,0,24,0,992 SOH_BENCH_REPS=4`: with more than two values the arms go round-robin,
+not ABBA, so interleave the baseline and read the run with `docs/pyra/tools/bracket.py run.log 0 1000`,
+which takes each probe segment against the mean of its two neighbours. The last segment of the run has
+no neighbour after it and is dropped; give the probes one more rep than you need. For probes only: a
+fix still gets the two-arm `ab` and `pairs.py`.
+
+**The config file nests CVars by prefix.** `~/soh-bench2/shipofharkinian.json` holds
+`"CVars": {"gSettings": {"LeanCVar": 1, ...}}`, so grep it for `"Lean`, not `gSettings.Lean`. A check
+for stray keys that greps the dotted name finds nothing and looks clean.
+
 ### One arm, absolute numbers
 
 ```sh

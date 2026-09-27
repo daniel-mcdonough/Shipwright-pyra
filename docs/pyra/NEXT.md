@@ -3,7 +3,15 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-27**, after §8.47: **the audio stack is ~5 ms of core time a frame at 750 MHz, and not a
+Last revised **2026-09-27**, after §8.48: **0S sized. One hook is 0.3 ms a tick.** Skipping the flat blocks
+(`gSettings.ProbeSkipFlat`) frees ~0.88 ms at the Market at 1000 MHz: input ~0.2, post_draw ~0.32, ImGui ~0.36.
+The post_draw part is `CosmeticsUpdateTick` (~450 CVar lookups by name a tick to learn that no rainbow is on);
+the game's audio update is ~0.03. **`gSettings.LeanCosmetics=1`** (default 0 for now) caches the pointers per CVar
+generation: exact (0 mismatches in 614k checks, control 1,040), pixel-identical, **−273 µs Market (t −6.8), −251
+µs Hyrule Field (t −22.2)** of render-thread CPU. Owed: the real-play A/B at the Market, 30/750, then the default.
+The other pieces are each 0.1-0.2 ms. Not enough to close the Market at 30/750 alone.
+
+Before that, after §8.47: **the audio stack is ~5 ms of core time a frame at 750 MHz, and not a
 frame-time lever.** The 32→48 kHz resampler is 0.44 ms of it. Pinning the main thread to either core costs
 ~3.2 ms of period at the frozen Market (all device IRQs are on cpu0): don't pin. Next for the Market at 30/750:
 0S, the flat blocks.
@@ -268,7 +276,11 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    thread is preempted ~760/s at 750 MHz. If slow frames matter again, `perf sched record -a` over a
    real-play window names who ran while it was runnable.
 
-0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43). **Next, for 30 fps at
+0S. **Sized (§8.48).** Input ~0.2 ms, post_draw ~0.32 (`CosmeticsUpdateTick`, fixed by `gSettings.LeanCosmetics`,
+   real-play check owed), ImGui ~0.36 in pieces of 0.07-0.15 (menus/windows 0.10, the SDL backend's NewFrame 0.14,
+   the rest 0.08). The SDL NewFrame reads `_NET_WORKAREA` from X every frame (`UpdateMonitors`): a candidate for
+   `gui_start`'s off-CPU time, unmeasured. The original brief:
+   **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43). **Next, for 30 fps at
    750 MHz at the Market** (0A and 0P are closed, §8.47). Three blocks, ~1.2 ms of main-thread CPU per
    Market frame at 1000 MHz (7% of the thread), the same in both fixtures, none of them explained. §8.43's
    table (frozen, uncapped, 1000 MHz, CPU µs per frame, Market / Hyrule Field):

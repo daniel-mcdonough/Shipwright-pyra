@@ -3787,3 +3787,82 @@ thread accounts for, and nothing measured here says what that was.
   every 25 ms because their interrupt lines are held low on this board (the owner tried event mode; hardware
   repo `docs/known-limitations.md` §2.6, `improvements.md` item 11). The same rate at idle (457/s), so it is a
   machine-wide floor, not SoH's; the lever is the driver's 25 ms `#define`, a kernel patch.
+
+## 8.48 The flat blocks sized: one cosmetics hook is 0.3 ms a tick; LeanCosmetics removes it exactly
+
+*NEXT.md 0S, for 30 fps at 750 MHz at the Market. Frozen fixtures only; the real-play check is still owed.*
+
+**The probe.** `gSettings.ProbeSkipFlat` (benchmark builds; read once per tick at `SPLIT_TICK_BEGIN`, the
+bits listed in libultraship `fast/interpreter.h`) skips one candidate per bit: 1 the controller read
+(`osContGetReadData`), 2 rumble and the LED, 4 the mouse, 8 the game's audio update (`func_800F3054` at the
+end of `Graph_Update`), 16 the `OnGameFrameUpdate` hooks, 32 `DrawMenu`'s menus and windows, 64 the SDL
+backend's `NewFrame`, 128 `DrawFloatingWindows`, 256 mouse capture and the mouse state manager, 512 the game
+overlay. The ImGui frame itself and the present quad stay: without them there is no picture.
+
+**Method.** Several arms in one process with the baseline interleaved, `SOH_BENCH_AB_VALUES=0,7,0,24,0,992`,
+so every probe segment has a baseline segment on each side and is taken against their mean (a linear drift
+cancels, as ABBA does for two arms). `docs/pyra/tools/bracket.py run.log 0 1000` reads it. Frozen, uncapped,
+1000 MHz pin, `SOH_BENCH_WARMUP=2400 SOH_BENCH_SOAK_C=66`; every segment on the pin, 640×360 in 1280×720.
+The last probe segment of a run has no baseline after it and is dropped: end the list on the baseline or
+add a rep.
+
+**Round 1, the blocks** (render-thread CPU, µs per frame; §8.43's split in brackets):
+
+| skipped | Market | t | MDE | Hyrule Field | t | MDE |
+|---|---|---|---|---|---|---|
+| input, bits 1+2+4 (218 / 199) | −199 | −9.2 | 69 | −173 | −6.9 | 80 |
+| post_draw, bits 8+16 (335 / 335) | −321 | −14.5 | 71 | −332 | −21.7 | 49 |
+| ImGui, bits 32-512 (626 / 585) | −361 | −12.9 | 121 | −318 | −20.0 | 69 |
+
+The ImGui skips are all inside the timed window (window CPU −347 Market, −308 Field); the other two outside
+it (window CPU ±0). ~0.88 ms at the Market, ~1.2 ms at 750 MHz: short of the ~5 ms §8.44 put on the worst
+ticks, as NEXT.md warned.
+
+**Round 2, the Market split** (`0,8,0,16,0,32,0,64,0,896`, 5 reps):
+
+| skipped | Δ render-thread CPU | t | MDE |
+|---|---|---|---|
+| 8, the audio update | −29 | −1.9 | 43 |
+| **16, the OnGameFrameUpdate hooks** | **−297** | −13.9 | 60 |
+| 32, the menus and windows | −102 | −6.4 | 44 |
+| 64, the SDL backend's NewFrame | −143 | −4.2 | 94 |
+| 128+256+512 | −75 | −7.2 | 33 |
+
+The game's audio update, the first suspect, is almost free. **post_draw is the hooks.**
+
+**Which hook.** `SOH_BENCH_HOOKTIME=1` (benchmark builds) times every hook call with the thread CPU clock and
+logs `BENCH hook` lines by type and registering site (attribution only; the clock reads cost ~1 µs a call).
+One frozen Market segment: `CosmeticsEditor.cpp:2709`, `CosmeticsUpdateTick`, **436 µs per call**; every
+other `OnGameFrameUpdate` hook ≤ 3.5 µs. The next per-tick hooks of any type are small: the collision
+viewer's `OnPlayDrawEnd` 17 µs, `ResetHotKey`'s `OnGameStateMainStart` 8 µs.
+
+`CosmeticsUpdateTick` asks each of the 208 cosmetic options whether its rainbow is on (`CVarGetInteger` by
+name), reads `RainbowSync` once per option, then calls `ApplyOrResetCustomGfxPatches(false)`, which asks 48
+options again: ~450 lookups by name a tick, about 0.7 µs each in this build (the benchmark build's lookup
+counter scope is part of that), for an answer that is no unless the player has turned a rainbow on.
+
+**`gSettings.LeanCosmetics=1`** keeps each option's `CVar*` and re-resolves it only when
+`ConsoleVariable::GetGeneration()` moves. A value changes in place behind the same pointer, and every path
+that can invalidate one (add, `ClearVariable`, `CopyVariable`, `Load`) bumps the generation, so the answer
+is the original's. `RainbowSync` is read once per tick: the loop writes only the options' value variables.
+New in libultraship: `ConsoleVariable::FindVariable` and `GetGeneration`. Default 0 until real play.
+
+- **Equivalence**, frozen Market with `gCosmetics.Link.KokiriTunic.Rainbow` A/B'd 0,1 (its first write adds
+  the entry, a structural change): mode 2 (check against the original on every call) **614,068 checks, 0
+  mismatches**; mode 3 (the control: never re-resolve a pointer once held) **1,040 mismatches**, one per tick
+  of the rainbow-on segments.
+- **Frozen A/B**, 6 pairs, soaked, 1000 MHz: **Market −273 µs render-thread CPU (−1.7%, t −6.8, MDE 103)**,
+  window CPU −14 (t −0.4); **Hyrule Field −251 µs (−2.4%, t −22.2, MDE 29)**, window CPU −3. At the Field
+  the uncapped swap grows +252 µs (t 3.0): the frame reaches it sooner and waits for the GPU (§8.46).
+  92% of the Market's bit-16 probe (−297); 76% of the Field's whole post_draw probe (−332, audio included).
+- **In-process dump**, Market, frames 301/302 of four segments: frame 301 identical across arms (0 pixels);
+  the 20-pixel difference is 301 against 302 in either arm, the Market's animation floor.
+
+**What the rest is.** Input ~0.2 ms and the ImGui pieces 0.1-0.15 ms each are below the ~0.3 ms bar.
+`ImGui_ImplSDL2_NewFrame` calls `ImGui_ImplSDL2_UpdateMonitors` every frame, and on X11
+`SDL_GetDisplayUsableBounds` reads `_NET_WORKAREA` from the server: a round trip per frame, a candidate for
+`gui_start`'s ~200 µs off-CPU (§8.43) that the uncapped period here cannot resolve (MDE ~300 µs).
+
+**What this leaves.** LeanCosmetics takes ~0.36 ms a tick off the main thread at 750 MHz. The real-play A/B
+at the Market (PROMPT task 1) is owed before it becomes the default; its MDE there has been ~500-800 µs, so
+expect it to show no harm rather than resolve the gain. It does not close the Market's gap at 30/750 alone.
