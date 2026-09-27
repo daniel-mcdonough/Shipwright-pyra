@@ -3,7 +3,17 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-26, last**, after §8.45: **the owner chose 20 fps at 625 MHz, and it holds real play**:
+Last revised **2026-09-27**, after §8.46: **the present pass and the swap.** Drawing the game quad without
+blending (`gSettings.LeanPresent=1`) is exact and −0.32 ms of GPU per frame: **now the GLES2 default.**
+Skipping the clear under it costs +1.6 ms; nearest filtering nothing. **The swap waits for the frame's GPU
+work** (item 5 answered: not pipelined, uncapped), so GPU time is frame time too, uncapped. Deferring the swap
+(`gSettings.LeanSwap=1`) takes 1.2-1.5 ms off the frozen fixtures uncapped (t −12/−14) but **is worse in real
+play** (>40 ms frames 0.97% → 1.54%, render CPU +5%, t 2.2): at the cap the frame-cap sleep already overlaps
+the GPU. It stays off. And **real play at 30 fps and 750 MHz nearly holds**: 0.97% of frames over 40 ms
+against 0.81% at 1000 MHz (§8.43), **except the Market (~3%)**. §8.44's fixture (3.9% lost) overstated play.
+The owner's goal now: 30 fps at 750 MHz, which means the Market's heavy ticks (0A, 0S), judged in real play.
+
+Before that, after §8.45: **the owner chose 20 fps at 625 MHz, and it holds real play**:
 0.7% of frames lost over 13 minutes and eight scenes, against 0.6% for 30 fps at 1000 MHz (§8.43), for
 −0.81 W (§8.44). Thin at the Market (0.7 min, 1.5%). Shipping it is launcher work, a TODO in
 `~/git/pyra-gamemode/TODO.md` (per-game CPU profiles); a longer Market stretch at 625 if the owner wants it
@@ -235,7 +245,12 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    *Superseded as the gate by 0T (the owner's goal is heat, not frames); (c) is still needed, as
    the list of scenes each clock has to hold.*
 
-0A. **The audio stack, 3.7 ms per frame** (added 2026-09-26, §8.43 (b)), only if 0T needs CPU back:
+**Since §8.46 the goal is 30 fps at 750 MHz**, and real play there fails only at the Market (~3% of frames
+over 40 ms against ~1.9% at 1000 MHz; the other scenes match 1000 MHz). So 0A and 0S are live, and each is
+judged the same way: an A/B in **real play at the Market**, pinned at 750 MHz, reading frames over 40 ms
+and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's fixture overstated play.
+
+0A. **The audio stack, 3.7 ms per frame** (added 2026-09-26, §8.43 (b)), first for 30 fps at 750 MHz:
    pulseaudio 1.9 ms per frame for one stereo stream, the game's synthesis thread 1.2, its Pulse client
    threads 0.6. Candidates, none measured: the stream's sample rate against the sink's (resampling), the
    period/buffer sizes SDL asks for, and SDL's ALSA backend straight to the hardware instead of
@@ -246,8 +261,8 @@ allocation, and the GL driver's CPU side — so the list is no longer ranked aga
    runnable. The main thread is preempted ~555/s; pinning it and the audio thread to different cores is
    the cheap test.
 
-0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43), only if 0T needs CPU
-   back. Input (~0.2 ms per frame, 0.3 per tick), after-draw (0.34 ms, `Play_Main`'s and
+0S. **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43), second for 30 fps at
+   750 MHz. Input (~0.2 ms per frame, 0.3 per tick), after-draw (0.34 ms, `Play_Main`'s and
    `Graph_Update`'s tails) and ImGui (~0.6 ms: `Gui::StartDraw` 0.4, `EndDraw` 0.2, with every menu
    closed) are ~1.2 ms per Market frame, 7% of the thread, and the same in both scenes. Also: `gui_start`
    is only 64-70% on-CPU and `interp` 39-51% (the audio wake is the guess there). Find a skip that leaves
@@ -461,7 +476,14 @@ In order:
    found (§8.42): the present pass, 2.87 ms of 3D for one blended 1280×720 quad. See item I.** That is the
    playbook's open "does Present flip or copy" question (`~/git/dragonbox-pyra/docs/improvements.md`
    §6) showing up as frame time.
-5. **Is the frame pipelined with the GPU at all?** Never checked, in any report. **Now answerable:**
+5. ~~**Is the frame pipelined with the GPU at all?**~~ **Answered (§8.46): no, uncapped.** The swap
+   returns when the frame's GPU work is done: blend-off's −0.32 ms of GPU came out of the swap
+   (−317 µs), and the uncapped swap (5.1-5.4 ms) is about the frame's 3D plus tiling. Deferring the swap
+   to the next frame's start (`gSettings.LeanSwap=1`) takes 1.2-1.5 ms off the frozen fixtures uncapped,
+   but at the cap the frame-cap sleep (before `SDL_GL_SwapWindow` in `SwapBuffersBegin`) already
+   overlaps the GPU, and in real play LeanSwap was worse (>40 ms 0.97% → 1.54%). Off; a probe. Not
+   established: whether the wait is WSEGL's or X's. The original entry:
+   **Is the frame pipelined with the GPU at all?** Never checked, in any report. **Now answerable:**
    a PVRTune timeline puts the TA/3D kicks against the frame, and §8.42 shows the scene's TA kicks spread
    through the CPU's frame, with 3D starting at the flush. How the swap waits on it is still unread. On a tile-based
    deferred renderer the CPU should be a frame ahead; if `SwapBuffersBegin` blocks until the tile
@@ -495,7 +517,7 @@ In order:
 | **F** | **Present 640×360 and let the display controller scale** | unknown, ≤ the 3.4 ms of item 4 above | The game renders at 640×360 to `mGameFb` and then draws it as a 1280×720 quad. §8.7 calls that pass "inherent to the internal-resolution feature" — inherent to the *feature*, not to the hardware: the OMAP5 DSS can scale a plane in the display controller. It attacks the part of the swap that does not scale with pixels. Establish that a scaled plane is reachable through SDL/EGL on this stack **before** touching the renderer; if it is not, this is dead. **§8.42 sized the pass it would remove: 2.87 ms of 3D per frame, more than the scene.** |
 | **G** | ~~**One `glBufferData` per frame with offsets**~~ | **superseded (§8.24)** | Client-side arrays — report 5's best row — took the per-draw `glBufferData` out entirely: −13.4% at the Market, several times what this row estimated. Report 5's "within noise, needs no change" was wrong for this game. The single-upload variant is no longer worth building unless mode 3 fails in real play. |
 | **H** | ~~**Count redundant batch splits on texture change**~~ **Counted and built (§8.37): 33 of 261 Market draws; `LeanTexReuse=1` −158 µs (−1.1%) window CPU, pixel-identical; clean in real play, default 1** | measured | `interpreter.cpp:1604` flushes *before* it knows whether the texture actually changes, so a display list re-issuing a load for an already-bound cache entry splits the batch for nothing. Every other flush site (`:1495-1692`) is properly guarded, which makes this the one candidate for a draw that need not exist. A `BENCH_` counter next to the existing ones answers it; only then is it a change. Gated on P2 for the same reason as G. |
-| **I** | **The present pass (§8.42)** | up to 2.87 ms of 3D per frame, GPU only | ImGui draws `mGameFb` to the 1280×720 window as one `glDrawElements` quad with `GL_BLEND` on, after a colour+depth clear. Cheapest first: blending off for that one draw, then no colour clear under a quad that covers the window, then item F. Measure each with a PVRTune capture before and after, plus a pixel check. It removes GPU work, not CPU work: the frame period does not move at the cap. What it buys is dynamic power and heat, and the GPU never powers down anyway (hardware repo `experiments/power-budget/`). |
+| **I** | **The present pass (§8.42)** — **done (§8.46)** | was 2.87 ms of 3D per frame | Blend off for the game quad (`gSettings.LeanPresent=1`): −0.32 ms of 3D, exact (0 stable pixels on screen), **the GLES2 default**. No colour clear (bit 2): **+1.6 ms**, the tiler reloads every tile. `GL_NEAREST` (bit 4): nothing. What is left (~1.85-2.45 ms) is the 1280×720 pass itself; only item F removes it. Correction: it is frame time too, uncapped, because the swap waits for it (item 5). |
 
 ### Do not build
 

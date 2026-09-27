@@ -3241,6 +3241,8 @@ NEXT.md item 4 (~3.4 ms of the swap that does not scale with the game's pixels, 
 §8.19's shape: quartering the game's pixels moved the swap only 1.3 ms, because the present pass
 does not shrink with them. Item F (let the display controller scale) targets this pass. So would
 drawing that quad unblended, or skipping the colour clear it fully covers. None of these is measured.
+*(§8.46: blend-off −0.32 ms of 3D, exact, now the default; skipping the clear +1.6 ms. And the swap waits
+for this GPU work, so uncapped it is frame time too.)*
 
 ### What is not established
 
@@ -3570,3 +3572,153 @@ Market at 625 MHz and 20 fps at 0.8% lost, so it probably holds; a longer stretc
 **What this leaves.** Shipping the pin: a per-game profile in the launcher (`~/git/pyra-gamemode`), 625 MHz
 with `InterpolationFPS=20`, and ondemand or the desktop's governor back on exit. pyra-thermal's caps sit
 far above what this setting reaches.
+
+## 8.46 The present pass and the swap: blend-off is exact and −0.32 ms of GPU; the swap waits for the GPU, and deferring it helps the fixtures but not play; 30 fps at 750 MHz nearly holds real play
+
+*NEXT.md item I (task 3), then task 2's question (30 fps at a lower clock) from a new side. 2026-09-26/27,
+device on the charger except where noted, kernel `5.6.19-m4-kbdled` with 0034. libultraship `0583dd89`
+(probes), `e9aa2684` (the default).*
+
+**Question.** §8.42 found the present pass, one blended 1280×720 quad plus a clear, costing 2.87 ms of 3D
+per frame, more than the scene. NEXT.md said it "removes GPU work, not CPU work". What of it can go, and
+does any of it reach the frame time?
+
+**Instrument.** `gSettings.LeanPresent`, a bitmask read every frame: **1** draws the game quad without
+blending (an ImGui draw callback disables `GL_BLEND` around `ImGui::Image` in `Gui::DrawGame`, then
+`ImDrawCallback_ResetRenderState`); **2** skips the window's colour clear (`Interpreter::Run`'s
+`ClearFramebuffer(true, true)` after the scene); **4** samples `mGameFb` with `GL_NEAREST` (a 2× pixel
+double). The filter is set inside the same callback, where ImGui binds its own textures; the backend's
+binding shadow is cleared every frame start, so the bind cannot leave it stale. `gSettings.LeanSwap=1`:
+`Interpreter::EndFrame` flushes and leaves the swap (`SwapBuffersBegin`, which is the frame-cap sleep then
+`SDL_GL_SwapWindow`) for the next `Interpreter::StartFrame`, i.e. after the next tick's CPU-only work.
+`eof_cpu_us` keeps its meaning (EndFrame's flush plus the swap's CPU, wherever the swap runs).
+
+### The present pass
+
+PVRTune captures of the frozen Market at the cap, 1000 MHz, 210 s each. First one process per value:
+
+| LeanPresent | present 3D/frame (mean) | scene 3D/frame | GPU busy |
+|---|---|---|---|
+| 0 | 2889 µs | 2621 | 20.4% |
+| 1, blend off | **2447 (−442)** | 2585 | 18.9% |
+| 2, no colour clear | **4522 (+1633)** | 2591 | 24.9% |
+| 3 | 2826 | **2870** | 21.4% |
+
+The scene moved +250 µs in arm 3, which no bit touches: **absolute GPU times drift ~10% between
+processes.** So the two that matter were repeated inside one process, ABBA, 3 pairs, the arms told apart by
+the present pass's level in 5 s bins (PVRTune's timestamps are not the device's clock, and segments carry no
+wall time; the pattern was unambiguous, 5 s margins dropped at each switch):
+
+| in one process | present 3D/frame, mean (median) | scene |
+|---|---|---|
+| 0 → 1 | 2383 → 2059 (2232 → 1852): **−324 (−380), −14%** | 2165 → 2151 |
+| 1 → 5 | 2085 → 2043 (1872 → 1835): −42 (−37) | 2196 → 2171 |
+
+- **Blend-off: −0.32 ms of 3D per frame.** Exact by construction: `mGameFb` is RGB, so the quad samples alpha
+  1 and blending wrote the source unchanged. Checked on screen: `grab.sh` in one process (LeanPresent 0, 1, 0),
+  `shotcmp.py`: **0 stable pixels differ**; the 8 that differ are the arm's own animated 8 (they differ between
+  its own two grabs), max channel difference 1; the same-arm control reads 0.
+- **Skipping the clear is +1.6 ms, not a saving.** On this tiler a clear is how the tile's initial contents
+  are declared; without it every tile of the 1280×720 target is loaded from memory first.
+- **Nearest filtering: nothing measurable.** The pass is not sampling-bound; filtering is a looks question.
+- **Every GPU number in the in-process runs is ~17% under the separate-process runs 30 minutes earlier**, the
+  scene included (2.17 against 2.62 ms), with nothing in the scene changed. Not explained. In-process
+  comparisons are sound; **absolute GPU times across runs are not**, §8.42's 2.64/2.87 ms included.
+- The ~1.85-2.45 ms left is the 1280×720 pass itself: a clear, 0.92 Mpixels of one textured quad, the
+  resolve. Only a different way to put the picture on screen removes it (item F).
+
+### The swap waits for the frame's GPU work
+
+**This contradicts NEXT.md item I and PROMPT.md** ("it takes GPU time and heat, not frame time"). Frozen
+Market, uncapped, 750 MHz pin, LeanPresent 0 → 1, 6 pairs:
+
+| | Δ | t | MDE |
+|---|---|---|---|
+| timed window | **−291 µs** | −3.5 | 216 |
+| swap | 5381 → 5064 µs (**−317**; every arm-1 segment under every arm-0 one) | | |
+| frame period | −228 µs | −1.2 | 485 |
+
+The swap shrank by what the GPU saved. Uncapped, the swap is 5.1-5.4 ms, about the frame's 3D (scene ~2.1 +
+present ~2.2 ms, in-process levels) plus tiling: **`SDL_GL_SwapWindow` returns when the frame's GPU work is
+done, so CPU and GPU take turns.** That answers NEXT.md item 5 ("is the frame pipelined with the GPU at
+all?"): no, uncapped. Whether the wait is the DDK's WSEGL or X is not established.
+
+### Deferring the swap (LeanSwap)
+
+Uncapped, frozen, 750 MHz pin, 6 pairs each, every segment at 1280×720 / 640×360:
+
+| LeanSwap 0 → 1 | period | t | MDE | swap | render-thread CPU |
+|---|---|---|---|---|---|
+| Market | **−1505 µs (−5.1%)** | −12.1 | 319 | 5.38 → 3.71 ms | 20.60 → 20.60 ms |
+| Hyrule Field | **−1174 µs (−5.6%)** | −13.7 | 221 | 5.41 → 3.91 ms | 13.30 → 13.30 ms |
+
+Four more Market processes (the fullscreen comparison below) repeated it: −1.1 to −1.5 ms each. Pure
+overlap: the same CPU work, the GPU finishing while the next display list is built. 3.7 ms of wait is left:
+the frozen fixture skips `Play_Update`, and the second frame of a tick's pair has only ImGui's StartDraw
+between its predecessor's flush and its own GL.
+
+**At the cap it does not carry over, and in play it is worse.** Market with logic running
+(`SOH_BENCH_STATIC=0`), capped, 750 MHz, 6 pairs: period −345 µs (t −1.9, MDE 458), timed window −237 (t −2.4,
+MDE 251), frames lost 2.4% → 1.4%, render-thread CPU 22,256 against 22,286 µs. Not resolved. **Real play**,
+the owner playing, 30 fps cap, 750 MHz pin, `watch start ... SOH_BENCH_AB_CVAR=gSettings.LeanSwap
+SOH_BENCH_AB_VALUES=0,1`, 70 blocks (~11.3 min), every block on the pin:
+
+| scene | frames 0 / 1 | >40 ms, LeanSwap 0 | LeanSwap 1 |
+|---|---|---|---|
+| Market | 1450 / 1160 | 2.97% | 4.40% |
+| Hyrule Field | 4060 / 3770 | 0.69% | 1.41% |
+| Kokiri Forest | 1160 / 1450 | 0.69% | 1.17% |
+| **all** | **10,150 / 10,150** | **0.97%** (>67 ms 0.19%) | **1.54%** (0.40%) |
+
+Paired (`watchpairs.py`, 30 pairs): render-thread CPU **+832 µs (+5.1%, t 2.22, MDE 788)**; period +142 µs
+(t 1.79). Weak alone, but worse in every scene with more than a few blocks. **LeanSwap stays off**, a probe.
+
+Why the fixtures and play differ: `SwapBuffersBegin` runs the frame-cap sleep *before* `SDL_GL_SwapWindow`,
+so at the cap the GPU already finishes during the sleep on any frame with slack. Deferring can only help a
+frame without slack, and those are ~1%. Why it is *worse* in play (and costs CPU there, while the capped
+fixture shows none) is not explained. With the upside bounded that low, not pursued.
+
+The harness's frame is `Benchmark_FrameBegin` to the next `Benchmark_FrameBegin`, around
+`DrawAndRunGraphicsCommands`. With LeanSwap the sleep and swap move inside the next call, after the logic,
+so begin-to-begin spacing jitters while swap-to-swap may not: the 34-40 ms bin went 1,116 → 2,659. **The
+histogram is not a presentation-cadence measure under LeanSwap**; the mean period and the >40 ms count are
+less affected, and both say worse.
+
+### 30 fps at 750 MHz in real play (the LeanSwap 0 half)
+
+§8.44's fixture said 750 MHz does not hold 30 fps (3.9% lost). In play, same instrument as §8.43's table:
+
+| scene | 750 MHz (this session, LeanSwap 0): frames, >40 ms | 1000 MHz (§8.43): min, >40 ms |
+|---|---|---|
+| Market | 1450, **43 (2.97%)** | 1.8, 60 (~1.9%) |
+| Hyrule Field | 4060, 28 (0.69%) | 7.8, 106 (~0.75%) |
+| Kokiri Forest | 1160, 8 (0.69%) | 1.5, 38 (~1.4%) |
+| **all** | **10,150, 98 (0.97%)**; >67 ms 19 (0.19%) | **22.9, 331 (0.81%)**; 68 (0.17%) |
+
+**Real play at 750 MHz nearly holds 30 fps**: 0.97% of frames over 40 ms against 0.81% at 1000 MHz, the
+same in Hyrule Field and Kokiri Forest. **The Market is the exception** (~3% against ~1.9%). The fixture
+overstated play because it holds the heaviest view the Market has. Limits: 5.6 minutes and 1,450 Market frames
+for this arm, half a session, and it ran interleaved with the other arm (ABBA blocks of ~10 s), which could
+only have hurt it if anything leaks across a block.
+
+### Other findings this session
+
+- **Exclusive and desktop fullscreen (`gSettings.SdlWindowedFullscreen` 0/1) are the same**: swap 5.3 ms in
+  both, arm-0 period 29.35 against 29.11 ms over two processes each (ABBA across processes; the spread
+  between processes is ~0.3 ms).
+- **A composited window swaps fast, and that is not a saving.** When the power-manager dialog (TESTING trap
+  22) knocked the game to a 1278×650 window, Hyrule Field's swap fell 5.4 → 2.2 ms and the period 21.0 → 16.4
+  ms. Confounded (639×325, 169 draws against 155), and marco composites a window (`compositing-manager`
+  true): the copy moves to the X server, on the CPU, in another process. For heat it is not worth chasing.
+  LeanSwap did nothing in that state, as expected if the swap no longer waits on the GPU.
+- Three runs were lost to that dialog (Hyrule Field twice, the 12-pair capped Market) before `window=` was
+  checked; the game saved 1278×650 as its fullscreen size too. `notify-discharging` is now off on the device.
+  The 12-pair capped Market run (20 of 24 segments at 639×325) is not used above.
+
+**What this leaves.**
+- **LeanPresent=1 is the GLES2 default** (`e9aa2684`; bits 2 and 4 stay probes). A capture with no CVar set
+  shows the present/scene ratio at 0.90, the blend-off level (0.90-0.92; blend on 1.08-1.10).
+- **30 fps at 750 MHz needs the Market's heavy ticks**, not a general speed-up: task 2's candidates (the audio
+  stack, the flat blocks), judged in real play at the Market, where 3% of frames miss.
+- Item F (display-controller scaling) is the only way left to remove the present pass. It removes ~2 ms of
+  GPU and, uncapped, of swap wait; at the cap only frames without slack would feel it.
