@@ -4,6 +4,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
 #include <string>
+#include "ship/config/ConsoleVariable.h"
 #include <libultraship/bridge.h>
 #include <math.h>
 #include <libultraship/libultraship.h>
@@ -120,6 +121,9 @@ typedef struct {
     bool supportsAlpha;
     bool supportsRainbow;
     bool advancedOption;
+    // gSettings.LeanCosmetics: rainbowCvar's variable, resolved at CVar generation rainbowGen (§8.48).
+    Ship::CVar* rainbowVar = nullptr;
+    uint32_t rainbowGen = 0;
 } CosmeticOption;
 
 Color_RGBA8 ColorRGBA8(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
@@ -529,13 +533,63 @@ void ResetPositionAll() {
 
 int hue = 0;
 
+// gSettings.LeanCosmetics (§8.48), read once per tick. CosmeticsUpdateTick runs every tick and asks
+// every option whether its rainbow is on: ~450 CVar lookups by name a tick, ~0.3 ms at 1000 MHz on
+// the Pyra (frozen Market), for an answer that is almost always no. 1 keeps each option's variable
+// pointer and re-resolves it only when the CVar table's generation moves (an entry added, removed or
+// reloaded), and reads RainbowSync once per tick instead of once per option. The same answers, exactly.
+static int sLeanCosmetics = 0;
+
+#ifdef SOH_BENCHMARK
+// Modes 2 and 3 (benchmark builds) check mode 1 against the original lookup on every call and return
+// the original: 2 as shipped, 3 a control that never re-resolves a pointer once it has one, so a
+// variable added after the first read goes unseen. Logged as the BENCH cosmetics line.
+extern "C" {
+uint64_t gBenchCosmeticChecks = 0;
+uint64_t gBenchCosmeticMismatches = 0;
+}
+#endif
+
+static bool RainbowOn(CosmeticOption& option) {
+    if (!sLeanCosmetics) {
+        return CVarGetInteger(option.rainbowCvar, 0) != 0;
+    }
+    const uint32_t generation = Ship::ConsoleVariable::GetGeneration();
+#ifdef SOH_BENCHMARK
+    if (sLeanCosmetics == 2 || sLeanCosmetics == 3) {
+        if (option.rainbowGen == 0 || (sLeanCosmetics == 2 && option.rainbowGen != generation)) {
+            option.rainbowVar =
+                Ship::Context::GetInstance()->GetConsoleVariables()->FindVariable(option.rainbowCvar);
+            option.rainbowGen = generation;
+        }
+        const Ship::CVar* variable = option.rainbowVar;
+        const bool lean =
+            variable != nullptr && variable->Type == Ship::ConsoleVariableType::Integer && variable->Integer != 0;
+        const bool original = CVarGetInteger(option.rainbowCvar, 0) != 0;
+        gBenchCosmeticChecks++;
+        gBenchCosmeticMismatches += lean != original;
+        return original;
+    }
+#endif
+    if (option.rainbowGen != generation) {
+        option.rainbowVar =
+            Ship::Context::GetInstance()->GetConsoleVariables()->FindVariable(option.rainbowCvar);
+        option.rainbowGen = generation;
+    }
+    const Ship::CVar* variable = option.rainbowVar;
+    return variable != nullptr && variable->Type == Ship::ConsoleVariableType::Integer && variable->Integer != 0;
+}
+
 // Runs every frame to update rainbow hue, a potential future optimization is to only run this a once or twice a second
 // and increase the speed of the rainbow hue rotation.
 void CosmeticsUpdateTick() {
     int index = 0;
+    sLeanCosmetics = CVarGetInteger("gSettings.LeanCosmetics", 0);
     float rainbowSpeed = CVarGetFloat(CVAR_COSMETIC("RainbowSpeed"), 0.6f);
+    // The loop writes only the options' value variables, so RainbowSync cannot change inside it.
+    const bool rainbowSync = sLeanCosmetics ? CVarGetInteger(CVAR_COSMETIC("RainbowSync"), 0) != 0 : false;
     for (auto& [id, cosmeticOption] : cosmeticOptions) {
-        if (cosmeticOption.supportsRainbow && CVarGetInteger(cosmeticOption.rainbowCvar, 0)) {
+        if (cosmeticOption.supportsRainbow && RainbowOn(cosmeticOption)) {
             double frequency = 2 * M_PI / (360 * rainbowSpeed);
             Color_RGBA8 newColor;
             newColor.r = static_cast<uint8_t>(sin(frequency * (hue + index) + 0) * 127) + 128;
@@ -557,7 +611,7 @@ void CosmeticsUpdateTick() {
         // If we don't want the rainbow color on items to be synced, offset the index for each item in the loop.
         // Technically this would work if you replaced "60" with 1 but the hue would be so close it's
         // indistinguishable, 60 gives us a big enough gap to notice the difference.
-        if (!CVarGetInteger(CVAR_COSMETIC("RainbowSync"), 0)) {
+        if (sLeanCosmetics ? !rainbowSync : !CVarGetInteger(CVAR_COSMETIC("RainbowSync"), 0)) {
             index += static_cast<int>(60 * rainbowSpeed);
         }
     }
@@ -582,7 +636,7 @@ void CosmeticsUpdateTick() {
 */
 void ApplyOrResetCustomGfxPatches(bool manualChange) {
     static CosmeticOption& magicFaroresPrimary = cosmeticOptions.at("Magic.FaroresPrimary");
-    if (manualChange || CVarGetInteger(magicFaroresPrimary.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(magicFaroresPrimary)) {
         Color_RGBA8 color = CVarGetColor(magicFaroresPrimary.valuesCvar, magicFaroresPrimary.defaultColor);
         PATCH_GFX(sInnerCylinderDL, "Magic_FaroresPrimary1", magicFaroresPrimary.changedCvar, 24,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -591,7 +645,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& magicFaroresSecondary = cosmeticOptions.at("Magic.FaroresSecondary");
-    if (manualChange || CVarGetInteger(magicFaroresSecondary.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(magicFaroresSecondary)) {
         Color_RGBA8 color = CVarGetColor(magicFaroresSecondary.valuesCvar, magicFaroresSecondary.defaultColor);
         PATCH_GFX(sInnerCylinderDL, "Magic_FaroresSecondary1", magicFaroresSecondary.changedCvar, 25,
                   gsDPSetEnvColor(color.r, color.g, color.b, 255));
@@ -600,7 +654,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& linkGoronTunic = cosmeticOptions.at("Link.GoronTunic");
-    if (manualChange || CVarGetInteger(linkGoronTunic.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(linkGoronTunic)) {
         Color_RGBA8 color = CVarGetColor(linkGoronTunic.valuesCvar, linkGoronTunic.defaultColor);
         PATCH_GFX(gGiGoronTunicColorDL, "Link_GoronTunic1", linkGoronTunic.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -613,7 +667,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& linkZoraTunic = cosmeticOptions.at("Link.ZoraTunic");
-    if (manualChange || CVarGetInteger(linkZoraTunic.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(linkZoraTunic)) {
         Color_RGBA8 color = CVarGetColor(linkZoraTunic.valuesCvar, linkZoraTunic.defaultColor);
         PATCH_GFX(gGiZoraTunicColorDL, "Link_ZoraTunic1", linkZoraTunic.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -626,7 +680,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& linkHair = cosmeticOptions.at("Link.Hair");
-    if (manualChange || CVarGetInteger(linkHair.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(linkHair)) {
         Color_RGBA8 color = CVarGetColor(linkHair.valuesCvar, linkHair.defaultColor);
         PATCH_GFX(gLinkChildHeadNearDL, "Link_Hair1", linkHair.changedCvar, 10,
                   gsDPSetGrayscaleColor(color.r, color.g, color.b, 255));
@@ -652,7 +706,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& linkLinen = cosmeticOptions.at("Link.Linen");
-    if (manualChange || CVarGetInteger(linkLinen.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(linkLinen)) {
         Color_RGBA8 color = CVarGetColor(linkLinen.valuesCvar, linkLinen.defaultColor);
         PATCH_GFX(gLinkAdultLeftArmNearDL, "Link_Linen1", linkLinen.changedCvar, 30,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -726,7 +780,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& linkBoots = cosmeticOptions.at("Link.Boots");
-    if (manualChange || CVarGetInteger(linkBoots.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(linkBoots)) {
         Color_RGBA8 color = CVarGetColor(linkBoots.valuesCvar, linkBoots.defaultColor);
         PATCH_GFX(gLinkChildRightShinNearDL, "Link_Boots1", linkBoots.changedCvar, 10,
                   gsDPSetGrayscaleColor(color.r, color.g, color.b, 255));
@@ -766,7 +820,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& mirrorShieldBody = cosmeticOptions.at("MirrorShield.Body");
-    if (manualChange || CVarGetInteger(mirrorShieldBody.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(mirrorShieldBody)) {
         Color_RGBA8 color = CVarGetColor(mirrorShieldBody.valuesCvar, mirrorShieldBody.defaultColor);
         PATCH_GFX(gGiMirrorShieldDL, "MirrorShield_Body1", mirrorShieldBody.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -786,7 +840,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& mirrorShieldMirror = cosmeticOptions.at("MirrorShield.Mirror");
-    if (manualChange || CVarGetInteger(mirrorShieldMirror.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(mirrorShieldMirror)) {
         Color_RGBA8 color = CVarGetColor(mirrorShieldMirror.valuesCvar, mirrorShieldMirror.defaultColor);
         PATCH_GFX(gGiMirrorShieldDL, "MirrorShield_Mirror1", mirrorShieldMirror.changedCvar, 47,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -806,7 +860,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   111, gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& mirrorShieldEmblem = cosmeticOptions.at("MirrorShield.Emblem");
-    if (manualChange || CVarGetInteger(mirrorShieldEmblem.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(mirrorShieldEmblem)) {
         Color_RGBA8 color = CVarGetColor(mirrorShieldEmblem.valuesCvar, mirrorShieldEmblem.defaultColor);
         PATCH_GFX(gGiMirrorShieldSymbolDL, "MirrorShield_Emblem1", mirrorShieldEmblem.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 140));
@@ -827,7 +881,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& swordsKokiriBlade = cosmeticOptions.at("Swords.KokiriBlade");
-    if (manualChange || CVarGetInteger(swordsKokiriBlade.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(swordsKokiriBlade)) {
         Color_RGBA8 color = CVarGetColor(swordsKokiriBlade.valuesCvar, swordsKokiriBlade.defaultColor);
         PATCH_GFX(gLinkChildLeftFistAndKokiriSwordNearDL, "Swords_KokiriBlade1", swordsKokiriBlade.changedCvar, 79,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -840,7 +894,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     /*
     static CosmeticOption& swordsKokiriHilt = cosmeticOptions.at("Swords.KokiriHilt");
-    if (manualChange || CVarGetInteger(swordsKokiriHilt.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(swordsKokiriHilt)) {
         Color_RGBA8 color = CVarGetColor(swordsKokiriHilt.valuesCvar, swordsKokiriHilt.defaultColor);
         PATCH_GFX(gLinkChildLeftFistAndKokiriSwordNearDL,         "Swords_KokiriHilt1", swordsKokiriHilt.changedCvar, 4,
     gsDPSetGrayscaleColor(color.r, color.g, color.b, 255)); PATCH_GFX(gLinkChildLeftFistAndKokiriSwordFarDL,
@@ -897,7 +951,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     */
     static CosmeticOption& swordsMasterBlade = cosmeticOptions.at("Swords.MasterBlade");
-    if (manualChange || CVarGetInteger(swordsMasterBlade.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(swordsMasterBlade)) {
         Color_RGBA8 color = CVarGetColor(swordsMasterBlade.valuesCvar, swordsMasterBlade.defaultColor);
         PATCH_GFX(gLinkAdultLeftHandHoldingMasterSwordFarDL, "Swords_MasterBlade1", swordsMasterBlade.changedCvar, 60,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -914,7 +968,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     /*
     static CosmeticOption& swordsMasterHilt = cosmeticOptions.at("Swords.MasterHilt");
-    if (manualChange || CVarGetInteger(swordsMasterHilt.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(swordsMasterHilt)) {
         Color_RGBA8 color = CVarGetColor(swordsMasterHilt.valuesCvar, swordsMasterHilt.defaultColor);
         PATCH_GFX(gLinkAdultLeftHandHoldingMasterSwordNearDL,     "Swords_MasterHilt1", swordsMasterHilt.changedCvar,
     20, gsDPSetGrayscaleColor(color.r, color.g, color.b, 255)); PATCH_GFX(gLinkAdultLeftHandHoldingMasterSwordFarDL,
@@ -978,7 +1032,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     */
     static CosmeticOption& swordsBiggoronBlade = cosmeticOptions.at("Swords.BiggoronBlade");
-    if (manualChange || CVarGetInteger(swordsBiggoronBlade.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(swordsBiggoronBlade)) {
         Color_RGBA8 color = CVarGetColor(swordsBiggoronBlade.valuesCvar, swordsBiggoronBlade.defaultColor);
         PATCH_GFX(gLinkAdultLeftHandHoldingBgsFarDL, "Swords_BiggoronBlade1", swordsBiggoronBlade.changedCvar, 108,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -991,7 +1045,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     /*
     static CosmeticOption& swordsBiggoronHilt = cosmeticOptions.at("Swords.BiggoronHilt");
-    if (manualChange || CVarGetInteger(swordsBiggoronHilt.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(swordsBiggoronHilt)) {
         Color_RGBA8 color = CVarGetColor(swordsBiggoronHilt.valuesCvar, swordsBiggoronHilt.defaultColor);
         PATCH_GFX(gLinkAdultLeftHandHoldingBgsNearDL,             "Swords_BiggoronHilt1",
     swordsBiggoronHilt.changedCvar,      20, gsDPSetGrayscaleColor(color.r, color.g, color.b, 255));
@@ -1019,7 +1073,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     */
     static CosmeticOption& glovesGoronBracelet = cosmeticOptions.at("Gloves.GoronBracelet");
-    if (manualChange || CVarGetInteger(glovesGoronBracelet.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(glovesGoronBracelet)) {
         Color_RGBA8 color = CVarGetColor(glovesGoronBracelet.valuesCvar, glovesGoronBracelet.defaultColor);
         PATCH_GFX(gGiGoronBraceletDL, "Gloves_GoronBracelet1", glovesGoronBracelet.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1036,7 +1090,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
         }
     }
     static CosmeticOption& glovesSilverGauntlets = cosmeticOptions.at("Gloves.SilverGauntlets");
-    if (manualChange || CVarGetInteger(glovesSilverGauntlets.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(glovesSilverGauntlets)) {
         Color_RGBA8 color = CVarGetColor(glovesSilverGauntlets.valuesCvar, glovesSilverGauntlets.defaultColor);
         PATCH_GFX(gGiSilverGauntletsColorDL, "Gloves_SilverGauntlets1", glovesSilverGauntlets.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1044,7 +1098,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r / 3, color.g / 3, color.b / 3, 255));
     }
     static CosmeticOption& glovesGoldenGauntlets = cosmeticOptions.at("Gloves.GoldenGauntlets");
-    if (manualChange || CVarGetInteger(glovesGoldenGauntlets.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(glovesGoldenGauntlets)) {
         Color_RGBA8 color = CVarGetColor(glovesGoldenGauntlets.valuesCvar, glovesGoldenGauntlets.defaultColor);
         PATCH_GFX(gGiGoldenGauntletsColorDL, "Gloves_GoldenGauntlets1", glovesGoldenGauntlets.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1052,7 +1106,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r / 3, color.g / 3, color.b / 3, 255));
     }
     static CosmeticOption& glovesGauntletsGem = cosmeticOptions.at("Gloves.GauntletsGem");
-    if (manualChange || CVarGetInteger(glovesGauntletsGem.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(glovesGauntletsGem)) {
         Color_RGBA8 color = CVarGetColor(glovesGauntletsGem.valuesCvar, glovesGauntletsGem.defaultColor);
         PATCH_GFX(gGiGauntletsDL, "Gloves_GauntletsGem1", glovesGauntletsGem.changedCvar, 84,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1069,7 +1123,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& equipmentBoomerangBody = cosmeticOptions.at("Equipment.BoomerangBody");
-    if (manualChange || CVarGetInteger(equipmentBoomerangBody.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBoomerangBody)) {
         Color_RGBA8 color = CVarGetColor(equipmentBoomerangBody.valuesCvar, equipmentBoomerangBody.defaultColor);
         PATCH_GFX(gGiBoomerangDL, "Equipment_BoomerangBody1", equipmentBoomerangBody.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1083,7 +1137,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& equipmentBoomerangGem = cosmeticOptions.at("Equipment.BoomerangGem");
-    if (manualChange || CVarGetInteger(equipmentBoomerangGem.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBoomerangGem)) {
         Color_RGBA8 color = CVarGetColor(equipmentBoomerangGem.valuesCvar, equipmentBoomerangGem.defaultColor);
         PATCH_GFX(gGiBoomerangDL, "Equipment_BoomerangGem1", equipmentBoomerangGem.changedCvar, 84,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1099,7 +1153,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     /*
     static CosmeticOption& equipmentSlingshotBody = cosmeticOptions.at("Equipment.SlingshotBody");
-    if (manualChange || CVarGetInteger(equipmentSlingshotBody.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentSlingshotBody)) {
         Color_RGBA8 color = CVarGetColor(equipmentSlingshotBody.valuesCvar, equipmentSlingshotBody.defaultColor);
         PATCH_GFX(gGiSlingshotDL,                                 "Equipment_SlingshotBody1",
     equipmentSlingshotBody.changedCvar,  10, gsDPSetPrimColor(0, 0, MAX(color.r - 100, 0), MAX(color.g - 100, 0),
@@ -1139,7 +1193,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
     */
     static CosmeticOption& equipmentSlingshotString = cosmeticOptions.at("Equipment.SlingshotString");
-    if (manualChange || CVarGetInteger(equipmentSlingshotString.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentSlingshotString)) {
         Color_RGBA8 color = CVarGetColor(equipmentSlingshotString.valuesCvar, equipmentSlingshotString.defaultColor);
         PATCH_GFX(gGiSlingshotDL, "Equipment_SlingshotString1", equipmentSlingshotString.changedCvar, 75,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1150,7 +1204,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& equipmentBowTips = cosmeticOptions.at("Equipment.BowTips");
-    if (manualChange || CVarGetInteger(equipmentBowTips.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBowTips)) {
         Color_RGBA8 color = CVarGetColor(equipmentBowTips.valuesCvar, equipmentBowTips.defaultColor);
         PATCH_GFX(gGiBowDL, "Equipment_BowTips1", equipmentBowTips.changedCvar, 86,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1164,7 +1218,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& equipmentBowString = cosmeticOptions.at("Equipment.BowString");
-    if (manualChange || CVarGetInteger(equipmentBowString.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBowString)) {
         Color_RGBA8 color = CVarGetColor(equipmentBowString.valuesCvar, equipmentBowString.defaultColor);
         PATCH_GFX(gGiBowDL, "Equipment_BowString1", equipmentBowString.changedCvar, 105,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1174,7 +1228,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& equipmentBowBody = cosmeticOptions.at("Equipment.BowBody");
-    if (manualChange || CVarGetInteger(equipmentBowBody.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBowBody)) {
         Color_RGBA8 color = CVarGetColor(equipmentBowBody.valuesCvar, equipmentBowBody.defaultColor);
         PATCH_GFX(gGiBowDL, "Equipment_BowBody1", equipmentBowBody.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1188,7 +1242,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& equipmentBowHandle = cosmeticOptions.at("Equipment.BowHandle");
-    if (manualChange || CVarGetInteger(equipmentBowHandle.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBowHandle)) {
         Color_RGBA8 color = CVarGetColor(equipmentBowHandle.valuesCvar, equipmentBowHandle.defaultColor);
         PATCH_GFX(gGiBowDL, "Equipment_BowHandle1", equipmentBowHandle.changedCvar, 51,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1203,7 +1257,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& equipmentHammerHead = cosmeticOptions.at("Equipment.HammerHead");
-    if (manualChange || CVarGetInteger(equipmentHammerHead.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentHammerHead)) {
         Color_RGBA8 color = CVarGetColor(equipmentHammerHead.valuesCvar, equipmentHammerHead.defaultColor);
         PATCH_GFX(gGiHammerDL, "Equipment_HammerHead1", equipmentHammerHead.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1219,7 +1273,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
     static CosmeticOption& equipmentHammerHandle = cosmeticOptions.at("Equipment.HammerHandle");
-    if (manualChange || CVarGetInteger(equipmentHammerHandle.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentHammerHandle)) {
         Color_RGBA8 color = CVarGetColor(equipmentHammerHandle.valuesCvar, equipmentHammerHandle.defaultColor);
         PATCH_GFX(gGiHammerDL, "Equipment_HammerHandle1", equipmentHammerHandle.changedCvar, 84,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1232,14 +1286,14 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& equipmentHookshotChain = cosmeticOptions.at("Equipment.HookshotChain");
-    if (manualChange || CVarGetInteger(equipmentHookshotChain.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentHookshotChain)) {
         Color_RGBA8 color = CVarGetColor(equipmentHookshotChain.valuesCvar, equipmentHookshotChain.defaultColor);
         PATCH_GFX(gLinkAdultHookshotChainDL, "Equipment_HookshotChain1", equipmentHookshotChain.changedCvar, 17,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
 
     static CosmeticOption& equipmentChuFace = cosmeticOptions.at("Equipment.ChuFace");
-    if (manualChange || CVarGetInteger(equipmentChuFace.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentChuFace)) {
         Color_RGBA8 color = CVarGetColor(equipmentChuFace.valuesCvar, equipmentChuFace.defaultColor);
         PATCH_GFX(gGiBombchuDL, "Equipment_ChuFace1", equipmentChuFace.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1254,7 +1308,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
         }
     }
     static CosmeticOption& equipmentChuBody = cosmeticOptions.at("Equipment.ChuBody");
-    if (manualChange || CVarGetInteger(equipmentChuBody.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentChuBody)) {
         Color_RGBA8 color = CVarGetColor(equipmentChuBody.valuesCvar, equipmentChuBody.defaultColor);
         PATCH_GFX(gGiBombchuDL, "Equipment_ChuBody1", equipmentChuBody.changedCvar, 39,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1269,7 +1323,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& equipmentBunnyHood = cosmeticOptions.at("Equipment.BunnyHood");
-    if (manualChange || CVarGetInteger(equipmentBunnyHood.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(equipmentBunnyHood)) {
         Color_RGBA8 color = CVarGetColor(equipmentBunnyHood.valuesCvar, equipmentBunnyHood.defaultColor);
         PATCH_GFX(gGiBunnyHoodDL, "Equipment_BunnyHood1", equipmentBunnyHood.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1295,7 +1349,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& consumableGreenRupee = cosmeticOptions.at("Consumable.GreenRupee");
-    if (manualChange || CVarGetInteger(consumableGreenRupee.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumableGreenRupee)) {
         Color_RGBA8 color = CVarGetColor(consumableGreenRupee.valuesCvar, consumableGreenRupee.defaultColor);
         PATCH_GFX(gGiGreenRupeeInnerColorDL, "Consumable_GreenRupee1", consumableGreenRupee.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1321,7 +1375,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
         }
     }
     static CosmeticOption& consumableBlueRupee = cosmeticOptions.at("Consumable.BlueRupee");
-    if (manualChange || CVarGetInteger(consumableBlueRupee.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumableBlueRupee)) {
         Color_RGBA8 color = CVarGetColor(consumableBlueRupee.valuesCvar, consumableBlueRupee.defaultColor);
         PATCH_GFX(gGiBlueRupeeInnerColorDL, "Consumable_BlueRupee1", consumableBlueRupee.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1334,7 +1388,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r * 0.75f, color.g * 0.75f, color.b * 0.75f, 255));
     }
     static CosmeticOption& consumableRedRupee = cosmeticOptions.at("Consumable.RedRupee");
-    if (manualChange || CVarGetInteger(consumableRedRupee.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumableRedRupee)) {
         Color_RGBA8 color = CVarGetColor(consumableRedRupee.valuesCvar, consumableRedRupee.defaultColor);
         PATCH_GFX(gGiRedRupeeInnerColorDL, "Consumable_RedRupee1", consumableRedRupee.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1347,7 +1401,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r * 0.75f, color.g * 0.75f, color.b * 0.75f, 255));
     }
     static CosmeticOption& consumablePurpleRupee = cosmeticOptions.at("Consumable.PurpleRupee");
-    if (manualChange || CVarGetInteger(consumablePurpleRupee.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumablePurpleRupee)) {
         Color_RGBA8 color = CVarGetColor(consumablePurpleRupee.valuesCvar, consumablePurpleRupee.defaultColor);
         PATCH_GFX(gGiPurpleRupeeInnerColorDL, "Consumable_PurpleRupee1", consumablePurpleRupee.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1360,7 +1414,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r * 0.75f, color.g * 0.75f, color.b * 0.75f, 255));
     }
     static CosmeticOption& consumableGoldRupee = cosmeticOptions.at("Consumable.GoldRupee");
-    if (manualChange || CVarGetInteger(consumableGoldRupee.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumableGoldRupee)) {
         Color_RGBA8 color = CVarGetColor(consumableGoldRupee.valuesCvar, consumableGoldRupee.defaultColor);
         PATCH_GFX(gGiGoldRupeeInnerColorDL, "Consumable_GoldRupee1", consumableGoldRupee.changedCvar, 3,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1374,7 +1428,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& consumableHearts = cosmeticOptions.at("Consumable.Hearts");
-    if (manualChange || CVarGetInteger(consumableHearts.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumableHearts)) {
         Color_RGBA8 color = CVarGetColor(consumableHearts.valuesCvar, consumableHearts.defaultColor);
         /*
         PATCH_GFX(gGiRecoveryHeartDL,                             "Consumable_Hearts1", consumableHearts.changedCvar, 4,
@@ -1398,7 +1452,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r / 2, color.g / 2, color.b / 2, 255));
     }
     static CosmeticOption& consumableMagic = cosmeticOptions.at("Consumable.Magic");
-    if (manualChange || CVarGetInteger(consumableMagic.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(consumableMagic)) {
         Color_RGBA8 color = CVarGetColor(consumableMagic.valuesCvar, consumableMagic.defaultColor);
         PATCH_GFX(gGiMagicJarSmallDL, "Consumable_Magic1", consumableMagic.changedCvar, 31,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1415,7 +1469,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& npcGoldenSkulltula = cosmeticOptions.at("NPC.GoldenSkulltula");
-    if (manualChange || CVarGetInteger(npcGoldenSkulltula.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(npcGoldenSkulltula)) {
         Color_RGBA8 color = CVarGetColor(npcGoldenSkulltula.valuesCvar, npcGoldenSkulltula.defaultColor);
         PATCH_GFX(gSkulltulaTokenDL, "NPC_GoldenSkulltula1", npcGoldenSkulltula.changedCvar, 5,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
@@ -1440,7 +1494,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& npcGerudo = cosmeticOptions.at("NPC.Gerudo");
-    if (manualChange || CVarGetInteger(npcGerudo.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(npcGerudo)) {
         Color_RGBA8 color = CVarGetColor(npcGerudo.valuesCvar, npcGerudo.defaultColor);
         PATCH_GFX(gGerudoPurpleTorsoDL, "NPC_Gerudo1", npcGerudo.changedCvar, 139,
                   gsDPSetEnvColor(color.r, color.g, color.b, 255));
@@ -1461,14 +1515,14 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
     }
 
     static CosmeticOption& npcMetalTrap = cosmeticOptions.at("NPC.MetalTrap");
-    if (manualChange || CVarGetInteger(npcMetalTrap.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(npcMetalTrap)) {
         Color_RGBA8 color = CVarGetColor(npcMetalTrap.valuesCvar, npcMetalTrap.defaultColor);
         PATCH_GFX(gSlidingBladeTrapDL, "NPC_MetalTrap1", npcMetalTrap.changedCvar, 59,
                   gsDPSetPrimColor(0, 0, color.r, color.g, color.b, 255));
     }
 
     static CosmeticOption& n64LogoRed = cosmeticOptions.at("Title.N64LogoRed");
-    if (manualChange || CVarGetInteger(n64LogoRed.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(n64LogoRed)) {
         Color_RGBA8 color = CVarGetColor(n64LogoRed.valuesCvar, n64LogoRed.defaultColor);
         PATCH_GFX(gNintendo64LogoDL, "Title_N64LogoRed1", n64LogoRed.changedCvar, 17,
                   gsDPSetPrimColor(0, 0, 255, 255, 255, 255))
@@ -1476,7 +1530,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r, color.g, color.b, 128));
     }
     static CosmeticOption& n64LogoBlue = cosmeticOptions.at("Title.N64LogoBlue");
-    if (manualChange || CVarGetInteger(n64LogoBlue.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(n64LogoBlue)) {
         Color_RGBA8 color = CVarGetColor(n64LogoBlue.valuesCvar, n64LogoBlue.defaultColor);
         PATCH_GFX(gNintendo64LogoDL, "Title_N64LogoBlue1", n64LogoBlue.changedCvar, 29,
                   gsDPSetPrimColor(0, 0, 255, 255, 255, 255))
@@ -1484,7 +1538,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r, color.g, color.b, 128));
     }
     static CosmeticOption& n64LogoGreen = cosmeticOptions.at("Title.N64LogoGreen");
-    if (manualChange || CVarGetInteger(n64LogoGreen.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(n64LogoGreen)) {
         Color_RGBA8 color = CVarGetColor(n64LogoGreen.valuesCvar, n64LogoGreen.defaultColor);
         PATCH_GFX(gNintendo64LogoDL, "Title_N64LogoGreen1", n64LogoGreen.changedCvar, 56,
                   gsDPSetPrimColor(0, 0, 255, 255, 255, 255))
@@ -1492,7 +1546,7 @@ void ApplyOrResetCustomGfxPatches(bool manualChange) {
                   gsDPSetEnvColor(color.r, color.g, color.b, 128));
     }
     static CosmeticOption& n64LogoYellow = cosmeticOptions.at("Title.N64LogoYellow");
-    if (manualChange || CVarGetInteger(n64LogoYellow.rainbowCvar, 0)) {
+    if (manualChange || RainbowOn(n64LogoYellow)) {
         Color_RGBA8 color = CVarGetColor(n64LogoYellow.valuesCvar, n64LogoYellow.defaultColor);
         PATCH_GFX(gNintendo64LogoDL, "Title_N64LogoYellow1", n64LogoYellow.changedCvar, 81,
                   gsDPSetPrimColor(0, 0, 255, 255, 255, 255))

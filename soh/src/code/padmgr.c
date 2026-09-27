@@ -1,5 +1,8 @@
 #include "global.h"
 #include "vt.h"
+#ifdef SOH_BENCHMARK
+#include "soh/Enhancements/benchmark.h"
+#endif
 #include <string.h>
 
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -301,7 +304,10 @@ void PadMgr_ProcessInputs(PadMgr* padMgr) {
     }
 
     uint8_t rumble = (padMgr->rumbleEnable[0] > 0);
-    OTRControllerCallback(rumble);
+#ifdef SOH_BENCHMARK
+    if (!(gBenchSkipFlat & 2))
+#endif
+        OTRControllerCallback(rumble);
 
     PadMgr_UnlockPadData(padMgr);
 }
@@ -318,11 +324,18 @@ void PadMgr_HandleRetraceMsg(PadMgr* padMgr) {
     osRecvMesg(queue, NULL, OS_MESG_BLOCK);
     osContGetReadData(padMgr->pads);
 
-    Mouse_UpdateAll();
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipFlat bits 4 and 2 (§8.48).
+    if (!(gBenchSkipFlat & 4))
+#endif
+        Mouse_UpdateAll();
 
-    for (i = 0; i < __osMaxControllers; i++) {
-        padMgr->padStatus[i].status = Controller_ShouldRumble(i);
-    }
+#ifdef SOH_BENCHMARK
+    if (!(gBenchSkipFlat & 2))
+#endif
+        for (i = 0; i < __osMaxControllers; i++) {
+            padMgr->padStatus[i].status = Controller_ShouldRumble(i);
+        }
 
     if (padMgr->preNMIShutdown) {
         memset(padMgr->pads, 0, sizeof(padMgr->pads));

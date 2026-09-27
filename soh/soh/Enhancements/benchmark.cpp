@@ -19,6 +19,10 @@
 #include "soh/cvar_prefixes.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
+// gSettings.LeanCosmetics modes 2 and 3 (CosmeticsEditor.cpp, §8.48).
+extern "C" uint64_t gBenchCosmeticChecks;
+extern "C" uint64_t gBenchCosmeticMismatches;
+
 #include <ship/Context.h>
 #include <ship/resource/BenchLookup.h>
 #include <ship/window/Window.h>
@@ -586,6 +590,15 @@ void WriteResults() {
     snprintf(line, sizeof(line), "BENCH config soak_target_c=%d warmup_max=%d temp_now_c=%.1f\n",
              gCfg.soakTargetC, gCfg.warmupMaxFrames, ReadTempMilliC() / 1000.0);
     text += line;
+
+    if (gBenchHookTime) {
+        text += BenchHookReport();
+    }
+    {
+        snprintf(line, sizeof(line), "BENCH cosmetics checks=%llu mismatches=%llu\n",
+                 (unsigned long long)gBenchCosmeticChecks, (unsigned long long)gBenchCosmeticMismatches);
+        text += line;
+    }
 
     for (size_t i = 0; i < gRunSegments.size(); i++) {
         const Segment& seg = gRunSegments[i];
@@ -1251,6 +1264,7 @@ extern "C" void Benchmark_Init(void) {
         gCfg.haveEye = gCfg.haveAt = false;
     }
 
+    gBenchHookTime = EnvInt("SOH_BENCH_HOOKTIME", 0);
     gCfg.abCVar = EnvOr("SOH_BENCH_AB_CVAR", "");
     std::string values = EnvOr("SOH_BENCH_AB_VALUES", "");
     if (!gCfg.abCVar.empty()) {
@@ -1699,6 +1713,7 @@ extern "C" void Benchmark_SplitMark(int mark, int frames) {
     if (mark == SPLIT_TICK_BEGIN) {
         // Read once per tick, so gSettings.ProbeSplit can be A/B'd to price the marks themselves.
         const bool on = gSplitEvery > 0 || CVarGetInteger("gSettings.ProbeSplit", 0) != 0;
+        gBenchSkipFlat = CVarGetInteger("gSettings.ProbeSkipFlat", 0);
         if (on != gSplitBlocksOn) {
             gSplitBlocksOn = on;
             gSplitLastCpuNs = gSplitLastWallNs = 0;

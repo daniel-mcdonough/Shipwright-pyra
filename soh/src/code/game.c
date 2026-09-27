@@ -1,6 +1,9 @@
 #include <string.h>
 #include "global.h"
 #include "vt.h"
+#ifdef SOH_BENCHMARK
+#include "soh/Enhancements/benchmark.h"
+#endif
 #include "libultraship/bridge.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
@@ -353,7 +356,11 @@ void GameState_Update(GameState* gameState) {
         gSaveContext.language = LANGUAGE_ENG;
     }
 
-    GameInteractor_ExecuteOnGameFrameUpdate();
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipFlat bit 16 (§8.48): no OnGameFrameUpdate hooks.
+    if (!(gBenchSkipFlat & 16))
+#endif
+        GameInteractor_ExecuteOnGameFrameUpdate();
     gameState->frames++;
 }
 

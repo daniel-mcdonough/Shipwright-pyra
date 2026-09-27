@@ -72,6 +72,10 @@ enum {
 };
 void Benchmark_SplitMark(int mark, int frames);
 
+// gSettings.ProbeSkipFlat (§8.48), set at SPLIT_TICK_BEGIN; defined in libultraship, whose fast/interpreter.h
+// lists the bits.
+extern int gBenchSkipFlat;
+
 #ifdef __cplusplus
 }
 #endif

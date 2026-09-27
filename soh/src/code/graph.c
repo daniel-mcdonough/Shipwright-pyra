@@ -392,7 +392,11 @@ void Graph_Update(GraphicsContext* gfxCtx, GameState* gameState) {
         gfxCtx->fbIdx++;
     }
 
-    func_800F3054();
+#ifdef SOH_BENCHMARK
+    // gSettings.ProbeSkipFlat bit 8 (§8.48): no audio update (sound requests, sequence commands).
+    if (!(gBenchSkipFlat & 8))
+#endif
+        func_800F3054();
 
     {
         OSTime time = osGetTime();

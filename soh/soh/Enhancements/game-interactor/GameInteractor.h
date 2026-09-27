@@ -6,6 +6,10 @@
 #include "libultraship/libultraship.h"
 #include "vanilla-behavior/GIVanillaBehavior.h"
 #include <z64.h>
+#if defined(SOH_BENCHMARK) && defined(__cplusplus)
+#include <string>
+#include <typeinfo>
+#endif
 
 typedef enum {
     /* 0x00 */ GI_LINK_SIZE_NORMAL,
@@ -133,6 +137,16 @@ struct HookInfo {
     uint32_t calls;
     HookRegisteringInfo registering;
 };
+
+#ifdef SOH_BENCHMARK
+// SOH_BENCH_HOOKTIME=1 (§8.48): thread CPU time of every normal hook call, by hook type and registering
+// site, logged with the benchmark's results as BENCH hook lines. Attribution only: the clock reads
+// cost ~1 us per call, so never time anything else with it on.
+extern int gBenchHookTime;
+uint64_t BenchHookClockNs();
+void BenchHookAccount(const char* type, const HookRegisteringInfo& where, uint64_t ns);
+std::string BenchHookReport();
+#endif
 
 #ifdef __cpp_lib_source_location
 #define GET_CURRENT_REGISTERING_INFO(type) \
@@ -274,6 +288,19 @@ class GameInteractor {
         }
         HooksToUnregister<H>::hooks.clear();
         // Execute hooks
+#ifdef SOH_BENCHMARK
+        if (gBenchHookTime) {
+            for (auto& hook : RegisteredGameHooks<H>::functions) {
+                const uint64_t t0 = BenchHookClockNs();
+                hook.second(std::forward<Args>(args)...);
+                const uint64_t t1 = BenchHookClockNs();
+                auto& info = RegisteredGameHooks<H>::hookData[hook.first];
+                info.calls += 1;
+                BenchHookAccount(typeid(H).name(), info.registering, t1 - t0);
+            }
+            return;
+        }
+#endif
         for (auto& hook : RegisteredGameHooks<H>::functions) {
             hook.second(std::forward<Args>(args)...);
             RegisteredGameHooks<H>::hookData[hook.first].calls += 1;

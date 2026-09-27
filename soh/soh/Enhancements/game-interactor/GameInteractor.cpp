@@ -10,6 +10,52 @@ GameInteractor functions can be called directly.
 */
 
 #include "GameInteractor.h"
+#ifdef SOH_BENCHMARK
+#include <algorithm>
+#include <map>
+#include <time.h>
+#include <tuple>
+#include <vector>
+
+int gBenchHookTime = 0;
+
+namespace {
+struct BenchHookStat {
+    uint64_t ns = 0;
+    uint64_t calls = 0;
+};
+// Keyed by (type, file, line): the names are string literals, so their pointers are stable.
+std::map<std::tuple<const char*, const char*, uint32_t>, BenchHookStat> sBenchHooks;
+} // namespace
+
+uint64_t BenchHookClockNs() {
+    timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+void BenchHookAccount(const char* type, const HookRegisteringInfo& where, uint64_t ns) {
+    auto& s = sBenchHooks[{ type, where.file, (uint32_t)where.line }];
+    s.ns += ns;
+    s.calls++;
+}
+
+std::string BenchHookReport() {
+    std::vector<std::pair<std::tuple<const char*, const char*, uint32_t>, BenchHookStat>> rows(sBenchHooks.begin(),
+                                                                                             sBenchHooks.end());
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.second.ns > b.second.ns; });
+    std::string out;
+    char line[512];
+    for (size_t i = 0; i < rows.size() && i < 40; i++) {
+        const auto& [key, s] = rows[i];
+        snprintf(line, sizeof(line), "BENCH hook type=%s site=%s:%u calls=%llu total_ms=%.1f ns_per_call=%.0f\n",
+                 std::get<0>(key), std::get<1>(key), std::get<2>(key), (unsigned long long)s.calls, s.ns / 1e6,
+                 s.calls ? (double)s.ns / s.calls : 0.0);
+        out += line;
+    }
+    return out;
+}
+#endif
 #include <libultraship/bridge.h>
 
 extern "C" {
