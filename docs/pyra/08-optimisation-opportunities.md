@@ -3783,5 +3783,7 @@ thread accounts for, and nothing measured here says what that was.
   main thread does not gain from keeping it off its own. What is left of it is pulseaudio's wake rate (SDL's
   1024-sample buffer at 32 kHz is ~31 periods a second; `SampleLength` sets it, untested) and the synthesis thread's 2 ms, both
   heat rather than frame time. For the Market's heavy ticks, 0S (the flat blocks) is next.
-- The second i2c bus takes ~450 interrupts a second in the game, all on cpu0. Which of its devices
-  raises them is not established (the nubs are the guess). That is machine-wide power, not SoH, and belongs to the hardware repo.
+- The second i2c bus takes ~450 interrupts a second in the game, all on cpu0: the two AS5013 nubs, polled
+  every 25 ms because their interrupt lines are held low on this board (the owner tried event mode; hardware
+  repo `docs/known-limitations.md` §2.6, `improvements.md` item 11). The same rate at idle (457/s), so it is a
+  machine-wide floor, not SoH's; the lever is the driver's 25 ms `#define`, a kernel patch.
