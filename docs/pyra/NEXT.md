@@ -17,7 +17,7 @@ Before that, after §8.45: **the owner chose 20 fps at 625 MHz, and it holds rea
 0.7% of frames lost over 13 minutes and eight scenes, against 0.6% for 30 fps at 1000 MHz (§8.43), for
 −0.81 W (§8.44). Thin at the Market (0.7 min, 1.5%). Shipping it is launcher work, a TODO in
 `~/git/pyra-gamemode/TODO.md` (per-game CPU profiles); a longer Market stretch at 625 if the owner wants it
-settled. Next in this repo: the present pass (item I), or 0A/0S only if 30 fps at 750 MHz is ever wanted.
+settled. Next then was the present pass (item I); §8.46 did it, and the owner's switch to 30/750 made 0A/0S live.
 
 Before that, after §8.44 (task 0T (1) and (2) done, no code): **875 MHz holds 30 fps
 at the Market fixture and 750 does not** (3.9% of frames lost, although the render thread averages only
@@ -283,7 +283,7 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      (`pyra-gamemode`) is the obvious place, not the game.
    - **(5) If 30 fps at 750 MHz is wanted**: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750
      against 35 at 875). 0A, 0S, then the two-core design, in that order.
-   - **(6) Undervolt the chosen point, 625 MHz** (added 2026-09-26; hardware repo
+   - **(6) Undervolt the chosen point, 625 MHz (20 fps) or 750 MHz (30 fps), whichever the owner settles on** (added 2026-09-26; hardware repo
      `experiments/undervolt/`). Each clock step's voltage is a fixed device-tree value (625 MHz = 0.900 V,
      50 mV per 125 MHz step), not calibrated for this chip. The rail follows the table (read back
      from the PMIC). `pyra_undervolt.ko` changes one point's voltage at runtime and puts it back on unload
