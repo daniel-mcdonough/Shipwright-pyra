@@ -3,7 +3,13 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-27**, after §8.48: **0S sized. One hook is 0.3 ms a tick.** Skipping the flat blocks
+Last revised **2026-09-27**, after §8.48's real play: **LeanCosmetics=1 is the default** (no effect on frames
+over 40 ms in 13.5 min of play, t 0.27; nothing visible), and `ClearVariable` no longer bumps the CVar
+generation for an absent variable (the game cleared one every tick). Final frozen: −277 µs Market, −260 µs Hyrule
+Field. **30/750 still misses ~3.5% at the Market and at Death Mountain Trail** (1000 MHz: ~1.9%). 0S is done;
+**the owner's call now**: the two-core design (0T (3)) or settle on 30/875 or 20/625.
+
+Earlier the same day, §8.48's frozen half: **0S sized. One hook is 0.3 ms a tick.** Skipping the flat blocks
 (`gSettings.ProbeSkipFlat`) frees ~0.88 ms at the Market at 1000 MHz: input ~0.2, post_draw ~0.32, ImGui ~0.36.
 The post_draw part is `CosmeticsUpdateTick` (~450 CVar lookups by name a tick to learn that no rainbow is on);
 the game's audio update is ~0.03. **`gSettings.LeanCosmetics=1`** (default 0 for now) caches the pointers per CVar
@@ -276,8 +282,8 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    thread is preempted ~760/s at 750 MHz. If slow frames matter again, `perf sched record -a` over a
    real-play window names who ran while it was runnable.
 
-0S. **Sized (§8.48).** Input ~0.2 ms, post_draw ~0.32 (`CosmeticsUpdateTick`, fixed by `gSettings.LeanCosmetics`,
-   real-play check owed), ImGui ~0.36 in pieces of 0.07-0.15 (menus/windows 0.10, the SDL backend's NewFrame 0.14,
+0S. **Done (§8.48).** Input ~0.2 ms, post_draw ~0.32 (`CosmeticsUpdateTick`, fixed by `gSettings.LeanCosmetics`,
+   the default since its real-play check), ImGui ~0.36 in pieces of 0.07-0.15 (menus/windows 0.10, the SDL backend's NewFrame 0.14,
    the rest 0.08). The SDL NewFrame reads `_NET_WORKAREA` from X every frame (`UpdateMonitors`): a candidate for
    `gui_start`'s off-CPU time, unmeasured. The original brief:
    **Size the flat per-frame blocks by skipping them** (added 2026-09-26, §8.43). **Next, for 30 fps at

@@ -3788,9 +3788,9 @@ thread accounts for, and nothing measured here says what that was.
   repo `docs/known-limitations.md` §2.6, `improvements.md` item 11). The same rate at idle (457/s), so it is a
   machine-wide floor, not SoH's; the lever is the driver's 25 ms `#define`, a kernel patch.
 
-## 8.48 The flat blocks sized: one cosmetics hook is 0.3 ms a tick; LeanCosmetics removes it exactly
+## 8.48 The flat blocks sized: one cosmetics hook is 0.3 ms a tick; LeanCosmetics removes it exactly and is the default; 30/750 still misses at the Market and Death Mountain Trail
 
-*NEXT.md 0S, for 30 fps at 750 MHz at the Market. Frozen fixtures only; the real-play check is still owed.*
+*NEXT.md 0S, for 30 fps at 750 MHz at the Market. Frozen fixtures, then real play with the owner.*
 
 **The probe.** `gSettings.ProbeSkipFlat` (benchmark builds; read once per tick at `SPLIT_TICK_BEGIN`, the
 bits listed in libultraship `fast/interpreter.h`) skips one candidate per bit: 1 the controller read
@@ -3845,7 +3845,8 @@ counter scope is part of that), for an answer that is no unless the player has t
 `ConsoleVariable::GetGeneration()` moves. A value changes in place behind the same pointer, and every path
 that can invalidate one (add, `ClearVariable`, `CopyVariable`, `Load`) bumps the generation, so the answer
 is the original's. `RainbowSync` is read once per tick: the loop writes only the options' value variables.
-New in libultraship: `ConsoleVariable::FindVariable` and `GetGeneration`. Default 0 until real play.
+New in libultraship: `ConsoleVariable::FindVariable` and `GetGeneration`. The first A/Bs below ran with a
+generation that moved every third tick in the fixture (see the end of this section); the final numbers follow it.
 
 - **Equivalence**, frozen Market with `gCosmetics.Link.KokiriTunic.Rainbow` A/B'd 0,1 (its first write adds
   the entry, a structural change): mode 2 (check against the original on every call) **614,068 checks, 0
@@ -3863,6 +3864,46 @@ New in libultraship: `ConsoleVariable::FindVariable` and `GetGeneration`. Defaul
 `SDL_GetDisplayUsableBounds` reads `_NET_WORKAREA` from the server: a round trip per frame, a candidate for
 `gui_start`'s ~200 µs off-CPU (§8.43) that the uncapped period here cannot resolve (MDE ~300 µs).
 
-**What this leaves.** LeanCosmetics takes ~0.36 ms a tick off the main thread at 750 MHz. The real-play A/B
-at the Market (PROMPT task 1) is owed before it becomes the default; its MDE there has been ~500-800 µs, so
-expect it to show no harm rather than resolve the gain. It does not close the Market's gap at 30/750 alone.
+### Real play, and a generation that moved every tick
+
+**Real play**, the owner playing, 30 fps cap, 750 MHz pin, `watch start SOH_BENCH_ENTRANCE=0x00B1
+SOH_BENCH_UNCAP=0 SOH_BENCH_AB_CVAR=gSettings.LeanCosmetics SOH_BENCH_AB_VALUES=0,1`: 81 blocks (~13.5 min),
+all on the pin. The owner ran circles in the Market, then sat on Death Mountain Trail under the falling rocks;
+Hyrule Field, Kokiri Forest, Kakariko, the crater and the Fire Temple in between. The rainbow step was not done
+(the in-process mode-2 check covers it). Nothing visible.
+
+| frames over 40 ms | LeanCosmetics 0 | 1 |
+|---|---|---|
+| Market (scene 32) | 82 of 2030 (4.04%) | 81 of 2320 (3.49%) |
+| Death Mountain Trail (96) | 92 of 2900 (3.17%) | 104 of 2900 (3.59%) |
+| everything else | 50 of 6960 (0.72%) | 73 of 6380 (1.14%) |
+| **all** | **224 of 11,890 (1.88%)** | **258 of 11,600 (2.22%)** |
+
+Paired within same-scene ABBA pairs, frames over 40 ms (1 minus 0): all +0.13 points (33 pairs, t 0.27, MDE
+0.94), Market −0.44 (7 pairs, t −0.45, MDE 2.38), Death Mountain Trail +0.34 (9 pairs, t 0.23, MDE 3.43).
+Render-thread CPU, `watchpairs.py blocks.txt 0 750`: +418 µs (33 pairs, 7 dropped at scene changes, t 1.17,
+MDE 714). **No effect either way that this can see, as expected for ~0.36 ms against an MDE of 0.7 ms.
+LeanCosmetics=1 is now the default.**
+
+Two things this session says about 30/750 that do not depend on the arm: **the Market missed 3.5-4% of frames
+over 40 ms** (§8.46's half-session: 2.97%; 1000 MHz: ~1.9%), with the owner running circles in it; and
+**Death Mountain Trail under the rocks misses as much (3.2-3.6%)**, a second scene that does not hold 30/750.
+Neither was in §8.43's list of heavy scenes (it had no Death Mountain Trail).
+
+**The generation moved every tick.** Checking the default took effect, `SOH_BENCH_HOOKTIME` still put the hook
+at ~143 µs a call, and a re-resolve counter read ~61 a tick. The cause: `FrameAdvance_Update`
+(`z_frame_advance.c:21`) calls `CVarClear("gDeveloperTools.FrameAdvanceTick")` on every update while frame
+advance is off, and `ConsoleVariable::ClearVariable` counted that as structural even with nothing to erase.
+In the frozen fixture that is one tick in three (Play_Update does not run every tick there); in real play,
+every tick, so the real-play arm above re-resolved all ~190 pointers every tick and saved less than the fixture
+said. `ClearVariable` now bumps the generation only when it erased an entry: exact, since only an erase can
+invalidate a pointer (mode 2 again 0 mismatches in 614,068 checks, control 1,040). Pointers now resolve once
+per run (197 over 868 ticks) and the hook times at ~74 µs, from ~436; what is left is the walk over 190 map
+nodes, not worth chasing. Final frozen A/B, 1000 MHz, 6 pairs: **Market −277 µs (−1.7%, t −9.5, MDE 75),
+Hyrule Field −260 µs (−2.5%, t −26.1, MDE 26)**, window CPU unchanged. The clear itself still runs every tick
+(a lookup, an erase and a config-path erase through a formatted string); not sized.
+
+**What this leaves.** 0S is done: LeanCosmetics took ~0.28 ms of ~0.88, and the rest is pieces under the bar.
+The Market (and Death Mountain Trail) at 30/750 miss ~3.5% of frames over 40 ms against ~1.9% at 1000 MHz,
+and the flat blocks could never have closed that: the owner's choice is now between the two-core design
+(NEXT.md 0T (3), a large build aimed at the render side) and settling on 30/875 or 20/625, which hold.
