@@ -654,6 +654,14 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     (~8 minutes) at 67.0 °C. The run was still valid, since every segment was on the pin at 67-69 °C,
     but it spent the time for nothing. At 1000 MHz use `SOH_BENCH_SOAK_C=66`; Hyrule Field then ran
     67-72 °C.
+22. **A desktop dialog can resize the game mid-run, and the game saves the new size** (2026-09-27).
+    When USB power drops (it does under load, even plugged in), mate-power-manager raises a "Battery
+    Discharging" dialog. The game lost fullscreen and ran at 1278×650 (game framebuffer 639×325) for
+    the rest of the run, with a different view (Hyrule Field 155 → 169 draws), and wrote
+    `Window.Fullscreen` 1278×650 into `shipofharkinian.json`, so later runs started at that size too.
+    Three runs were lost to it before anyone looked. **Check every run:** `BENCH config window=` must
+    read 1280x720 and every segment `fb=640x360->640x360`; look at the screen (`xwd`, §3) if not, and
+    put `Window.Fullscreen` back to 1280×720 before the next run.
 
 ## 6. Recipes
 
