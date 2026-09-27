@@ -22,6 +22,8 @@
 // gSettings.LeanCosmetics modes 2 and 3 (CosmeticsEditor.cpp, §8.48).
 extern "C" uint64_t gBenchCosmeticChecks;
 extern "C" uint64_t gBenchCosmeticMismatches;
+extern "C" uint64_t gBenchCosmeticResolves;
+extern "C" uint64_t gBenchCosmeticTicks;
 
 #include <ship/Context.h>
 #include <ship/resource/BenchLookup.h>
@@ -595,8 +597,9 @@ void WriteResults() {
         text += BenchHookReport();
     }
     {
-        snprintf(line, sizeof(line), "BENCH cosmetics checks=%llu mismatches=%llu\n",
-                 (unsigned long long)gBenchCosmeticChecks, (unsigned long long)gBenchCosmeticMismatches);
+        snprintf(line, sizeof(line), "BENCH cosmetics checks=%llu mismatches=%llu resolves=%llu ticks=%llu\n",
+                 (unsigned long long)gBenchCosmeticChecks, (unsigned long long)gBenchCosmeticMismatches,
+                 (unsigned long long)gBenchCosmeticResolves, (unsigned long long)gBenchCosmeticTicks);
         text += line;
     }
 

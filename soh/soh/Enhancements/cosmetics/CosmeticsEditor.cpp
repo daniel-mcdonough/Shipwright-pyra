@@ -538,6 +538,7 @@ int hue = 0;
 // the Pyra (frozen Market), for an answer that is almost always no. 1 keeps each option's variable
 // pointer and re-resolves it only when the CVar table's generation moves (an entry added, removed or
 // reloaded), and reads RainbowSync once per tick instead of once per option. The same answers, exactly.
+// The default since §8.48's real-play check. Until the first tick reads it, the original path runs.
 static int sLeanCosmetics = 0;
 
 #ifdef SOH_BENCHMARK
@@ -547,6 +548,8 @@ static int sLeanCosmetics = 0;
 extern "C" {
 uint64_t gBenchCosmeticChecks = 0;
 uint64_t gBenchCosmeticMismatches = 0;
+uint64_t gBenchCosmeticResolves = 0;
+uint64_t gBenchCosmeticTicks = 0;
 }
 #endif
 
@@ -572,6 +575,9 @@ static bool RainbowOn(CosmeticOption& option) {
     }
 #endif
     if (option.rainbowGen != generation) {
+#ifdef SOH_BENCHMARK
+        gBenchCosmeticResolves++;
+#endif
         option.rainbowVar =
             Ship::Context::GetInstance()->GetConsoleVariables()->FindVariable(option.rainbowCvar);
         option.rainbowGen = generation;
@@ -584,7 +590,10 @@ static bool RainbowOn(CosmeticOption& option) {
 // and increase the speed of the rainbow hue rotation.
 void CosmeticsUpdateTick() {
     int index = 0;
-    sLeanCosmetics = CVarGetInteger("gSettings.LeanCosmetics", 0);
+    sLeanCosmetics = CVarGetInteger("gSettings.LeanCosmetics", 1);
+#ifdef SOH_BENCHMARK
+    gBenchCosmeticTicks++;
+#endif
     float rainbowSpeed = CVarGetFloat(CVAR_COSMETIC("RainbowSpeed"), 0.6f);
     // The loop writes only the options' value variables, so RainbowSync cannot change inside it.
     const bool rainbowSync = sLeanCosmetics ? CVarGetInteger(CVAR_COSMETIC("RainbowSync"), 0) != 0 : false;
