@@ -249,3 +249,47 @@ frozen and in motion at the Market, `gSettings.RenderThread` 0 against 3 in one 
 path, and all timing. Next, on the device: mode 3 in motion at the Market (0 mismatches, 0 safe
 misses, syncs ~0, and the control `gSettings.ProbeRThreadCorrupt=1` firing), the dumps, then the
 frozen A/B 0 → 1 for the cost and `replay_us`.
+
+## 11.9 Stage 1 on the device: exact, nearly free, and the gate passes (2026-09-27)
+
+The device free for the session, `feature/pyra-two-core` at libultraship `f7b827dd`, all defaults
+(LeanGLState 3, LeanGroup 1). Pinned at 1000 MHz; every segment below was on the pin.
+
+**Equivalence in motion** (`SOH_BENCH_STATIC=0`, Market, mode 0 against 3, 2 pairs): **2,172,912
+checks, 0 mismatches, 0 safe misses**: under grouping the proxy's texture-binding answer is the
+backend's, exactly. `syncs` **0.00** per frame: the GLES2 `GetPixelDepth` path does not wait. The control
+(`gSettings.ProbeRThreadCorrupt=1`, mode 3, 2 segments) read **659 and 628 safe misses**, ~1 per frame
+as designed, with 0 mismatches.
+
+**Picture** (frozen, in-process dumps at frames 301 and 302, segments 0 1 1 0, mode 0 against 1):
+Market, **0 pixels** at the same frame in every pair; frame n against n+1 differs by the scene's own
+21-pixel cycle in every arm alike. Hyrule Field with the sky masked (rows 216 and up), **0 pixels**
+in every comparison, across arms and frames; unmasked, the sky differs as much between two mode-0
+segments as across modes.
+
+**Price** (frozen, 6 pairs each, soaked to 66 °C; die 65.7-73.4 °C across the runs):
+
+| RenderThread 0 → 1 | Market (A 15,906 µs) | Hyrule Field (A 10,312 µs) |
+|---|---|---|
+| render-thread CPU (the recording's cost) | **+99 µs (+0.6%), t 2.7, MDE 94** | **−47 µs (−0.5%), t −2.4, MDE 51** |
+| `replay_us` (what would move) | ~3,860 µs | ~3,270 µs |
+| `main_us` = thread CPU − replay (projected main thread) | **−3,759 µs (−23.6%), t −112, MDE 86** | **−3,261 µs (−31.6%), t −167, MDE 50** |
+| window CPU | +5 µs, t 0.2, MDE 81 | −73 µs, t −3.5, MDE 53 |
+| period | −63 µs, t −0.4, MDE 388 | −34 µs, t −0.7, MDE 119 |
+| stream per frame | 623 records, 347 KB | 502 records, 166 KB |
+
+- **The recording costs next to nothing**: +99 µs at the Market, under its MDE at the Field (where it
+  reads slightly negative). §11.5 estimated 0.2-0.4 ms for the vertex copy alone. *Reasoning, not
+  measured:* running the frame's GL side in one burst at the end, instead of interleaved with the
+  interpreter, may be paying for the copy in instruction-cache locality. Stage 3 (zero-copy) is not needed.
+- **What moves is ~3.9 ms at the Market and ~3.3 ms at the Field** at 1000 MHz: the top of §11.1's
+  3.8-4.0 ms estimate. It includes the frame's `EndFrame` and the swap's CPU (`eof_cpu_us` rises by the
+  replay because the drain runs inside it) and ImGui's GL draw.
+- **Gate: passed at both fixtures** (cost < ~1 ms, net ≥ ~3 ms). At 750 MHz the Market's projected
+  saving is ~5 ms (×4/3, an upper bound), which is §11.1's need.
+- **What `main_us` does not know:** the two threads will share the L2 and the memory bus, and the GL
+  thread will share core 1 with the audio stack (~5 ms a frame at 750, §8.47). Contention will take
+  something off the projection. Stage 2 measures it directly: main-thread CPU and period with the
+  replay really on another core.
+
+Next: stage 2 (§11.6), starting with the context moving to a second thread on the device, alone.

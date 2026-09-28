@@ -337,7 +337,10 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    - **(3) The two-core design: chosen by the owner 2026-09-27, in progress on `feature/pyra-two-core`**
      (libultraship `feature/gles2-pyra-two-core`). The design, the budget and the stage gates are
      [report 11](11-two-core-render.md); this list is the queue.
-     - **Stage 1 (host first, then the device):** `GfxRenderingAPIThreaded`, a proxy that records every
+     - ~~**Stage 1**~~ **Done (§11.8-11.9): exact (0 mismatches in 2.17M checks in motion, control fires; 0 pixels
+       at both fixtures), recording +99 µs Market (t 2.7) / −47 µs Field (under MDE), and the replay that would
+       move is ~3.9 / ~3.3 ms: projected main thread −3,759 µs (−23.6%, t −112) / −3,261 µs (−31.6%, t −167)
+       at 1000 MHz. Gate passed; stage 3 not needed.** The brief was: `GfxRenderingAPIThreaded`, a proxy that records every
        `GfxRenderingAPI` call and replays it on the same thread (`gSettings.RenderThread` 1; 3 with the
        query checks). Equivalence in motion, in-process dumps, then the frozen A/B 0 → 1 for the
        hand-off's price and `replay_us`. Gate: cost < ~1 ms and net ≥ ~3 ms at the Market, 1000 MHz.
