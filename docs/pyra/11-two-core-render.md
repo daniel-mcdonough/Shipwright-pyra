@@ -211,3 +211,39 @@ here, and the owner is back to choosing between 30/875 and 20/625.
   the render side's GL third is the part with a clean boundary.
 - Desktop GL beyond keeping it working: the host build is for correctness and the game's data shape
   (TESTING.md §6), not timing. On desktop GL `GetPixelDepth` is synchronous in every mode.
+
+## 11.8 Stage 1 on the host (2026-09-27)
+
+Built and run on the host's native benchmark build (desktop GL, so LeanGLState 0 and no grouping),
+frozen and in motion at the Market, `gSettings.RenderThread` 0 against 3 in one process. libultraship
+`f7b827dd`.
+
+**What the host showed:**
+
+- **A flip bug, found by the owner watching the window, not by the checks.** The first build answered
+  `GetClipParameters` from a value cached at `Init`, in every mode. The backend's answer depends on the
+  framebuffer being drawn to (`mFrameBuffers[mCurrentFrameBuffer].invertY`), and the game's framebuffer
+  is flipped, so the scene was drawn upside down in *both* arms. The in-process dumps compared equal,
+  because both arms were wrong the same way. Fixed: the proxy shadows each framebuffer's flip
+  (`UpdateFramebufferParameters`) and the current one (`StartDrawToFramebuffer`), the only two writers,
+  and mode 3 checks every answer. Mode 0 now forwards every query, so it is the unmodified path.
+  **Lesson for the checks:** an A/B between two arms of the same new code cannot see a bug they share.
+  The reference arm has to run the old code path.
+- **Picture:** mode 3 against mode 0 at frames n and n+1, four segments: 0 pixels. The control (the
+  flipped frame from the buggy build against today's mode 0): 95,710 pixels, so the comparison can
+  see a flip.
+- **Checks:** 192,661 per 119 frames, **0 mismatches** (the proxy said bound, or gave a flip, that the
+  backend did not). 7,497 `safe_miss`: without grouping the proxy always answers "not bound", which
+  costs ~63 extra binds a frame (212 → 241 draws in the vertex traces). The device's default path
+  (grouped) is shadowed exactly and should read 0 there.
+- **Stream:** ~732 records and ~315 KB per Market frame, as §11.5 estimated (mode 1; mode 3 adds the
+  check records).
+- **Syncs:** 0.99 per frame on the host, all from the sun's `GetPixelDepth`
+  (`Environment_GraphCallback`), which is a real read on desktop GL. On GLES2 it is answered with zeros
+  and queued, so it should read ~0 on the device. A stage 2 on desktop GL would serialise on it.
+- The host's timing is not the device's (TESTING §6) and is not read here.
+
+**Not testable on the host:** the grouped path (client arrays need GLES2), the GLES2 `GetPixelDepth`
+path, and all timing. Next, on the device: mode 3 in motion at the Market (0 mismatches, 0 safe
+misses, syncs ~0, and the control `gSettings.ProbeRThreadCorrupt=1` firing), the dumps, then the
+frozen A/B 0 → 1 for the cost and `replay_us`.
