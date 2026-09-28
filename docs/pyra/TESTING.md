@@ -209,6 +209,13 @@ resolve a ~10% effect. Every block line carries `scene=` and `cpu_min_mhz`/`cpu_
 pin (1250 MHz unless given — **pass 1000 for a `PYRA_PIN_FREQ=1000000` run**, or every pair is dropped, as
 in §8.41's first pass) or across a scene change, and prints the delta with t and MDE (§8.30).
 
+**Miss rates, and two clocks in one session** (§11.14). `python3 docs/pyra/tools/slowpairs.py blocks.txt arm <A> <B>
+[MHz]` gives frames over 40 ms per scene and arm, pooled and paired by block (trap 26: report both). To compare
+clocks instead of a CVar, copy `docs/pyra/tools/clockflip.sh` to the device and start it after `watch start`
+(its header has the command): it moves the userspace pin between 625 and 750 MHz every 30 s, and
+`slowpairs.py blocks.txt clock 750 625` pairs single-clock blocks, dropping the ~30% that straddle a change.
+Kill it before `watch stop`.
+
 For a session without an A/B (where play is heaviest, §8.43 (c)), pull the whole log and read it by scene:
 `scp "$PYRA_HOST:$PYRA_DIR/watch.log" . && python3 docs/pyra/tools/watchsplit.py watch.log [MHz]` gives
 frames over 34/40/67 ms per scene, what the slow frames were made of (render-thread CPU, swap, the rest),

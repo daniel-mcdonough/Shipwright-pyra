@@ -3,7 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-28**, later: **`RenderThread` 2 can be a launch setting** (§11.13). §11.10's first-frame
+Last revised **2026-09-28**, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
+play, block-paired: mode 2 at 30/750 misses fewer frames than mode 0 (all play 4.31% → 1.61%, −2.77 points,
+t −5.6), resolving §11.11; pooled over both sessions it is **the Market 0.91%, Death Mountain Trail 1.85%**, the
+gate (~1.9%) met, the Trail with no margin. **625 MHz does not hold 30 fps in play: 3.52% against 1.11% at 750**
+(+2.50 points, t 5.3; the fixture said 1.5%), though the owner could not tell them apart. Next: `RenderThread` 2
+as the default, the branch into `feature/pyra-port`, the 750 MHz pin in the launcher, the undervolt at 750.
+
+Earlier, 2026-09-28, later: **`RenderThread` 2 can be a launch setting** (§11.13). §11.10's first-frame
 race did not exist: ImGui's backend `NewFrame` runs before the proxy changes mode. It is now guarded anyway
 (libultraship `b32aac46`), and launches in mode 2 or 4 checked clean (0 mismatches in 1.1M checks, 0 pixels at
 both fixtures). Next: real play in mode 2 at 625 and 750 with the owner (0T (3)).
@@ -371,10 +378,13 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      - ~~**Watts**~~ **Done (§11.12, `thermcost.sh twocore`): +0.091 W at the same clock; 30/750 mode 2 −0.30 W,
        −3.3 °C, 30/625 mode 2 −0.44 W, −5.3 °C against 30/1000 mode 0; fixture frames lost 0.8% / 1.5% (mode 0
        at 750: 3-4%). 20/625 is 0.36 W below the best 30 fps arm.** Worth keeping for 30 fps.
-     - **Next, with the owner:** real play in mode 2 at 30/625, and mode 0 against 2 at 30/750 at the Market and
-       on the Trail (resolves §11.11's paired test; the owner may use an external controller - fine for the
-       A/B, note it for absolutes, TESTING trap 28). In mode 2 at 750 play missed more than the fixture
-       (Market 1.6% against 0.8%), so 625 needs play before it is chosen.
+     - ~~**Real play in mode 2 at 625 and 750, with the owner**~~ **Done (§11.14): mode 2 beats mode 0 at 30/750,
+       paired by block (−2.77 points, t −5.6); 625 misses 3.52% against 750's 1.11% (t 5.3). The owner chose
+       30/750 in mode 2.** Pooled, the Market 0.91%, the Trail 1.85%: gate met, the Trail with no margin.
+     - **Next: ship it.** (a) `gSettings.RenderThread` default 2 on the GLES2 path (keep 0 wherever the proxy
+       is not built); (b) `feature/pyra-two-core` into `feature/pyra-port` (libultraship likewise); (c) the
+       750 MHz pin per game in the launcher (`~/git/pyra-gamemode`, its TODO's per-game CPU profiles:
+       userspace governor + `scaling_setspeed`, since `pyra-thermal` overrides min==max pins).
      - ~~**Small fix before RenderThread 2 can be a launch setting (§11.10)**~~ **Done (§11.13): there was no
        race** (the first `NewFrame` runs before the proxy leaves mode 0); now guarded with `RunNow` while the
        font texture does not exist. Launched in mode 2/4: 5 hand launches clean, 1,099,735 checks 0 mismatches,
@@ -388,14 +398,14 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      (`pyra-gamemode`) is the obvious place, not the game.
    - **(5) If 30 fps at 750 MHz is wanted**: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750
      against 35 at 875). 0A, 0S, then the two-core design, in that order.
-   - **(6) Undervolt the chosen point, 625 MHz (20 fps) or 750 MHz (30 fps), whichever the owner settles on** (added 2026-09-26; hardware repo
+   - **(6) Undervolt the chosen point: 750 MHz (30 fps), chosen 2026-09-28 (§11.14)** (added 2026-09-26; hardware repo
      `experiments/undervolt/`). Each clock step's voltage is a fixed device-tree value (625 MHz = 0.900 V,
      50 mV per 125 MHz step), not calibrated for this chip. The rail follows the table (read back
      from the PMIC). `pyra_undervolt.ko` changes one point's voltage at runtime and puts it back on unload
-     or reboot. It is built, and one 10 mV step reached the PMIC and reverted. Next: step 625 MHz down from
-     0.900 V in 10 mV steps. Each step has to pass `stress-ng --verify` on both cores, cold and hot, and
-     `SOH_BENCH_DUMP` frozen-Market frames pixel-identical to a 0.900 V reference. Back off 20-30 mV from the
-     first failure, then `thermcost` ABBA at 20/625, stock against undervolted. Expected 0.05-0.15 W
+     or reboot. It is built, and one 10 mV step reached the PMIC and reverted. Next: step 750 MHz down from
+     its table voltage (0.950 V by the 50 mV step; read it back first) in 10 mV steps. Each step has to pass `stress-ng --verify` on both cores, cold and hot, and
+     `SOH_BENCH_DUMP` frozen-Market frames pixel-identical to a stock-voltage reference. Back off 20-30 mV from the
+     first failure, then `thermcost` ABBA at 30/750 in mode 2, stock against undervolted. Expected 0.05-0.15 W
      (~2% of CPU switching power per 10 mV), not measured. It also makes any later
      clock drop worth more. Too little voltage gives silent wrong results, then a crash:
      it cannot damage the chip, but it can corrupt the card, so the tested backup of 09-26

@@ -467,3 +467,53 @@ back. Steady-state cost: one pointer test a frame.
 
 `RenderThread` 2 can now be a launch setting. It stays default 0 until the owner has chosen a clock (§11.12,
 PROMPT task 2).
+
+## 11.14 Real play settles it: mode 2 at 750, not 625 (2026-09-28)
+
+Two watch sessions, the owner playing the Market then Death Mountain Trail, ~13 and ~15 minutes, the build of
+§11.13 (315e144, libultraship b32aac46), `PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start
+SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0 SOH_BENCH_AB_CVAR=gSettings.RenderThread`, frames over 40 ms
+(`hist_ms` 50 + 67 + over) pooled and paired by block (TESTING trap 26). The input method was not recorded.
+
+**(a) Mode 0 against 2 at 30/750** (`SOH_BENCH_AB_VALUES=0,2`): 82 blocks, all on the pin, die 51-66 °C.
+
+| frames over 40 ms | mode 0 | mode 2 | paired by block (2 − 0) |
+|---|---|---|---|
+| **Market** (0x20; 17 and 16 blocks) | 2.68% (132 / 4,930) | **0.84%** (39 / 4,640) | −1.88 points, t −2.45, MDE 1.61 (16 pairs) |
+| **Death Mountain Trail** (0x60; 21 each) | 6.12% (373 / 6,090) | **2.23%** (136 / 6,090) | −3.89 points, t −6.20, MDE 1.32 (21 pairs) |
+| all play | 4.31% | **1.61%** | **−2.77 points, t −5.64, MDE 0.98** (40 pairs) |
+| over 67 ms | 0.30% | 0.35% | |
+
+Main-thread CPU (`watchpairs.py`, 40 pairs): A 18,974 µs, **−3,422 µs (−18.0%), t −9.02**. §11.11's
+unresolved paired test is resolved: mode 2 misses fewer frames, in both scenes. The Trail was heavier than in
+§11.11 (mode 0 6.1% against 3.2%), and mode 2 there came in at 2.23%, over the ~1.9% bar.
+
+**(b) Mode 2 at 30/625 against 30/750, in one process** (`SOH_BENCH_AB_VALUES=2,2`, and a device-side loop
+moving `scaling_setspeed` between 625000 and 750000 every 30 s under the userspace pin). 92 blocks: 33 at
+625, 33 at 750, 26 straddling a change (dropped). Pairs are adjacent single-clock blocks in the same scene.
+Die 63-69 °C.
+
+| frames over 40 ms | 750 MHz | 625 MHz | paired by block (625 − 750) |
+|---|---|---|---|
+| **Market** (14 blocks each) | 0.99% (40 / 4,060) | 3.03% (123 / 4,060) | +2.23 points, t 2.70, MDE 1.73 (13 pairs) |
+| **Death Mountain Trail** (16 and 17) | 1.34% (62 / 4,640) | 4.16% (205 / 4,930) | +2.86 points, t 5.21, MDE 1.15 (14 pairs) |
+| all play | 1.11% | **3.52%** | **+2.50 points, t 5.34, MDE 0.98** (28 pairs) |
+| over 67 ms | 0.25% | 0.15% | |
+
+Main-thread CPU at 625: **+2,789 µs (+17.7%, t 5.19)** on 15,748 µs. The fixture's 1.5% at 625 (§11.12)
+understated play by more than half: 625 misses about three times what 750 does, nearly twice the 1000 MHz bar.
+
+- **Mode 2 at 750, both sessions pooled: the Market 0.91% (79 / 8,700), Death Mountain Trail 1.85%
+  (198 / 10,730).** The gate (§11.6: at or under ~1.9%) is met, the Trail with no margin, and it moves between
+  sessions (2.23% and 1.34%) with how the owner plays.
+- The long stalls (over 67 ms) are 0.15-0.35% in every arm: not frame work (§11.11).
+- **The owner could not tell 625 from 750** with the clock changing every 30 s ("I don't know if I noticed a
+  difference"). One unblinded session; it says misses at these rates are hard to feel in play, not that
+  625 holds.
+- Nothing new in the logs: the startup `RGBA Texture ... Size = 0` lines (36, as a direct launch), the
+  `ComputeFrameBufferCompleteness` notes and the known log-flush error (TESTING item 11).
+
+**The owner's choice (2026-09-28): 30 fps at 750 MHz in mode 2**, over 30/625 (−0.14 W and ~2 °C more for
+three times the misses) and 20/625 (−0.50 W and ~4 °C more, at 20 fps). Against 30/1000 it is −0.30 W and
+−3.3 °C (§11.12) at the 1000 MHz miss rate. Next: `RenderThread` 2 as the default, the branch into
+`feature/pyra-port`, the 750 MHz pin in the launcher, and the undervolt at 750 (NEXT 0T (6)).
