@@ -1,6 +1,6 @@
 # DragonBox Pyra port — documentation index
 
-Eleven reports, written as the work happened. They are a record rather than a manual, which means
+Twelve reports, written as the work happened. They are a record rather than a manual, which means
 **the later ones correct the earlier ones** in several places. This index exists so that nobody
 reads a superseded number and acts on it.
 
@@ -122,6 +122,7 @@ check the date.
 | [08](08-optimisation-opportunities.md) | Code-level optimisation opportunities | The catalogue of nine candidate optimisations, what each rests on, and the three results measured so far. |
 | [09](09-benchmark-harness.md) | Deterministic benchmark harness | The measurement rig built because 07 and 08 both hit the same ±13% wall. Validated, and ABBA confirmed in §9.8. |
 | [10](10-save-file-corruption.md) | The save file corruption bug | 07 §7.7, closed. The mechanism reproduced, the save path made verify-before-replace, and the one open question left with the tool that answers it. |
+| [11](11-two-core-render.md) | A GL thread: splitting the render side across two cores | Branch `feature/pyra-two-core`. The design (a recording proxy on `GfxRenderingAPI`, a GL thread that replays it), its budget against 30 fps at 750 MHz, and the stages with their gates. Results follow the design as they land. |
 
 `tools/ccscan.py` is a helper used by report 08 to enumerate Fast3D colour-combiner variants.
 

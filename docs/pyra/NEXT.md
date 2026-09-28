@@ -3,7 +3,10 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-27**, after §8.48's real play: **LeanCosmetics=1 is the default** (no effect on frames
+Last revised **2026-09-27**: **the owner chose the two-core design** (0T (3)). It is on branch
+`feature/pyra-two-core`; the design and its gates are [report 11](11-two-core-render.md), the queue is 0T (3) below.
+
+Earlier the same day, after §8.48's real play: **LeanCosmetics=1 is the default** (no effect on frames
 over 40 ms in 13.5 min of play, t 0.27; nothing visible), and `ClearVariable` no longer bumps the CVar
 generation for an absent variable (the game cleared one every tick). Final frozen: −277 µs Market, −260 µs Hyrule
 Field. **30/750 still misses ~3.5% at the Market and at Death Mountain Trail** (1000 MHz: ~1.9%). 0S is done;
@@ -331,6 +334,18 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    Extend it for the arms below rather than writing a new script. The frame-rate floor is
    `SOH_BENCH_SPLIT` windows or `LUS_FPS_LOG`, read in the scenes 0(c) names, not only the Market.
    **(1) and (2) done (§8.44)**; see the header. What is left of 0T:
+   - **(3) The two-core design: chosen by the owner 2026-09-27, in progress on `feature/pyra-two-core`**
+     (libultraship `feature/gles2-pyra-two-core`). The design, the budget and the stage gates are
+     [report 11](11-two-core-render.md); this list is the queue.
+     - **Stage 1 (host first, then the device):** `GfxRenderingAPIThreaded`, a proxy that records every
+       `GfxRenderingAPI` call and replays it on the same thread (`gSettings.RenderThread` 1; 3 with the
+       query checks). Equivalence in motion, in-process dumps, then the frozen A/B 0 → 1 for the
+       hand-off's price and `replay_us`. Gate: cost < ~1 ms and net ≥ ~3 ms at the Market, 1000 MHz.
+     - **Stage 2:** the context moved to a second thread on the device (alone first), then mode 2 with the
+       CVar snapshot, ImGui's draw-data copy, the swap and `gl_thread_us`. Real play at 30/750 with the
+       owner, Market and Death Mountain Trail first. Gate: at or under ~1.9% of frames over 40 ms.
+     - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.
+     - Then `thermcost.sh clock` (PROMPT task 2).
    - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock
      (`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=<kHz>`, plus `SOH_BENCH_AB_CVAR=gSettings.InterpolationFPS
      SOH_BENCH_AB_VALUES=20,20` for 20 fps), `SOH_BENCH_SPLIT=150`, the owner playing through the Market,
