@@ -109,7 +109,12 @@ unpin_cpu() {
       sudo sh -c \"cat \$p/cpuinfo_max_freq > \$p/scaling_max_freq\"
     done
     rm -f $GOV_SAVE
-    echo \"restored \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)-\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) kHz, governor \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor)\"" >&2
+    # Leaving ondemand discards its tunables; the kernel brings them back at stock, which
+    # undid pyra-governor-tune's sampling_down_factor=10 after every pinned run until
+    # 2026-09-29. Re-apply it (the hardware repo's unit) when it is installed.
+    [ \"\$gov\" = ondemand ] && systemctl cat pyra-governor-tune.service >/dev/null 2>&1 &&
+      sudo systemctl restart pyra-governor-tune.service
+    echo \"restored \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)-\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) kHz, governor \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor), sampling_down_factor \$(cat /sys/devices/system/cpu/cpufreq/ondemand/sampling_down_factor 2>/dev/null || echo -)\"" >&2
 }
 
 run() {

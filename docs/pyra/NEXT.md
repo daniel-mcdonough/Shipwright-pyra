@@ -5,8 +5,8 @@ rewritten as things land. If it disagrees with a report, this file is newer.
 
 Last revised **2026-09-29**: **`RenderThread` 2 is the default on GLES2** (§11.15; 0 on desktop GL). Device
 runs are now in mode 2 unless they say otherwise (TESTING trap 31). The two-core work is merged
-into `feature/pyra-port` (fast-forward; libultraship `feature/gles2-pyra`), and work continues there. Next: the
-750 MHz pin in the launcher.
+into `feature/pyra-port` (fast-forward; libultraship `feature/gles2-pyra`), and work continues there. **30/750 is
+shipped**: `pyra-soh` pins 750 MHz while the game runs (0T (3), "ship it" (c)). Next: the undervolt at 750 (0T (6)).
 
 Earlier, 2026-09-28, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
 play, block-paired: mode 2 at 30/750 misses fewer frames than mode 0 (all play 4.31% → 1.61%, −2.77 points,
@@ -388,9 +388,13 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        30/750 in mode 2.** Pooled, the Market 0.91%, the Trail 1.85%: gate met, the Trail with no margin.
      - **Next: ship it.** ~~(a) `gSettings.RenderThread` default 2 on the GLES2 path~~ **done (§11.15, libultraship
        `e0516fad`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; ~~(b) the branch into `feature/pyra-port`~~ **done 2026-09-29, fast-forward (libultraship `feature/gles2-pyra`
-       likewise); work continues there**; (c) the
-       750 MHz pin per game in the launcher (`~/git/pyra-gamemode`, its TODO's per-game CPU profiles:
-       userspace governor + `scaling_setspeed`, since `pyra-thermal` overrides min==max pins).
+       likewise); work continues there**; ~~(c) the 750 MHz pin~~
+       **done 2026-09-29, in the `pyra-soh` wrapper, not the launcher** (the launcher is not installed on the
+       device; hardware repo `device/pyra-soh` + `device/pyra-cpu-pin`, a root helper allowed by a narrow sudoers
+       rule): pinned while the game runs, the governor and ondemand's tunables put back on a quit, a kill, or a
+       kill -9 of the wrapper. `~/soh-pyra` (the install `pyra-soh` runs) has this build, its `soh.o2r`, and
+       30 fps, vsync off, MSAA 1, LeanGLState 3, LeanInterp 1; its 240p 4:3 resolution, controls and saves are
+       unchanged (the old files are kept as `*.pre-750`). **Shipped.**
      - ~~**Small fix before RenderThread 2 can be a launch setting (§11.10)**~~ **Done (§11.13): there was no
        race** (the first `NewFrame` runs before the proxy leaves mode 0); now guarded with `RunNow` while the
        font texture does not exist. Launched in mode 2/4: 5 hand launches clean, 1,099,735 checks 0 mismatches,

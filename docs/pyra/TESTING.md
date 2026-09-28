@@ -673,6 +673,9 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
 18. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
     teardown, seen every run 2026-09-24, with or without that day's changes). The results are
     already written by then. Ignore it, or fix it separately; it is not a benchmark problem.
+    **The device build does it too** (2026-09-29): every Alt+F4 quit, four of four, in `RenderThread` 0 and
+    2 alike, ends in `Segmentation fault` about a second after the close. Not the GL thread. Closing the
+    window with `xdotool windowclose` is not a quit (it destroys the window; the game hangs): use Alt+F4.
 
 19. **Until §8.32 the camera override did not reliably hold.** The freeze does not stop
     `Camera_Update` (it runs after `Play_Update`'s frame-advance skip label) and the camera wrote its
