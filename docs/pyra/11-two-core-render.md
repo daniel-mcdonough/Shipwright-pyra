@@ -534,3 +534,6 @@ Tests on the device (the build of this commit; the previous binary kept as `soh.
   recorded 599 (mean 12.6 ms, `gl_us` 4,959).
 
 **From here, every device run is in mode 2 unless it says otherwise** (TESTING trap 31).
+
+The branch (2026-09-29): with the owner's agreement, `feature/pyra-port` and libultraship `feature/gles2-pyra`
+were fast-forwarded to the two-core branches (they had no commits of their own), and work continues on them.

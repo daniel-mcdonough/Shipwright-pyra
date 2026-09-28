@@ -4,8 +4,9 @@ The numbered reports are a record of what happened. This file is the opposite: a
 rewritten as things land. If it disagrees with a report, this file is newer.
 
 Last revised **2026-09-29**: **`RenderThread` 2 is the default on GLES2** (§11.15; 0 on desktop GL). Device
-runs are now in mode 2 unless they say otherwise (TESTING trap 31). Next: the branch into `feature/pyra-port`
-(asking the owner), and the 750 MHz pin in the launcher.
+runs are now in mode 2 unless they say otherwise (TESTING trap 31). The two-core work is merged
+into `feature/pyra-port` (fast-forward; libultraship `feature/gles2-pyra`), and work continues there. Next: the
+750 MHz pin in the launcher.
 
 Earlier, 2026-09-28, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
 play, block-paired: mode 2 at 30/750 misses fewer frames than mode 0 (all play 4.31% → 1.61%, −2.77 points,
@@ -362,8 +363,8 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    Extend it for the arms below rather than writing a new script. The frame-rate floor is
    `SOH_BENCH_SPLIT` windows or `LUS_FPS_LOG`, read in the scenes 0(c) names, not only the Market.
    **(1) and (2) done (§8.44)**; see the header. What is left of 0T:
-   - **(3) The two-core design: chosen by the owner 2026-09-27, in progress on `feature/pyra-two-core`**
-     (libultraship `feature/gles2-pyra-two-core`). The design, the budget and the stage gates are
+   - **(3) The two-core design: chosen by the owner 2026-09-27, merged into `feature/pyra-port`
+     2026-09-29** (built on `feature/pyra-two-core` / libultraship `feature/gles2-pyra-two-core`). The design, the budget and the stage gates are
      [report 11](11-two-core-render.md); this list is the queue.
      - ~~**Stage 1**~~ **Done (§11.8-11.9): exact (0 mismatches in 2.17M checks in motion, control fires; 0 pixels
        at both fixtures), recording +99 µs Market (t 2.7) / −47 µs Field (under MDE), and the replay that would
@@ -386,7 +387,8 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        paired by block (−2.77 points, t −5.6); 625 misses 3.52% against 750's 1.11% (t 5.3). The owner chose
        30/750 in mode 2.** Pooled, the Market 0.91%, the Trail 1.85%: gate met, the Trail with no margin.
      - **Next: ship it.** ~~(a) `gSettings.RenderThread` default 2 on the GLES2 path~~ **done (§11.15, libultraship
-       `e0516fad`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; (b) `feature/pyra-two-core` into `feature/pyra-port` (libultraship likewise); (c) the
+       `e0516fad`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; ~~(b) the branch into `feature/pyra-port`~~ **done 2026-09-29, fast-forward (libultraship `feature/gles2-pyra`
+       likewise); work continues there**; (c) the
        750 MHz pin per game in the launcher (`~/git/pyra-gamemode`, its TODO's per-game CPU profiles:
        userspace governor + `scaling_setspeed`, since `pyra-thermal` overrides min==max pins).
      - ~~**Small fix before RenderThread 2 can be a launch setting (§11.10)**~~ **Done (§11.13): there was no
