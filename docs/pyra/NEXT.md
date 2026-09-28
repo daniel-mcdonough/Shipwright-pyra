@@ -344,9 +344,11 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        `GfxRenderingAPI` call and replays it on the same thread (`gSettings.RenderThread` 1; 3 with the
        query checks). Equivalence in motion, in-process dumps, then the frozen A/B 0 → 1 for the
        hand-off's price and `replay_us`. Gate: cost < ~1 ms and net ≥ ~3 ms at the Market, 1000 MHz.
-     - **Stage 2:** the context moved to a second thread on the device (alone first), then mode 2 with the
-       CVar snapshot, ImGui's draw-data copy, the swap and `gl_thread_us`. Real play at 30/750 with the
-       owner, Market and Death Mountain Trail first. Gate: at or under ~1.9% of frames over 40 ms.
+     - **Stage 2: built (§11.10).** The context moves (25 times, no error); exact (0 mismatches in 2.66M checks,
+       0 pixels at both fixtures); at 750 MHz frozen the period is **−8.3 ms (−28%) Market, −6.8 ms (−33%)
+       Field**, main-thread CPU −3.7 / −3.4 ms, for ~2 / ~1.3 ms more CPU across the machine.
+       **Next: the gate, real play at 30/750 with the owner**, mode 0 against 2, Market and Death Mountain
+       Trail first: frames over 40 ms per arm (at or under ~1.9%), paired `thread_cpu_us`. Then 625 MHz.
      - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.
      - Then `thermcost.sh clock` (PROMPT task 2).
    - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock

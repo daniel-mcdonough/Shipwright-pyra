@@ -293,3 +293,58 @@ segments as across modes.
   replay really on another core.
 
 Next: stage 2 (§11.6), starting with the context moving to a second thread on the device, alone.
+
+## 11.10 Stage 2: the GL thread works, and at 750 MHz the frame period falls by a third (2026-09-27)
+
+libultraship `784bf4f4` and after: `gSettings.RenderThread` 2 (4 with the checks). The stream is cut into
+64 KB blocks, published to the GL thread as they fill, so the GL thread starts on a frame while the
+interpreter is still producing it; the swap is a queued frame-end record, and the main thread may run
+one frame ahead and no more. Calls that need an answer (shader creation, framebuffers, the texture-name
+pool's refill) run on the GL thread while the main thread waits. What the GL thread would have read
+from the CVar store is captured on the main thread instead: the backend's per-frame modes and the
+Z-fighting mode (which it had read per decal draw) in a `StartFrame` payload, vsync by
+`GfxWindowBackend::LatchFrameSettings`, and the benchmark's dump path in its own record. ImGui's draw
+data is cloned for the GL thread. The mode changes at a frame start: the context is released on the main
+thread and made current on the GL thread, or the reverse.
+
+**The context moves** (the check that could have ended the branch): 50 segments of mode 0 against 4 in
+motion at the Market, the context moved 25 times (13 to the GL thread, 12 back), every segment drew
+and measured, no error. The checks across those segments: **2,657,584, 0 mismatches, 0 safe misses**.
+
+**Picture** (device, frozen, in-process dumps, mode 0 against 2): Market **0 pixels** at the same frame,
+frame n against n+1 the scene's own ~20-pixel cycle in every arm; Hyrule Field with the sky masked,
+**0 pixels** in every comparison.
+
+**Timing** (frozen, uncapped, **750 MHz** pin, 6 pairs each, soaked to 62 °C; every segment on the pin):
+
+| RenderThread 0 → 2 | Market (A) | Δ | t | MDE | Hyrule Field (A) | Δ | t | MDE |
+|---|---|---|---|---|---|---|---|---|
+| main-thread CPU | 20,881 µs | **−3,696 µs (−17.7%)** | −67 | 142 | 13,210 µs | **−3,422 µs (−25.9%)** | −197 | 45 |
+| period | 29,400 µs | **−8,312 µs (−28.3%)** | −34 | 628 | 20,693 µs | **−6,775 µs (−32.7%)** | −45 | 388 |
+| window CPU | 17,817 µs | −4,075 µs (−22.9%) | −79 | 133 | 11,490 µs | −3,801 µs (−33.1%) | −214 | 46 |
+| GL thread CPU (`replay_us` then, `gl_us` now) | | ~5,700 µs | | | | ~4,700 µs | | |
+| main thread waiting for the GL thread | | 15-70 µs | | | | 0.6-1.2 ms | | |
+
+- **The period falls by more than twice the CPU saving.** The main thread no longer waits in the swap
+  for the GPU (~5 ms, §8.46); the GL thread does. Uncapped, the Market goes from 34 to 47 fps at 750 MHz.
+  At the Field the main thread now outruns the GL thread and the GPU and waits for them (0.6-1.2 ms).
+- **It is not free.** The GL work costs ~5.7 ms on the GL thread at the Market against the ~3.7 ms it
+  took off the main thread: **~2 ms more CPU per frame across the machine (+10%)**, ~1.3 ms at the Field.
+  A short run with the counters split (mode 1 against 2, 120 frames, 750 MHz): the same replay is
+  4,604 µs on the main thread and 5,649 µs on the GL thread, of which ~0.35 ms is the swap's CPU (the GL
+  thread's figure includes it, mode 1's does not). The other ~0.7 ms (~15%) is the price of the other
+  core: *reasoning, not measured* - the stream's 350 KB written on one core and read on the other, and
+  the GL thread sharing core 1 with the audio stack. At a fixed clock the design costs heat; it pays only
+  through the clock drop, as §11.1 said.
+- **Headroom:** at 750 MHz the Market's main thread is now ~17.2 ms of CPU against a 33.3 ms frame, and
+  the GL thread ~5.7 ms. *Reasoning, not measured:* at 625 MHz that is ~20.6 and ~6.8 ms, which may hold
+  30 fps too. Real play decides, not the fixture (§8.46: the fixture overstated play's misses).
+
+**What the benchmark reads in mode 2:** `thread_us`, the period and the window are the main thread's,
+as before. The backend's own counters (`BENCH work`, `group`, `batch`, `glfn`) and `swap_us`/`eof_cpu_us`
+are written on the GL thread and read or reset on the main thread without synchronisation, one frame
+apart: good for averages, not exact. `pairs.py` now pairs `gl_us` and `total_us` (main + GL thread); its
+`main_us` is meaningful for mode 1 runs only.
+
+Next: the gate, real play at 30/750 with the owner, mode 0 against 2, the Market and Death Mountain
+Trail first (§11.6).

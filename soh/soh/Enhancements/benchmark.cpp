@@ -684,7 +684,7 @@ void WriteResults() {
         // every recorded item, child nodes included (§8.30). cmp and mismatch are segment totals.
         const double periods = seg.frameMicros.size() > 1 ? (double)(seg.frameMicros.size() - 1) : 1.0;
         snprintf(line, sizeof(line), "BENCH interp %zu mtx=%.1f mtx_repl=%.1f map=%.1f children=%.1f ops=%.1f cmp=%llu "
-                 "mismatch=%llu safe_miss=%llu\n",
+                 "mismatch=%llu safe_miss=%llu wait_us=%.1f gl_us=%.1f\n",
                  i, PerFrame(seg, seg.counters[BENCH_MTX]), PerFrame(seg, seg.counters[BENCH_MTX_REPL]),
                  PerFrame(seg, seg.counters[BENCH_MTX_MAP]),
                  (double)(seg.interpChildrenEnd - seg.interpChildrenStart) / periods,
@@ -840,7 +840,8 @@ void WriteResults() {
             text += line;
         }
         // Report 11's recording proxy, per frame period: calls and KB recorded, and replay_us, the CPU
-        // time replaying them - what would leave the main thread. Absent when nothing was recorded.
+        // time replaying them on the main thread - what would leave it (mode 1). gl_us is the GL thread's
+        // CPU time (mode 2), wait_us the main thread's wall time waiting for it. Absent when nothing was recorded.
         // syncs are calls that waited for the stream; checks, mismatch (the proxy said bound, the backend
         // not: must be 0) and safe_miss (the other way: an extra bind) are mode 3's segment totals.
         {
@@ -851,12 +852,13 @@ void WriteResults() {
             if (d[Fast::BENCH_RT_FRAMES] > 0) {
                 snprintf(line, sizeof(line),
                          "BENCH rthread %zu frames=%llu records=%.1f kb=%.1f replay_us=%.1f syncs=%.2f checks=%llu "
-                         "mismatch=%llu safe_miss=%llu\n",
+                         "mismatch=%llu safe_miss=%llu wait_us=%.1f gl_us=%.1f\n",
                          i, (unsigned long long)d[Fast::BENCH_RT_FRAMES], PerFrame(seg, d[Fast::BENCH_RT_RECORDS]),
                          PerFrame(seg, d[Fast::BENCH_RT_BYTES]) / 1024.0,
                          PerFrame(seg, d[Fast::BENCH_RT_REPLAY_NS]) / 1000.0, PerFrame(seg, d[Fast::BENCH_RT_SYNCS]),
                          (unsigned long long)d[Fast::BENCH_RT_CHECKS], (unsigned long long)d[Fast::BENCH_RT_MISMATCH],
-                         (unsigned long long)d[Fast::BENCH_RT_SAFE_MISS]);
+                         (unsigned long long)d[Fast::BENCH_RT_SAFE_MISS], PerFrame(seg, d[Fast::BENCH_RT_WAIT_NS]) / 1000.0,
+                         PerFrame(seg, d[Fast::BENCH_RT_GL_NS]) / 1000.0);
                 text += line;
             }
         }
@@ -1532,7 +1534,9 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpOpsStart = gBenchInterpOps;
                 gRunSegments.back().interpCmpStart = gBenchInterpCompared;
                 gRunSegments.back().interpBadStart = gBenchInterpMismatch;
-                memcpy(gRunSegments.back().rtStart, Fast::gBenchRThread, sizeof(Fast::gBenchRThread));
+                for (int k = 0; k < Fast::BENCH_RT_COUNT; k++) {
+                    gRunSegments.back().rtStart[k] = __atomic_load_n(&Fast::gBenchRThread[k], __ATOMIC_RELAXED);
+                }
                 gRunSegments.back().glFnStart.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().batchStart.assign(gBenchBatchCause, gBenchBatchCause + BENCH_BRK_SETS);
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
@@ -1572,7 +1576,9 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpOpsEnd = gBenchInterpOps;
                 gRunSegments.back().interpCmpEnd = gBenchInterpCompared;
                 gRunSegments.back().interpBadEnd = gBenchInterpMismatch;
-                memcpy(gRunSegments.back().rtEnd, Fast::gBenchRThread, sizeof(Fast::gBenchRThread));
+                for (int k = 0; k < Fast::BENCH_RT_COUNT; k++) {
+                    gRunSegments.back().rtEnd[k] = __atomic_load_n(&Fast::gBenchRThread[k], __ATOMIC_RELAXED);
+                }
                 gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().batchEnd.assign(gBenchBatchCause, gBenchBatchCause + BENCH_BRK_SETS);
                 gRunSegments.back().lookupsEnd = Ship::BenchLookupsThisThread();

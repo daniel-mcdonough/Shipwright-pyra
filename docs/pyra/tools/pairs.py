@@ -4,8 +4,10 @@
 # the end of frame and swap (oncpu eof_cpu_us, §8.36; nan in older logs). Segments pair as (0,1),(2,3)...
 # A pair is dropped if either segment left the pin: 1250 MHz, or the clock given as a third argument.
 # Pass 1000 to analyse the pairs pyra-thermal capped whole (TESTING.md trap 14): usage run.log <arm A> [MHz]
-# main_us (report 11) is thread_us less the BENCH rthread line's replay_us: the main thread's CPU if the
-# replay moved to another thread. Equal to thread_us in a segment that recorded nothing.
+# main_us (report 11) is thread_us less the BENCH rthread line's replay_us, the replay done on the main
+# thread (mode 1): the main thread's CPU if it moved to another thread. Equal to thread_us in a segment that
+# recorded nothing, and in mode 2, where the replay is already on the GL thread. gl_us is that thread's CPU
+# (0 when there is none) and total_us thread_us + gl_us: the render side's whole CPU per frame.
 import re, sys, math
 PIN = sys.argv[3] if len(sys.argv) > 3 else '1250'
 T = {1:12.706,2:4.303,3:3.182,4:2.776,5:2.571,6:2.447,7:2.365,8:2.306,9:2.262,10:2.228,11:2.201}
@@ -38,13 +40,15 @@ for i in range(0, max(seg) + 1, 2):
                       ('win_cpu_us', lambda s: float(s['oncpu']['window_us'])),
                       ('swap_us', lambda s: float(s['segment']['swap_us'])),
                       ('eof_cpu_us', lambda s: float(s['oncpu'].get('eof_cpu_us', 'nan'))),
-                      ('main_us', lambda s: float(s['oncpu']['thread_us']) - float(s.get('rthread', {}).get('replay_us', 0)))):
+                      ('main_us', lambda s: float(s['oncpu']['thread_us']) - float(s.get('rthread', {}).get('replay_us', 0))),
+                      ('gl_us', lambda s: float(s.get('rthread', {}).get('gl_us', 0))),
+                      ('total_us', lambda s: float(s['oncpu']['thread_us']) + float(s.get('rthread', {}).get('gl_us', 0)))):
         d[name] = (get(A), get(B))
     pairs.append(d)
     print(f"pair {i//2}: arms A={A['segment']['arm']} B={B['segment']['arm']} temp {A['segment']['temp_c']} / {B['segment']['temp_c']}  "
           + '  '.join(f"{k} {v[1]-v[0]:+.0f}" for k, v in d.items()))
 n = len(pairs)
-for k in ('thread_us', 'period_us', 'window_us', 'win_cpu_us', 'swap_us', 'eof_cpu_us', 'main_us'):
+for k in ('thread_us', 'period_us', 'window_us', 'win_cpu_us', 'swap_us', 'eof_cpu_us', 'main_us', 'gl_us', 'total_us'):
     ds = [p[k][1] - p[k][0] for p in pairs]; a = sum(p[k][0] for p in pairs) / n
     mu = sum(ds) / n; sd = math.sqrt(sum((x - mu) ** 2 for x in ds) / (n - 1)) if n > 1 else float('nan')
     se = sd / math.sqrt(n)
