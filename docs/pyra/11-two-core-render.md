@@ -79,8 +79,10 @@ main thread uses immediately.
 | `LoadShader`, `UnloadShader`, `SelectTexture`, `SetSamplerParameters`, `SetDepthTestAndMask`, `SetZmodeDecal`, `SetViewport`, `SetScissor`, `SetUseAlpha`, `StartFrame`, `EndFrame`, `FinishRender`, `UpdateFramebufferParameters`, `StartDrawToFramebuffer`, `CopyFramebuffer`, `ClearFramebuffer`, `DiscardDepthStencil`, `FlushDeferredDraws`, `ResolveMSAAColorBuffer`, `SelectTextureFb`, `DeleteTexture`, `SetSrgbMode`, `OnResize` | queued | Arguments by value. `ShaderProgram*` is stable: programs live in the backend's pool until `ClearShaderCache`, which is itself queued in order. |
 | `DrawTriangles` | queued, **vertices copied** | The interpreter reuses its buffer after the call. The main cost of the hand-off (11.5). |
 | `UploadTexture` | queued, **pixels copied** | Rare after a scene loads (LeanTexLoad, §8.31). |
-| `SetTextureFilter`, `ClearShaderCache` | queued, and the proxy updates its own shadow | `GetTextureFilter` reads the shadow; `ClearShaderCache` empties the proxy's shader map. |
-| `GetName`, `GetMaxTextureSize`, `GetClipParameters` | answered by the proxy | Constant after `Init`; cached then. |
+| `ClearShaderCache` | queued, and the proxy empties its shader map | |
+| `SetTextureFilter` | **synchronous**, and the proxy keeps a shadow for `GetTextureFilter` | The GL backend's also clears the interpreter's texture cache, which is main-thread state. A settings change, rare. |
+| `GetName`, `GetMaxTextureSize` | answered by the proxy | Constant after `Init`; cached then. |
+| `GetClipParameters` | answered by the proxy from a shadow | **Not constant** (11.8): the flip of the framebuffer being drawn to. Shadowed from its only two writers, `UpdateFramebufferParameters` and `StartDrawToFramebuffer`; checked in mode 3. |
 | `LookupShader` | answered by the proxy | The proxy's own map of `(id0, id1) → ShaderProgram*`, filled by `CreateAndLoadNewShader`. |
 | `ShaderGetInfo` | answered by the proxy | Reads fields the backend writes once, when it creates the program, which happened in a synchronous call. |
 | `IsTextureBound` | answered by the proxy from a shadow | See below. |

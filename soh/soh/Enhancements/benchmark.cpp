@@ -30,6 +30,7 @@ extern "C" uint64_t gBenchCosmeticTicks;
 #include <ship/window/Window.h>
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
+#include <fast/backends/gfx_threaded.h>
 #include <libultraship/bridge.h>
 #include <spdlog/spdlog.h>
 
@@ -388,6 +389,8 @@ struct Segment {
     uint64_t interpChildrenStart = 0, interpChildrenEnd = 0, interpOpsStart = 0, interpOpsEnd = 0;
     // gSettings.LeanInterp=2 (§8.30): replacement-map entries compared, and the ones that differed.
     uint64_t interpCmpStart = 0, interpCmpEnd = 0, interpBadStart = 0, interpBadEnd = 0;
+    // Fast::gBenchRThread at the same two points: report 11's recording proxy (gSettings.RenderThread).
+    uint64_t rtStart[Fast::BENCH_RT_COUNT] = {}, rtEnd[Fast::BENCH_RT_COUNT] = {};
     // gBenchGlFn at the same two points: calls per GL entry point per frame period.
     std::vector<uint64_t> glFnStart, glFnEnd;
     // gBenchBatchCause at the same two points: draws by the set of state changes behind them (§8.37).
@@ -681,7 +684,7 @@ void WriteResults() {
         // every recorded item, child nodes included (§8.30). cmp and mismatch are segment totals.
         const double periods = seg.frameMicros.size() > 1 ? (double)(seg.frameMicros.size() - 1) : 1.0;
         snprintf(line, sizeof(line), "BENCH interp %zu mtx=%.1f mtx_repl=%.1f map=%.1f children=%.1f ops=%.1f cmp=%llu "
-                 "mismatch=%llu\n",
+                 "mismatch=%llu safe_miss=%llu\n",
                  i, PerFrame(seg, seg.counters[BENCH_MTX]), PerFrame(seg, seg.counters[BENCH_MTX_REPL]),
                  PerFrame(seg, seg.counters[BENCH_MTX_MAP]),
                  (double)(seg.interpChildrenEnd - seg.interpChildrenStart) / periods,
@@ -835,6 +838,27 @@ void WriteResults() {
                      i, threadPct / 100.0 * PerFrame(seg, seg.periodMicros), threadPct, windowUs,
                      meanUs > 0.0 ? 100.0 * windowUs / meanUs : 0.0, procPct, PerFrame(seg, seg.eofCpuMicros));
             text += line;
+        }
+        // Report 11's recording proxy, per frame period: calls and KB recorded, and replay_us, the CPU
+        // time replaying them - what would leave the main thread. Absent when nothing was recorded.
+        // syncs are calls that waited for the stream; checks, mismatch (the proxy said bound, the backend
+        // not: must be 0) and safe_miss (the other way: an extra bind) are mode 3's segment totals.
+        {
+            uint64_t d[Fast::BENCH_RT_COUNT];
+            for (int k = 0; k < Fast::BENCH_RT_COUNT; k++) {
+                d[k] = seg.rtEnd[k] - seg.rtStart[k];
+            }
+            if (d[Fast::BENCH_RT_FRAMES] > 0) {
+                snprintf(line, sizeof(line),
+                         "BENCH rthread %zu frames=%llu records=%.1f kb=%.1f replay_us=%.1f syncs=%.2f checks=%llu "
+                         "mismatch=%llu safe_miss=%llu\n",
+                         i, (unsigned long long)d[Fast::BENCH_RT_FRAMES], PerFrame(seg, d[Fast::BENCH_RT_RECORDS]),
+                         PerFrame(seg, d[Fast::BENCH_RT_BYTES]) / 1024.0,
+                         PerFrame(seg, d[Fast::BENCH_RT_REPLAY_NS]) / 1000.0, PerFrame(seg, d[Fast::BENCH_RT_SYNCS]),
+                         (unsigned long long)d[Fast::BENCH_RT_CHECKS], (unsigned long long)d[Fast::BENCH_RT_MISMATCH],
+                         (unsigned long long)d[Fast::BENCH_RT_SAFE_MISS]);
+                text += line;
+            }
         }
         // The main thread's blocks per frame period (§8.43), CPU/wall in microseconds, in the order a
         // tick runs them. cpu_sum should equal thread_us on the oncpu line, and the six blocks from
@@ -1508,6 +1532,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpOpsStart = gBenchInterpOps;
                 gRunSegments.back().interpCmpStart = gBenchInterpCompared;
                 gRunSegments.back().interpBadStart = gBenchInterpMismatch;
+                memcpy(gRunSegments.back().rtStart, Fast::gBenchRThread, sizeof(Fast::gBenchRThread));
                 gRunSegments.back().glFnStart.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().batchStart.assign(gBenchBatchCause, gBenchBatchCause + BENCH_BRK_SETS);
                 gRunSegments.back().fbStartW = OTRGetGameRenderWidth();
@@ -1547,6 +1572,7 @@ extern "C" void Benchmark_FrameEnd(void) {
                 gRunSegments.back().interpOpsEnd = gBenchInterpOps;
                 gRunSegments.back().interpCmpEnd = gBenchInterpCompared;
                 gRunSegments.back().interpBadEnd = gBenchInterpMismatch;
+                memcpy(gRunSegments.back().rtEnd, Fast::gBenchRThread, sizeof(Fast::gBenchRThread));
                 gRunSegments.back().glFnEnd.assign(gBenchGlFn, gBenchGlFn + gBenchGlFnCount);
                 gRunSegments.back().batchEnd.assign(gBenchBatchCause, gBenchBatchCause + BENCH_BRK_SETS);
                 gRunSegments.back().lookupsEnd = Ship::BenchLookupsThisThread();
