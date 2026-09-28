@@ -3,7 +3,12 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-28**: **the GL thread pays in watts** (§11.12, fixture, on battery). It costs +0.09 W at
+Last revised **2026-09-28**, later: **`RenderThread` 2 can be a launch setting** (§11.13). §11.10's first-frame
+race did not exist: ImGui's backend `NewFrame` runs before the proxy changes mode. It is now guarded anyway
+(libultraship `b32aac46`), and launches in mode 2 or 4 checked clean (0 mismatches in 1.1M checks, 0 pixels at
+both fixtures). Next: real play in mode 2 at 625 and 750 with the owner (0T (3)).
+
+Earlier, 2026-09-28: **the GL thread pays in watts** (§11.12, fixture, on battery). It costs +0.09 W at
 a fixed clock and buys two clock steps at 30 fps: against 30/1000, **30/750 in mode 2 is −0.30 W and −3.3 °C
 (0.8% of frames lost, as at 1000), 30/625 −0.44 W and −5.3 °C (1.5% lost)**; mode 0 at 750 loses 3-4%. 20/625
 is still 0.36 W cooler. Next: real play at 30/625 and 30/750 in mode 2 with the owner (doubles as §11.11's
@@ -370,10 +375,10 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        on the Trail (resolves §11.11's paired test; the owner may use an external controller - fine for the
        A/B, note it for absolutes, TESTING trap 28). In mode 2 at 750 play missed more than the fixture
        (Market 1.6% against 0.8%), so 625 needs play before it is chosen.
-     - **Small fix before RenderThread 2 can be a launch setting (§11.10):** the first frame's ImGui backend
-       `NewFrame` (font atlas, device objects) must not run on the GL thread while the main thread builds the
-       frame. Stay direct for the first frames, or make that call synchronous. Test by launching with
-       `RenderThread=2` in the config (TESTING §1, "Launching by hand").
+     - ~~**Small fix before RenderThread 2 can be a launch setting (§11.10)**~~ **Done (§11.13): there was no
+       race** (the first `NewFrame` runs before the proxy leaves mode 0); now guarded with `RunNow` while the
+       font texture does not exist. Launched in mode 2/4: 5 hand launches clean, 1,099,735 checks 0 mismatches,
+       dumps 0 pixels at the Market and Hyrule Field.
      - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.
    - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock
      (`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=<kHz>`, plus `SOH_BENCH_AB_CVAR=gSettings.InterpolationFPS

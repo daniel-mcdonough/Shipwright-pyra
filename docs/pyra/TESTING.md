@@ -98,11 +98,10 @@ ssh -n "$PYRA_HOST" "cd $PYRA_DIR && { SDL_VIDEO_X11_FORCE_EGL=1 \
 ```
 
 The `{ ... & }` form is what keeps ssh from waiting on the game (trap 4). Without `SOH_BENCH` the harness is
-off, and nothing pins the clock. Report 11's GL thread (`gSettings.RenderThread` 2) has only been tested
-switched on mid-game; **don't put it in the config for a launch**, because turned on from the first frame the
-ImGui font atlas is built on the GL thread while the main thread may already use it (not guarded, not
-tested). Set it from the developer console once the game is running if it is wanted. The owner's own install,
-`~/soh-pyra`, is launched from the desktop and is not ours to start.
+off, and nothing pins the clock. Report 11's GL thread (`gSettings.RenderThread` 2) can be in the config for
+a launch since libultraship `b32aac46` (§11.13): five hand launches and three harness runs started in mode 2
+or 4 drew and checked clean. The owner's own install, `~/soh-pyra`, is launched from the desktop and is not
+ours to start.
 
 ## 2. The three fixtures
 
@@ -733,6 +732,11 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     details, why the journal lost the start, and the mitigations (none applied) are in the hardware repo,
     `docs/troubleshooting.md`, "The WiFi driver can flood the kernel log". Before blaming a change under test
     for a freeze, check `sudo journalctl -b -1 | grep -c 'cut here'`.
+
+30. **`SOH_BENCH_DUMP` does not create its directory** (2026-09-28). With the directory missing, the run
+    completes and measures normally, and the only trace is `[error] Benchmark: cannot write frame dump ...`
+    in `run.log`, four times. `ssh -n "$PYRA_HOST" "mkdir -p $PYRA_DIR/<dir>"` before the run, and count the
+    `.ppm` files before comparing.
 
 ## 6. Recipes
 

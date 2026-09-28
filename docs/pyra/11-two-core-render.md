@@ -354,6 +354,8 @@ with `RenderThread=2` in the config, the first frame would queue `ImGui_ImplOpen
 the font texture, and builds the font atlas through `GetTexDataAsRGBA32`) for the GL thread while the main
 thread runs `ImGui::NewFrame`, which reads the atlas: a race. The fix is small: stay direct for the first
 frames, or run that first `NewFrame` synchronously. Until then, turn the mode on in a running game.
+*(Corrected in §11.13: there was no race in this code. The first frame's `NewFrame` runs before the proxy
+leaves mode 0. The guard added there makes that hold whatever the order.)*
 
 ## 11.11 Real play at 30/750: the hard scenes come in under the bar (2026-09-27)
 
@@ -433,3 +435,35 @@ Verdict: worth keeping, for 30 fps. For the thermal goal it is worth 0.30-0.44 W
 Next: real play at 30/625 and 30/750 in mode 2 with the owner at the Market and on Death Mountain Trail
 (it can double as §11.11's longer A/B, with mode 0 at 750 as the other arm), and the first-frame fix
 (§11.10) before mode 2 can be a launch setting.
+
+## 11.13 Mode 2 from the first frame: no race, now guarded (2026-09-28)
+
+**§11.10's race did not exist.** Every frame path calls `Gui::StartDraw` (and in it the ImGui backend's
+`NewFrame`) *before* `Interpreter::StartFrame`, and the proxy changes mode only in its `StartFrame`
+(`Fast3dWindow::DrawAndRunGraphicsCommands`, and `OTRGlobals`' extraction loop: `gui->StartDraw()` then
+`sohFast3dWindow->StartFrame()`). The proxy starts in mode 0, so on a launch with `RenderThread` 2 in the
+config, the first `ImGui_ImplOpenGL3_NewFrame` runs directly on the main thread with the context there. It
+builds the atlas and sets `TexID`, and the context moves at that frame's `StartFrame`, after it. Nothing in
+libultraship or the game destroys the font texture afterwards (no `DestroyFontsTexture`/`DestroyDeviceObjects`
+call), so the backend never builds it again.
+
+**The guard** (libultraship `b32aac46`): the interface gains `RunNow(fn, arg)`, which runs fn where the
+context is and returns when it has run (the proxy's existing synchronous `Call`). `Gui::ImGuiBackendNewFrame`
+uses it while `io.Fonts->TexID` is null, and `RunInOrder` after. Today that is only the first frame, in mode 0,
+where both run the call at once, so nothing changes. It stops a reordering of the frame from bringing the race
+back. Steady-state cost: one pointer test a frame.
+
+**Tests** (device, 1000 MHz pin for the harness runs):
+
+- **Five hand launches** with `RenderThread` 2 in `shipofharkinian.json` (TESTING §1's launch, 25 s each):
+  every one ran, logged `GL context moved to the GL thread` about a second after start, and drew the title
+  scene with the ImGui Stats window's text intact. Nothing new in the logs: the same controller-mapping,
+  `ComputeFrameBufferCompleteness` and log-flush errors as a direct launch.
+- **Checks from launch** (config `RenderThread` 4, the Market in motion, A/B 4 against 0, one pair): the
+  context moved before the settle; segment 0 made **1,099,735 checks, 0 mismatches, 0 safe misses**.
+- **Dumps from launch** (config `RenderThread` 2, frozen, A/B 2 against 0, in-process): Market **0 pixels**
+  between the arms at the same frame (frame n against n+1: the scene's own 20-pixel cycle, as in §11.10);
+  Hyrule Field with the sky masked, **0 pixels** in every comparison.
+
+`RenderThread` 2 can now be a launch setting. It stays default 0 until the owner has chosen a clock (§11.12,
+PROMPT task 2).
