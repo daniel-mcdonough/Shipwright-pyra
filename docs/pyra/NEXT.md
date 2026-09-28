@@ -3,10 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-29**: **`RenderThread` 2 is the default on GLES2** (§11.15; 0 on desktop GL). Device
-runs are now in mode 2 unless they say otherwise (TESTING trap 31). The two-core work is merged
-into `feature/pyra-port` (fast-forward; libultraship `feature/gles2-pyra`), and work continues there. **30/750 is
-shipped**: `pyra-soh` pins 750 MHz while the game runs (0T (3), "ship it" (c)). Next: the undervolt at 750 (0T (6)).
+Last revised **2026-09-29**: **30 fps at 750 MHz with the GL thread is shipped.** `RenderThread` 2 is the
+GLES2 default (§11.15; 0 on desktop GL), the two-core work is merged into `feature/pyra-port` (fast-forward;
+libultraship `feature/gles2-pyra`) and work continues there, and `pyra-soh` pins 750 MHz while the game runs
+(hardware repo `device/pyra-soh`, `device/pyra-cpu-pin`), putting the governor and ondemand's tuning back after.
+Against 30/1000 that is −0.30 W and −3.3 °C (§11.12) at the 1000 MHz miss rate (§11.14). Device runs are now in
+mode 2 unless they say otherwise (TESTING trap 31). Found on the way: every pinned `bench.sh` run had reset
+ondemand's `sampling_down_factor` to stock (fixed); the device build segfaults at quit like the host's (TESTING
+trap 18). **Next: the undervolt at 750 (0T (6)).**
 
 Earlier, 2026-09-28, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
 play, block-paired: mode 2 at 30/750 misses fewer frames than mode 0 (all play 4.31% → 1.61%, −2.77 points,
@@ -378,7 +382,8 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        Field**, main-thread CPU −3.7 / −3.4 ms, for ~2 / ~1.3 ms more CPU across the machine.
        **Real play at 30/750 (§11.11): the Market 3.22% → 1.61%, Death Mountain Trail 3.19% → 1.09% of frames
        over 40 ms, all play 1.45% → 0.85%; main thread −2.9 ms (t −4.2).** The rates meet the gate; the
-       block-paired test does not resolve (t −1.74, MDE 0.79 points; three Market blocks per arm).
+       block-paired test does not resolve (t −1.74, MDE 0.79 points; three Market blocks per arm) - resolved in
+       §11.14 (t −5.6).
        The owner felt no difference between the arms (built-in controls).
      - ~~**Watts**~~ **Done (§11.12, `thermcost.sh twocore`): +0.091 W at the same clock; 30/750 mode 2 −0.30 W,
        −3.3 °C, 30/625 mode 2 −0.44 W, −5.3 °C against 30/1000 mode 0; fixture frames lost 0.8% / 1.5% (mode 0
@@ -386,7 +391,7 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      - ~~**Real play in mode 2 at 625 and 750, with the owner**~~ **Done (§11.14): mode 2 beats mode 0 at 30/750,
        paired by block (−2.77 points, t −5.6); 625 misses 3.52% against 750's 1.11% (t 5.3). The owner chose
        30/750 in mode 2.** Pooled, the Market 0.91%, the Trail 1.85%: gate met, the Trail with no margin.
-     - **Next: ship it.** ~~(a) `gSettings.RenderThread` default 2 on the GLES2 path~~ **done (§11.15, libultraship
+     - ~~**Ship it**~~ **Done 2026-09-29.** ~~(a) `gSettings.RenderThread` default 2 on the GLES2 path~~ **done (§11.15, libultraship
        `e0516fad`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; ~~(b) the branch into `feature/pyra-port`~~ **done 2026-09-29, fast-forward (libultraship `feature/gles2-pyra`
        likewise); work continues there**; ~~(c) the 750 MHz pin~~
        **done 2026-09-29, in the `pyra-soh` wrapper, not the launcher** (the launcher is not installed on the
@@ -406,9 +411,9 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      Kokiri Forest and Hyrule Field; `watchsplit.py watch.log <MHz>` against §8.43's 1000 MHz table (0.81%
      of frames over 40 ms). Then decide how to ship the clock: a per-game pin in the launcher
      (`pyra-gamemode`) is the obvious place, not the game.
-   - **(5) If 30 fps at 750 MHz is wanted**: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750
-     against 35 at 875). 0A, 0S, then the two-core design, in that order.
-   - **(6) Undervolt the chosen point: 750 MHz (30 fps), chosen 2026-09-28 (§11.14)** (added 2026-09-26; hardware repo
+   - ~~**(5) If 30 fps at 750 MHz is wanted**~~ **Done: 0A, 0S, then the two-core design (3) got it (§11.14).**
+     The brief was: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750 against 35 at 875).
+   - **(6) NEXT. Undervolt the chosen point: 750 MHz (30 fps), chosen 2026-09-28 (§11.14)** (added 2026-09-26; hardware repo
      `experiments/undervolt/`). Each clock step's voltage is a fixed device-tree value (625 MHz = 0.900 V,
      50 mV per 125 MHz step), not calibrated for this chip. The rail follows the table (read back
      from the PMIC). `pyra_undervolt.ko` changes one point's voltage at runtime and puts it back on unload
