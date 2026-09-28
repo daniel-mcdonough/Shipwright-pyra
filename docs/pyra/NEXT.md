@@ -347,8 +347,12 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      - **Stage 2: built (§11.10).** The context moves (25 times, no error); exact (0 mismatches in 2.66M checks,
        0 pixels at both fixtures); at 750 MHz frozen the period is **−8.3 ms (−28%) Market, −6.8 ms (−33%)
        Field**, main-thread CPU −3.7 / −3.4 ms, for ~2 / ~1.3 ms more CPU across the machine.
-       **Next: the gate, real play at 30/750 with the owner**, mode 0 against 2, Market and Death Mountain
-       Trail first: frames over 40 ms per arm (at or under ~1.9%), paired `thread_cpu_us`. Then 625 MHz.
+       **Real play at 30/750 (§11.11): the Market 3.22% → 1.61%, Death Mountain Trail 3.19% → 1.09% of frames
+       over 40 ms, all play 1.45% → 0.85%; main thread −2.9 ms (t −4.2).** The rates meet the gate; the
+       block-paired test does not resolve (t −1.74, MDE 0.79 points; three Market blocks per arm).
+     - **Next:** a longer real-play A/B at the Market and on the Trail (resolve the paired test); then
+       `thermcost.sh clock`, 30/750 threaded against 30/1000 and 20/625, on battery (PROMPT task 2); 625 MHz
+       threaded in real play is worth a session before that.
      - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.
      - Then `thermcost.sh clock` (PROMPT task 2).
    - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock

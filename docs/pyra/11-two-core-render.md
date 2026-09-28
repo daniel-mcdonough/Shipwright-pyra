@@ -348,3 +348,41 @@ apart: good for averages, not exact. `pairs.py` now pairs `gl_us` and `total_us`
 
 Next: the gate, real play at 30/750 with the owner, mode 0 against 2, the Market and Death Mountain
 Trail first (§11.6).
+
+## 11.11 Real play at 30/750: the hard scenes come in under the bar (2026-09-27)
+
+The owner playing, `PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1
+SOH_BENCH_UNCAP=0 SOH_BENCH_AB_CVAR=gSettings.RenderThread SOH_BENCH_AB_VALUES=0,2`, the Market, then Death
+Mountain Trail and eight other scenes: 59 blocks of 290 frames, all on the 750 MHz pin, die 55-6x °C.
+The context moved 15 times in play; no errors.
+
+| frames over 40 ms (`hist_ms` 50 + 67 + over) | mode 0 | mode 2 |
+|---|---|---|
+| **Market** (scene 0x20; 3 blocks each) | 3.22% (28 / 870) | **1.61%** (14 / 870) |
+| **Death Mountain Trail** (0x60; 4 and 6 blocks) | 3.19% (37 / 1,160) | **1.09%** (19 / 1,740) |
+| all play | 1.45% (122 / 8,410) | **0.85%** (74 / 8,700) |
+| over 67 ms, all play | 0.34% | 0.33% |
+
+| paired by block (23 same-scene pairs) | Δ | t | MDE |
+|---|---|---|---|
+| main-thread CPU (A 15,389 µs) | **−2,870 µs (−18.7%)** | −4.15 | 1,452 |
+| frames over 40 ms | −0.66 points | −1.74 | 0.79 |
+
+- **The gate (§11.6) is met on the rates**: the Market at 1.61% and Death Mountain Trail at 1.09%, against the
+  1000 MHz bar of ~1.9% and their own 3.2% without the GL thread. All play falls from 1.45% to 0.85%.
+- **But the paired test does not resolve it** (t −1.74, under its MDE): misses come in bursts, the block is
+  the independent unit, and the Market had only three blocks per arm. The direction is the same in the
+  two scenes that matter and overall; the size is not established. A longer session at the Market and
+  on the Trail would settle it.
+- **The long stalls are untouched** (over 67 ms: 0.34% and 0.33%). They are not frame work the GL thread
+  can take: scene loads and the like.
+- **LeanSwap's failure (§8.46) did not repeat.** Deferring the swap on the same thread made play worse;
+  moving it to another thread with the frame's GL work did not.
+- The main thread's CPU in play falls by 2.9 ms (−18.7%), close to the frozen Market's −3.7 ms.
+- `draws` on the watch lines reads ~113 in mode 2 against ~205 in mode 0: the backend's counters are
+  written on the GL thread and reset on the main one (§11.10), so they lose counts. Not a change in drawing
+  (the dumps are identical).
+
+Next: a longer real-play A/B at the Market and on Death Mountain Trail to resolve the paired test, then
+`thermcost.sh clock` (PROMPT task 2): 30/750 with the GL thread against 30/1000 and 20/625, on battery.
+625 MHz with the GL thread is worth one real-play session first (§11.10's headroom).
