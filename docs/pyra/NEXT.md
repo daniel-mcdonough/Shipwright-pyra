@@ -361,6 +361,10 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        use an external controller - fine for the A/B, note it for absolutes, TESTING trap 28); then
        `thermcost.sh clock`, 30/750 threaded against 30/1000 and 20/625, on battery (PROMPT task 2); 625 MHz
        threaded in real play is worth a session before that.
+     - **Small fix before RenderThread 2 can be a launch setting (§11.10):** the first frame's ImGui backend
+       `NewFrame` (font atlas, device objects) must not run on the GL thread while the main thread builds the
+       frame. Stay direct for the first frames, or make that call synchronous. Test by launching with
+       `RenderThread=2` in the config (TESTING §1, "Launching by hand").
      - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.
      - Then `thermcost.sh clock` (PROMPT task 2).
    - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock

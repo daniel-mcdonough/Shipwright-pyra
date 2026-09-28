@@ -349,6 +349,12 @@ apart: good for averages, not exact. `pairs.py` now pairs `gl_us` and `total_us`
 Next: the gate, real play at 30/750 with the owner, mode 0 against 2, the Market and Death Mountain
 Trail first (§11.6).
 
+**Not tested: mode 2 from the first frame.** Every run so far started in mode 0 and switched later. Launched
+with `RenderThread=2` in the config, the first frame would queue `ImGui_ImplOpenGL3_NewFrame` (which creates
+the font texture, and builds the font atlas through `GetTexDataAsRGBA32`) for the GL thread while the main
+thread runs `ImGui::NewFrame`, which reads the atlas: a race. The fix is small: stay direct for the first
+frames, or run that first `NewFrame` synchronously. Until then, turn the mode on in a running game.
+
 ## 11.11 Real play at 30/750: the hard scenes come in under the bar (2026-09-27)
 
 The owner playing, `PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1

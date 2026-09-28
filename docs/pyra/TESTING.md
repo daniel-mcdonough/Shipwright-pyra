@@ -83,6 +83,27 @@ Make sure `$PYRA_DIR/soh.o2r` is a real file and not a symlink into `~/soh-pyra`
 overwrite the owner's assets. A binary that meets an old archive logs `soh.o2r is older than this
 binary` and silently falls back to the old shader.
 
+### Launching by hand (a demo or a look, not a measurement)
+
+`bench.sh` starts the game with two variables that pick the SGX driver. A bare `./soh.elf` over ssh does
+not, and SDL then loads the wrong GL library: the first shader fails to compile with an **empty info
+log** (`vertex shader compilation failed (shader_id0=0x00000000d0001000 ...)`, a trivial pass-through
+shader) and the game aborts with signal 6 (2026-09-28). Launch it the way `bench.sh` does, detached so
+ssh returns:
+
+```sh
+ssh -n "$PYRA_HOST" "cd $PYRA_DIR && { SDL_VIDEO_X11_FORCE_EGL=1 \
+    SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1 DISPLAY=:0 \
+    nohup ./soh.elf > demo.log 2>&1 < /dev/null & }"
+```
+
+The `{ ... & }` form is what keeps ssh from waiting on the game (trap 4). Without `SOH_BENCH` the harness is
+off, and nothing pins the clock. Report 11's GL thread (`gSettings.RenderThread` 2) has only been tested
+switched on mid-game; **don't put it in the config for a launch**, because turned on from the first frame the
+ImGui font atlas is built on the GL thread while the main thread may already use it (not guarded, not
+tested). Set it from the developer console once the game is running if it is wanted. The owner's own install,
+`~/soh-pyra`, is launched from the desktop and is not ours to start.
+
 ## 2. The three fixtures
 
 A fixture is a scene, a player position and a pinned camera. **Use at least two.** Uncapped
@@ -704,6 +725,14 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     does move absolute numbers against earlier sessions: a Bluetooth pad adds radio interrupts and
     `bluetoothd` wake-ups (device IRQs are all on cpu0, §8.47), a USB one adds polling. Say which input was
     used in the report, and compare absolutes only within one input method.
+
+29. **The Pyra can freeze on its own through its WiFi driver** (2026-09-28). ssh times out *during the banner
+    exchange* on both interfaces while both still answer ping, and the mouse is dead: that is not the game.
+    The wl18xx driver looped in a hardware restart and flooded the kernel log (~17 stack traces a second).
+    Recovery that worked: the power button's shutdown dialog, left to count down, shuts down cleanly. The
+    details, why the journal lost the start, and the mitigations (none applied) are in the hardware repo,
+    `docs/troubleshooting.md`, "The WiFi driver can flood the kernel log". Before blaming a change under test
+    for a freeze, check `sudo journalctl -b -1 | grep -c 'cut here'`.
 
 ## 6. Recipes
 
