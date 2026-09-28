@@ -679,6 +679,31 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     same on the device. A related trap: an agent's background job can be killed at its tool timeout (10 min).
     Drive any multi-run A/B longer than that with `setsid nohup <driver> > log 2>&1 < /dev/null &` on the host
     as well as on the device, and poll the log.
+24. **In `gSettings.RenderThread` 2 (report 11), the backend's counters are approximate** (2026-09-27). The
+    GL thread writes them and the main thread reads and resets them, without a lock, a frame apart:
+    `BENCH work`/`group`/`batch`/`glfn`, `swap_us`, `eof_cpu_us`, and the watch lines' `draws` (~113 in
+    mode 2 against ~205 in mode 0 at the Market; the dumps prove the drawing is the same). `thread_us`, the
+    period, the window and the `BENCH rthread` line are exact. Read the GL thread from `gl_us`, and the
+    render side's whole CPU from `pairs.py`'s `total_us` (main + GL thread). `main_us` means something for
+    mode 1 runs only.
+25. **An A/B between two arms of the same new code cannot see a bug they share** (2026-09-27, §11.8). The
+    first recording proxy answered `GetClipParameters` from a cached value in *every* mode, so both arms
+    drew upside down and the dumps compared equal; the owner saw it on screen. The reference arm must run
+    the old code path (the proxy's mode 0 now forwards every call), and a control that the check can see
+    the fault (here, the old flipped frame against the fixed one: 95,710 pixels) belongs in the run.
+26. **Real-play miss rates are bursty: test them by block, not by frame** (2026-09-27, §11.11). Pooled
+    frame counts gave the Market 3.22% → 1.61% and Death Mountain Trail 3.19% → 1.09%, which look decisive;
+    paired by block (the independent unit) the same session read −0.66 points, t −1.74, under its MDE.
+    Report both. Three blocks per arm in a scene is not enough.
+27. **A new source file in libultraship needs a CMake reconfigure** (2026-09-27). `src/fast/CMakeLists.txt`
+    globs `backends/*.cpp`, so the build links without the file (undefined references). On the host:
+    `cmake build-cmake`; for the device: `./scripts/pyra/build.sh configure -DSOH_BENCHMARK=ON` again.
+    Either rebuilds most of libultraship (~10 min host, longer in the armhf container).
+28. **An external controller changes the machine a little, not the A/B** (2026-09-27, not measured). A
+    watch-mode A/B alternates arms every ~10 s in one process, so a controller costs both arms alike. It
+    does move absolute numbers against earlier sessions: a Bluetooth pad adds radio interrupts and
+    `bluetoothd` wake-ups (device IRQs are all on cpu0, §8.47), a USB one adds polling. Say which input was
+    used in the report, and compare absolutes only within one input method.
 
 ## 6. Recipes
 

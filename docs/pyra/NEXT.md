@@ -3,7 +3,13 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-27**: **the owner chose the two-core design** (0T (3)). It is on branch
+Last revised **2026-09-27, late**: **the two-core design is built and works** (report 11, branch
+`feature/pyra-two-core`, `gSettings.RenderThread` 2, default 0). Exact, and at 30/750 in real play the Market
+falls from 3.2% to 1.6% and Death Mountain Trail from 3.2% to 1.1% of frames over 40 ms (bar ~1.9%); the
+block-paired test does not resolve yet. It costs ~10% more CPU across the machine at a fixed clock. Next: a
+longer real-play session, then watts (0T (3) below).
+
+Earlier the same day: **the owner chose the two-core design** (0T (3)). It is on branch
 `feature/pyra-two-core`; the design and its gates are [report 11](11-two-core-render.md), the queue is 0T (3) below.
 
 Earlier the same day, after §8.48's real play: **LeanCosmetics=1 is the default** (no effect on frames
@@ -350,7 +356,9 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        **Real play at 30/750 (§11.11): the Market 3.22% → 1.61%, Death Mountain Trail 3.19% → 1.09% of frames
        over 40 ms, all play 1.45% → 0.85%; main thread −2.9 ms (t −4.2).** The rates meet the gate; the
        block-paired test does not resolve (t −1.74, MDE 0.79 points; three Market blocks per arm).
-     - **Next:** a longer real-play A/B at the Market and on the Trail (resolve the paired test); then
+       The owner felt no difference between the arms (built-in controls).
+     - **Next:** a longer real-play A/B at the Market and on the Trail (resolve the paired test; the owner may
+       use an external controller - fine for the A/B, note it for absolutes, TESTING trap 28); then
        `thermcost.sh clock`, 30/750 threaded against 30/1000 and 20/625, on battery (PROMPT task 2); 625 MHz
        threaded in real play is worth a session before that.
      - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.

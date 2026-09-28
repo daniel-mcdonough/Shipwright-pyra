@@ -379,6 +379,9 @@ The context moved 15 times in play; no errors.
 - **LeanSwap's failure (§8.46) did not repeat.** Deferring the swap on the same thread made play worse;
   moving it to another thread with the frame's GL work did not.
 - The main thread's CPU in play falls by 2.9 ms (−18.7%), close to the frozen Market's −3.7 ms.
+- **The owner felt no difference between the arms** ("it felt the same"), with the arms switching every
+  ~10 s: no visible glitch, no felt input lag from the frame the GL thread may add. Played on the built-in
+  controls.
 - `draws` on the watch lines reads ~113 in mode 2 against ~205 in mode 0: the backend's counters are
   written on the GL thread and reset on the main one (§11.10), so they lose counts. Not a change in drawing
   (the dumps are identical).
