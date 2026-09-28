@@ -3,7 +3,13 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-27, late**: **the two-core design is built and works** (report 11, branch
+Last revised **2026-09-28**: **the GL thread pays in watts** (§11.12, fixture, on battery). It costs +0.09 W at
+a fixed clock and buys two clock steps at 30 fps: against 30/1000, **30/750 in mode 2 is −0.30 W and −3.3 °C
+(0.8% of frames lost, as at 1000), 30/625 −0.44 W and −5.3 °C (1.5% lost)**; mode 0 at 750 loses 3-4%. 20/625
+is still 0.36 W cooler. Next: real play at 30/625 and 30/750 in mode 2 with the owner (doubles as §11.11's
+longer A/B), and the first-frame fix, which needs no player.
+
+Earlier, 2026-09-27, late: **the two-core design is built and works** (report 11, branch
 `feature/pyra-two-core`, `gSettings.RenderThread` 2, default 0). Exact, and at 30/750 in real play the Market
 falls from 3.2% to 1.6% and Death Mountain Trail from 3.2% to 1.1% of frames over 40 ms (bar ~1.9%); the
 block-paired test does not resolve yet. It costs ~10% more CPU across the machine at a fixed clock. Next: a
@@ -357,16 +363,18 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        over 40 ms, all play 1.45% → 0.85%; main thread −2.9 ms (t −4.2).** The rates meet the gate; the
        block-paired test does not resolve (t −1.74, MDE 0.79 points; three Market blocks per arm).
        The owner felt no difference between the arms (built-in controls).
-     - **Next:** a longer real-play A/B at the Market and on the Trail (resolve the paired test; the owner may
-       use an external controller - fine for the A/B, note it for absolutes, TESTING trap 28); then
-       `thermcost.sh clock`, 30/750 threaded against 30/1000 and 20/625, on battery (PROMPT task 2); 625 MHz
-       threaded in real play is worth a session before that.
+     - ~~**Watts**~~ **Done (§11.12, `thermcost.sh twocore`): +0.091 W at the same clock; 30/750 mode 2 −0.30 W,
+       −3.3 °C, 30/625 mode 2 −0.44 W, −5.3 °C against 30/1000 mode 0; fixture frames lost 0.8% / 1.5% (mode 0
+       at 750: 3-4%). 20/625 is 0.36 W below the best 30 fps arm.** Worth keeping for 30 fps.
+     - **Next, with the owner:** real play in mode 2 at 30/625, and mode 0 against 2 at 30/750 at the Market and
+       on the Trail (resolves §11.11's paired test; the owner may use an external controller - fine for the
+       A/B, note it for absolutes, TESTING trap 28). In mode 2 at 750 play missed more than the fixture
+       (Market 1.6% against 0.8%), so 625 needs play before it is chosen.
      - **Small fix before RenderThread 2 can be a launch setting (§11.10):** the first frame's ImGui backend
        `NewFrame` (font atlas, device objects) must not run on the GL thread while the main thread builds the
        frame. Stay direct for the first frames, or make that call synchronous. Test by launching with
        `RenderThread=2` in the config (TESTING §1, "Launching by hand").
      - **Stage 3 only if a gate asks:** the interpreter writes vertices straight into the stream.
-     - Then `thermcost.sh clock` (PROMPT task 2).
    - ~~**(4) Real-play check of the owner's choice**~~ **Done (§8.45): 20/625 holds.** The brief was: (30/875 or 20/625-750): watch mode pinned at that clock
      (`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=<kHz>`, plus `SOH_BENCH_AB_CVAR=gSettings.InterpolationFPS
      SOH_BENCH_AB_VALUES=20,20` for 20 fps), `SOH_BENCH_SPLIT=150`, the owner playing through the Market,

@@ -395,3 +395,41 @@ The context moved 15 times in play; no errors.
 Next: a longer real-play A/B at the Market and on Death Mountain Trail to resolve the paired test, then
 `thermcost.sh clock` (PROMPT task 2): 30/750 with the GL thread against 30/1000 and 20/625, on battery.
 625 MHz with the GL thread is worth one real-play session first (§11.10's headroom).
+
+## 11.12 Watts: the GL thread pays through the clock (2026-09-28)
+
+Done out of order: the owner could not play, and this is the number that decides whether the design is
+worth keeping, so it came before §11.11's longer real-play A/B. Hardware repo
+`experiments/power-budget/thermcost.sh twocore` (its README's 2026-09-28 section; `thermclock.py . twocore`
+reproduces everything): on battery, the Market fixture with game logic running (`SOH_BENCH_STATIC=0`) at the
+game's frame cap, battery-gauge watts, userspace-pinned clock. RenderThread 2 is applied by the harness's
+one-valued A/B CVar after the settle, i.e. in a running game. The build is 30f9261 (libultraship 1b0ccaa8),
+the same binary as §11.11. Mode 0 against 2 at 750 MHz is ABBA by process, 180 s blocks; 750 against 625 in
+mode 2 is ABBA in one process, 60 s blocks; temperatures from one 10-minute hold per arm.
+
+| arm | watts (hold) | against 30/1000 | die cpu °C (hold) | frames lost (fixture) |
+|---|---|---|---|---|
+| 30 fps, 1000 MHz, mode 0 | 4.51 | reference | 67.6 | 0.8% |
+| 30 fps, 750 MHz, mode 0 | 4.07-4.10 (ABBA blocks) | | | **4.3%, 3.2%** |
+| 30 fps, 750 MHz, mode 2 | 4.21 | **−0.30 W, −3.3 °C** | 64.3 | 0.8% |
+| 30 fps, 625 MHz, mode 2 | 4.07 | **−0.44 W, −5.3 °C** | 62.3 | 1.5% |
+| 20 fps, 625 MHz, mode 0 | 3.71 | −0.80 W, −7.1 °C | 60.5 | 0.9% |
+
+- **At the same clock the GL thread costs +0.091 W** (two ABBA pairs: +0.106, +0.076; ~+1 °C): §11.10's
+  ~2 ms of extra machine CPU per frame, priced.
+- **It buys two clock steps at 30 fps.** In the fixture, mode 2 at 750 MHz loses what mode 0 loses at
+  1000 (0.8%), where mode 0 at 750 loses 3-4% (§8.44: 3.9%). At 625 MHz mode 2 loses 1.5% (worst 5 s window
+  27.8 fps) for −0.44 W, and draws what mode 0 draws at 750 (4.07 W).
+- **20 fps at 625 MHz is still 0.36 W and ~1.8 °C cooler than the best 30 fps arm.** The design makes
+  30 fps affordable; it does not close the gap to 20.
+- The holds ran once each in a fixed order (625-m2, 750-m2, 1000-m0, 20/625), so their temperatures carry
+  the run's drift (slopes ≤ 0.12 °C/min at the end of each). The ABBA watts do not.
+- These are fixture numbers. In mode 2 at 750, play missed more than the fixture (§11.11: Market 1.6%, Trail
+  1.1%, against the fixture's 0.8%), so the fixture's 1.5% at 625 needs real play before 625 is chosen.
+- The keyboard backlight pulses (50 ↔ 12) while the game runs, in this run and in §8.44's; ~0.03 W averaged,
+  the same in every arm (hardware repo README).
+
+Verdict: worth keeping, for 30 fps. For the thermal goal it is worth 0.30-0.44 W and 3-5 °C over 30/1000.
+Next: real play at 30/625 and 30/750 in mode 2 with the owner at the Market and on Death Mountain Trail
+(it can double as §11.11's longer A/B, with mode 0 at 750 as the other arm), and the first-frame fix
+(§11.10) before mode 2 can be a launch setting.
