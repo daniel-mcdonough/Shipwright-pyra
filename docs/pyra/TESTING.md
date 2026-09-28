@@ -745,6 +745,11 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     in `run.log`, four times. `ssh -n "$PYRA_HOST" "mkdir -p $PYRA_DIR/<dir>"` before the run, and count the
     `.ppm` files before comparing.
 
+31. **The device build runs in `RenderThread` 2 by default since §11.15** (2026-09-29). A fixture or watch
+    run with no `RenderThread` key and no A/B on it measures the GL thread, where every number before
+    2026-09-29 was mode 0 unless it said otherwise: main-thread CPU ~18% lower, the backend's counters
+    approximate (trap 24). To compare with older absolutes, put `"RenderThread": 0` in the config or A/B it.
+
 ## 6. Recipes
 
 **"Where does the main thread's time go?"** — `bench.sh ab gSettings.ProbeSplit 0 1 <fixture>`, then

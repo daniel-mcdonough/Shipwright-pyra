@@ -3,7 +3,11 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-28**, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
+Last revised **2026-09-29**: **`RenderThread` 2 is the default on GLES2** (§11.15; 0 on desktop GL). Device
+runs are now in mode 2 unless they say otherwise (TESTING trap 31). Next: the branch into `feature/pyra-port`
+(asking the owner), and the 750 MHz pin in the launcher.
+
+Earlier, 2026-09-28, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
 play, block-paired: mode 2 at 30/750 misses fewer frames than mode 0 (all play 4.31% → 1.61%, −2.77 points,
 t −5.6), resolving §11.11; pooled over both sessions it is **the Market 0.91%, Death Mountain Trail 1.85%**, the
 gate (~1.9%) met, the Trail with no margin. **625 MHz does not hold 30 fps in play: 3.52% against 1.11% at 750**
@@ -381,8 +385,8 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      - ~~**Real play in mode 2 at 625 and 750, with the owner**~~ **Done (§11.14): mode 2 beats mode 0 at 30/750,
        paired by block (−2.77 points, t −5.6); 625 misses 3.52% against 750's 1.11% (t 5.3). The owner chose
        30/750 in mode 2.** Pooled, the Market 0.91%, the Trail 1.85%: gate met, the Trail with no margin.
-     - **Next: ship it.** (a) `gSettings.RenderThread` default 2 on the GLES2 path (keep 0 wherever the proxy
-       is not built); (b) `feature/pyra-two-core` into `feature/pyra-port` (libultraship likewise); (c) the
+     - **Next: ship it.** ~~(a) `gSettings.RenderThread` default 2 on the GLES2 path~~ **done (§11.15, libultraship
+       `e0516fad`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; (b) `feature/pyra-two-core` into `feature/pyra-port` (libultraship likewise); (c) the
        750 MHz pin per game in the launcher (`~/git/pyra-gamemode`, its TODO's per-game CPU profiles:
        userspace governor + `scaling_setspeed`, since `pyra-thermal` overrides min==max pins).
      - ~~**Small fix before RenderThread 2 can be a launch setting (§11.10)**~~ **Done (§11.13): there was no

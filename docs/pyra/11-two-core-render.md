@@ -517,3 +517,20 @@ understated play by more than half: 625 misses about three times what 750 does, 
 three times the misses) and 20/625 (−0.50 W and ~4 °C more, at 20 fps). Against 30/1000 it is −0.30 W and
 −3.3 °C (§11.12) at the 1000 MHz miss rate. Next: `RenderThread` 2 as the default, the branch into
 `feature/pyra-port`, the 750 MHz pin in the launcher, and the undervolt at 750 (NEXT 0T (6)).
+
+## 11.15 RenderThread 2 is the default on GLES2 (2026-09-29)
+
+libultraship `e0516fad`: `kRenderThreadDefault` (in `gfx_threaded.h`) is 2 under `USE_OPENGLES2` and 0
+elsewhere, so the desktop GL build is unchanged; the proxy's `StartFrame` reads the CVar with it. A config
+key still wins, and so does the harness's A/B CVar.
+
+Tests on the device (the build of this commit; the previous binary kept as `soh.elf.pre-default`):
+
+- **No `RenderThread` key in the config, three launches** (`launchtest2.sh none 3`, 25 s each): all ran and
+  logged `GL context moved to the GL thread`; the title scene drew. The same five log errors as a direct launch.
+- **Key set to 0, two launches:** all ran and the context stayed put (no move logged).
+- **The harness overrides the default** (no key; `bench.sh ab gSettings.RenderThread 0 2`, the Market, 1000 MHz,
+  one pair): arm 0 recorded no frames (no `BENCH rthread` line, mean 20.3 ms, the direct path's); arm 2
+  recorded 599 (mean 12.6 ms, `gl_us` 4,959).
+
+**From here, every device run is in mode 2 unless it says otherwise** (TESTING trap 31).
