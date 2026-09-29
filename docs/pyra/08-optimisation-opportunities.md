@@ -3945,5 +3945,12 @@ above the desktop (2.76 W). Against 30/1000 in mode 0 (§11.12's hold, a separat
 mode 2 at 870 mV reads −0.49 W and −5.7 °C.
 
 **870 mV is the candidate**: 30 mV above the last step tested, so at least 30 mV above any failure. Each step was
-a ~5-minute screen, not a stability proof. **Not done:** a long soak at 870 (30-60 min of stress-ng, then real
-play), and shipping it: nothing applies it yet (the module is loaded by hand; a reboot puts 950 mV back).
+a ~5-minute screen, not a stability proof.
+
+**Shipped from boot, then soaked** (the owner's call, 2026-09-29). Hardware repo `device/pyra-undervolt.service` loads
+the module and sets 750 MHz to 870 mV at every boot on 5.6.19-m4-kbdled (the l4 entry stays stock);
+`sudo pyra-undervolt set 750000 <uV>` changes it on the fly, checked at 750 MHz under `pyra-cpu-pin`'s pin (the rail
+followed, the pin held, ondemand's tuning came back). The 60-minute soak at the shipped 870 mV, pinned at 750 MHz:
+`stress-ng --cpu 2 --cpu-method all --vm 1 --vm-bytes 256M --vm-method all --verify`, **0 failures**, the rail at
+870 mV at every sample, die 47-62 °C. **Left: real play at 870 mV.** From here, suspect the undervolt first for any
+crash or wrong result on the device (hardware repo `docs/troubleshooting.md`).
