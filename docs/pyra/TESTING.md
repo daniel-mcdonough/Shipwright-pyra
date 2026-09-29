@@ -217,7 +217,8 @@ clocks instead of a CVar, copy `docs/pyra/tools/clockflip.sh` to the device and 
 Kill it before `watch stop`.
 
 For a session without an A/B (where play is heaviest, §8.43 (c)), pull the whole log and read it by scene:
-`scp "$PYRA_HOST:$PYRA_DIR/watch.log" . && python3 docs/pyra/tools/watchsplit.py watch.log [MHz]` gives
+`scp "$PYRA_HOST:$PYRA_DIR/watch.log" . && python3 docs/pyra/tools/watchsplit.py watch.log [MHz]` (the
+session must run with `SOH_BENCH_SPLIT=<ticks>`: without split windows it dies on a ZeroDivisionError, §8.50) gives
 frames over 34/40/67 ms per scene, what the slow frames were made of (render-thread CPU, swap, the rest),
 and the `split_blocks` table by scene with a whole-session column. For the rest of the machine at the same
 time, copy the hardware repo's `device/pyra-cpu-attribution.sh` to the device and run

@@ -3,7 +3,13 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-29**, later: **the undervolt at 750 MHz is measured (§8.49).** Stepping from the table's
+Last revised **2026-09-29**, evening: **real play at 870 mV is done (§8.50): stable.** ~20 min, 120 blocks, 8 scenes:
+no crash, hang or kernel fault, the rail at 870 mV throughout, and the owner saw nothing wrong. 870 mV stays. The
+misses ran higher than §11.14's mode 2 at 950 mV (Market 2.55% against 0.84-0.99%, Death Mountain Trail 2.53%
+against 1.34-2.23%, all play 1.97%), which one session cannot pin on the voltage or on content: task 0V below.
+The first pause-menu open stalls 1.7 s (first time only; loose end).
+
+Before that, 2026-09-29, later: **the undervolt at 750 MHz is measured (§8.49).** Stepping from the table's
 950 mV was clean down to 850 mV, the module's floor (stress-ng `--verify`, in-process Market dumps in mode 2); at
 30/750 in mode 2, **870 mV is −0.159 W (t −18.7) and −1.5 °C with frames unchanged**. **Shipped at the owner's
 request**: hardware repo `device/pyra-undervolt.service` sets it from boot (m4-kbdled only). The 60-min soak at 870
@@ -421,12 +427,21 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
    - ~~**(5) If 30 fps at 750 MHz is wanted**~~ **Done: 0A, 0S, then the two-core design (3) got it (§11.14).**
      The brief was: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750 against 35 at 875).
    - **(6) Done: shipped from boot, 2026-09-29 (hardware repo `device/pyra-undervolt`, owner's call; §8.49).** The
-     60-min soak passed (hardware repo `experiments/undervolt/README.md`); real play at 870 is left. `sudo pyra-undervolt set 750000 <uV>` changes it on the fly. The measurement: 750 MHz (table 950 mV) passed every 10 mV
+     60-min soak passed (hardware repo `experiments/undervolt/README.md`); real play at 870 was clean (§8.50). `sudo pyra-undervolt set 750000 <uV>` changes it on the fly. The measurement: 750 MHz (table 950 mV) passed every 10 mV
      step to 850 mV, the floor of `pyra_undervolt.ko` (100 mV); the edge is below and unknown. 870 mV at 30/750 in
      mode 2: −0.159 W (t −18.7), −1.5 °C, frames lost unchanged (0.68% against 0.57-0.71%). Each step was a
      ~5-minute screen; the 60-min soak at 870 passed. Finding the
      real edge needs the module's limit raised, and costs crashes below 850. The per-step dump has to be in-process
      (TESTING trap 32).
+   - **(7) = task 0V, next: is 870 mV costing frames in play?** §8.50's session missed more than §11.14's at 950 mV
+     (Market 2.55% against 0.84-0.99%, Trail 2.53% against 1.34-2.23%), and a cross-session comparison cannot tell
+     voltage from content. Voltage should not change frame time (the clock is fixed, and §8.49's in-process fixture
+     A/B read none), so the expected answer is no. The test: one watch process at 30/750 in mode 2 with
+     `SOH_BENCH_AB_VALUES=2,2`, and a device-side loop alternating `sudo pyra-undervolt set 750000 870000` and
+     `950000` every 30 s (after `clockflip.sh`, which does this for the clock; log each switch's time), the owner
+     playing the Market and the Trail; pair single-voltage blocks as §11.14 (b) did (`slowpairs.py` pairs by clock,
+     so it needs the voltage in its place). If 870 costs frames, find the mechanism before anything else; if not,
+     the Trail's 2.5% is content, and 30/750's margin there is the question (the owner's).
    The original brief of (1)-(3), for the record:
    - **(1) Pin 750 MHz, no code.** Estimate: Market render thread ~22 ms per frame (16.8 ms × 4/3,
      less for memory stalls that don't scale with the clock), plus ~2 ms of logic in play and the

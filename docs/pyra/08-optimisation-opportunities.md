@@ -3954,3 +3954,46 @@ followed, the pin held, ondemand's tuning came back). The 60-minute soak at the 
 `stress-ng --cpu 2 --cpu-method all --vm 1 --vm-bytes 256M --vm-method all --verify`, **0 failures**, the rail at
 870 mV at every sample, die 47-62 °C. **Left: real play at 870 mV.** From here, suspect the undervolt first for any
 crash or wrong result on the device (hardware repo `docs/troubleshooting.md`).
+
+## 8.50 Real play at 870 mV: stable; the misses ran higher than §11.14, not attributable to the voltage from one session (2026-09-29)
+
+The owner playing, the shipped state (mode 2, 870 mV at 750 MHz from boot, §8.49), `PYRA_WATCH_PIN=1
+PYRA_PIN_FREQ=750000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0`, no A/B: the Market, then
+Death Mountain Trail and six more scenes. 120 blocks of 290 frames (~20 min), all on the 750 MHz pin, die 48-65 °C,
+on the charger. A device-side sampler logged the rail every 10 s.
+
+**Stability: clean.** No crash, hang or kernel fault (the kernel journal from launch to quit: no oops, BUG, `cut
+here` or segfault); the rail read 870 mV at 750 MHz in all 116 samples with the game up; the game log carried only
+the known lines (TESTING item 11). The owner "didn't see anything wrong". This is the
+real-play check §8.49 left open, and 870 mV stays.
+
+**Frames over 40 ms** (`hist_ms` 50 + 67 + over):
+
+| scene | blocks | this session, 870 mV | §11.14 mode 2 at 750 (950 mV), two sessions |
+| --- | --- | --- | --- |
+| Market (0x20) | 40 | **2.55%** (296 / 11,600) | 0.84%, 0.99% |
+| Death Mountain Trail (0x60) | 36 | **2.53%** (264 / 10,440) | 2.23%, 1.34% |
+| Hyrule Field (0x51) | 18 | 1.13% | — |
+| Fire Temple, Lake Hylia, Kakariko, 0x53, the Crater | 26 | 0.39-1.72% | — |
+| all play | 120 | **1.97%** | 1.61%, 1.11% |
+| over 67 ms, all play | | 0.54% | 0.25-0.35% |
+
+Main-thread CPU per frame: Market 17.2 ms, Trail 14.4, Hyrule Field 14.0. The Market's misses are spread evenly
+(~7 a block, 1-31), not a few bad stretches. Its one long stall, 1.7 s in block 38, is the first pause-menu open
+of the session (the owner: it happens on the first pause only, and started "during the optimizations"; loose end
+below).
+
+**What this does and does not say.** The Market came in well above both §11.14 sessions and the Trail above the
+~1.9% gate. The voltage is an unlikely cause: the clock read 750 MHz in every block, a lower core voltage does not
+change the clock, and §8.49's in-process A/B found frames unchanged at 870 mV (0.68% against 0.57-0.71%). Content
+is a likely one: the Trail already moved 1.34-2.23% between sessions with how the owner plays, and this session
+spent 11.6 minutes at the Market. A cross-session comparison confounds the two; only an in-process voltage flip
+(870 and 950 mV alternating every 30 s, as `clockflip.sh` did for 625/750) can separate them. Either way this
+session put the Trail over the gate, so 30/750's margin there is thinner than §11.14's pooled 1.85% said.
+
+**The first-pause stall** (not the undervolt): 1.7 s on opening the pause menu the first time, fine after. Most
+likely a first-use cost (the pause screens' textures or shaders, lazily loaded); the owner dates it to the
+optimisation work, which nothing here confirms or rules out. A candidate for a later look, not measured.
+
+`watchsplit.py` needs `SOH_BENCH_SPLIT` windows and fails on a session without them (TESTING, the real-play
+section); this session was read from the block lines directly.
