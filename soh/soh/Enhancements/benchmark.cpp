@@ -491,6 +491,16 @@ bool ArmIsFloat() {
 }
 
 void ApplyArm(const std::string& value) {
+    // SOH_BENCH_ARM_FILE: write <SOH_BENCH_ARM_PREFIX><value>-<n> to this file on every change (n counts
+    // the changes, so ABBA's back-to-back segments of one arm stay apart), so an outside sampler
+    // (hardware repo thermcost.sh) can label its readings by arm within one process (§8.52).
+    if (const char* armFile = getenv("SOH_BENCH_ARM_FILE")) {
+        static int applied = 0;
+        if (FILE* f = fopen(armFile, "w")) {
+            fprintf(f, "%s%s-%d\n", EnvOr("SOH_BENCH_ARM_PREFIX", ""), value.c_str(), applied++);
+            fclose(f);
+        }
+    }
     if (ArmIsFloat()) {
         CVarSetFloat(gCfg.abCVar.c_str(), strtof(value.c_str(), nullptr));
     } else {

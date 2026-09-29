@@ -4038,3 +4038,54 @@ block: §11.14's two 198 / 10,730, §8.50 264 / 10,440, this one 276 / 11,890: *
 sessions. The Market pooled the same way is 1.51% (494 / 32,770), under it. The misses at these rates were not felt
 (§11.14; the owner saw nothing in either session here). Whether that matters is the owner's call: 30/875 (§8.44) or
 more main-thread work off the Trail would be the ways to buy margin; nothing is reopened here.
+
+## 8.52 Item F's prize: the present quad costs 0.16 W at 30/750; a scaled plane is only reachable outside X (2026-09-29)
+
+NEXT.md item F would show the 640×360 game framebuffer on a display-controller plane scaled to the panel, instead
+of drawing it as a 1280×720 quad (§8.42, §8.46). Two questions, in the order the prompt sets: can SDL/EGL reach a
+scaled plane on this stack, and what is removing the quad worth in watts.
+
+**Reachability (device, read-only).** The panel is 720×1280 portrait; X (TI's `omap5_drv`, an armsoc fork) scans
+out a 1280×720 XR24 buffer on plane-0 with TILER rotation 270 (`TilerRotation`, `/sys/kernel/debug/dri/0/state`).
+Planes 1-3 are free. On OMAP DSS plane-0 is the GFX pipeline, which has no scaler: a scaled plane has to be a VID
+plane (1-3), with rotation, so its buffer has to be TILER-backed as well. X is DRM master and the driver has no
+RandR lease support (no `lease` in `omap5_drv.so`), and its Xv adaptor is "ARMSOC Textured Video" (etnaviv blits,
+YUV formats only): **under X the game cannot get a plane**. The way that is left is the game on KMS itself, with X
+switched away to another VT (it drops master): the DDK ships `libpvrGBMWSEGL`/`libpvrDRMWSEGL` and the system
+SDL 2.32 has KMSDRM, but the system `libgbm` is Mesa 25's (the DDK's `libgbm.so.2` is a symlink to it), and SDL's
+KMSDRM backend only flips a mode-sized buffer on the primary plane. Not tried yet: whether the DDK's EGL renders on
+Mesa's GBM here, and whether its render target can be a TILER buffer for a rotated VID plane.
+
+**The prize (thermcost.sh present, hardware repo).** `gSettings.ProbeSkipFlat` bit 1024 (benchmark builds) drops
+the game's quad from the present pass: the window shows only the clear, and everything else (the scene, ImGui,
+the clear, the swap, X's copy) stays. It is a lower bound on what item F would take off. The harness ran the A/B
+itself in one process, 8 ABBA pairs of 1800-frame segments at 30/750 in mode 2 (870 mV, the shipped state), after
+a 240 s soak, on battery, Market fixture with logic; `SOH_BENCH_ARM_FILE` (new) writes each segment's arm into
+thermcost's phase file so the gauge's once-a-second rows are labelled by arm. First 15 s of each block dropped.
+
+| 30/750, mode 2, Market | watts | die (cpu) | frame period |
+| --- | --- | --- | --- |
+| quad drawn (shipped) | 4.045 W | 65.3 °C | |
+| quad skipped | 3.886 W | 64.9 °C | +7 µs, t 0.40, MDE 41 |
+| **skipped − drawn** | **−0.158 W, t −21.7, MDE 0.017** (8 pairs) | 60 s blocks: too short for temperature | |
+
+Both arms held the cap (29.6-29.7 fps, every segment on the 750 pin). A capped A/B of the same pair
+beforehand (2 pairs, 900 frames) showed nothing in the frame either: period −278 µs, t −2.3, MDE 1,566.
+
+**Control: the panel drawing black.** The skipped arm is a black screen, so some of the 0.158 W could be the
+panel or the link drawing less rather than the GPU working less. `thermcost.sh panel`: no game, 750 MHz pinned,
+`xwud` showing a captured Market frame or the captured black screen in the same window (the title bar and the
+desktop panel stay in both), 8 ABBA pairs of 60 s: **black − picture −0.009 W, t −0.9, MDE ~0.024**. The content
+is worth at most ~0.03 W. The keyboard backlight's up-time (it pulses 50/12 in the game, README) differed by 7%
+between the present arms, ~0.007 W. **The quad itself is 0.13-0.16 W**, as much as the whole undervolt (§8.49,
+−0.159 W), ~4% of the game's power, for ~2 ms of GPU a frame (§8.46).
+
+(The control's idle floor fell 0.77 W halfway through: the keyboard backlight's idle timeout took it from 12 to 0.
+Both arms moved together, so the pairs stand; TESTING trap 34.)
+
+**What it means for item F.** The prize is worth the work, but the only road to it is a different way to run
+the game: on KMS, outside the X session (a VT switch, or X stopped), with its own input (evdev, not X) and ImGui
+drawn somewhere else (into the game framebuffer, or a second plane shown only while a menu is open, so the plane
+does not add its own pass). That also takes X's copy of the window and the compositor out of every frame, which
+this probe did not price. It is the owner's decision whether a game that leaves the desktop while it runs is
+acceptable, before a feasibility test that VT-switches the desktop.

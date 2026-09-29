@@ -167,6 +167,12 @@ which takes each probe segment against the mean of its two neighbours. The last 
 no neighbour after it and is dropped; give the probes one more rep than you need. For probes only: a
 fix still gets the two-arm `ab` and `pairs.py`.
 
+**Watts by arm in one process (§8.52).** `SOH_BENCH_ARM_FILE=<file>` makes the harness write
+`<SOH_BENCH_ARM_PREFIX><value>-<n>` to the file at every arm change (n counts the changes, so ABBA's
+back-to-back segments of one arm stay apart). Point it at thermcost's phase file and the battery gauge's
+rows carry the arm: `thermcost.sh present` in the hardware repo is the worked example, and `thermclock.py
+DIR present` reads it. Use it for anything read live, instead of restarting the game per arm.
+
 **The config file nests CVars by prefix.** `~/soh-bench2/shipofharkinian.json` holds
 `"CVars": {"gSettings": {"LeanCVar": 1, ...}}`, so grep it for `"Lean`, not `gSettings.Lean`. A check
 for stray keys that greps the dotted name finds nothing and looks clean.
@@ -768,6 +774,13 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     overlapping one missed 3.2-3.7% of frames against 1-2.3% for the rest. The block samples the clock every few
     frames and usually misses the excursion, so `cpu_min_mhz`/`cpu_max_mhz` still read 750. Drop such blocks by
     time: `voltflip.sh` logs each switch's start and end, and `slowpairs.py watch.log volt ...` uses them.
+34. **The keyboard backlight's idle timeout moves an idle measurement by 0.77 W** (2026-09-29, §8.52). With no
+    input, the desktop takes the keyboard backlight from 12 to 0 some minutes in, and the floor drops from ~2.7 to
+    ~1.9 W at once. A game run keeps it pulsing 50/12 instead (hardware repo power-budget README). Pairs within a
+    run survive it if both arms see it; absolutes and anything compared across the step do not. thermcost's CSV
+    logs `kbl` every second: check it for a step before reading any idle row. Relatedly, the charger can drop
+    `online` to 0 on its own while USB networking stays up, so a thermcost run can start without the cable
+    being pulled.
 
 ## 6. Recipes
 
