@@ -214,7 +214,10 @@ in §8.41's first pass) or across a scene change, and prints the delta with t an
 clocks instead of a CVar, copy `docs/pyra/tools/clockflip.sh` to the device and start it after `watch start`
 (its header has the command): it moves the userspace pin between 625 and 750 MHz every 30 s, and
 `slowpairs.py blocks.txt clock 750 625` pairs single-clock blocks, dropping the ~30% that straddle a change.
-Kill it before `watch stop`.
+Kill it before `watch stop`. For two voltages of the 750 MHz point, `docs/pyra/tools/voltflip.sh` does the same with
+`pyra-undervolt set` (870/950 mV every 30 s, 870 left set at the end); pair with `slowpairs.py watch.log volt 870000
+950000 voltflip.log 750` — the pulled `watch.log` itself, since it needs the block lines' timestamps (trap 33).
+slowpairs.py also pairs `thread_cpu_us` the same way, in every mode.
 
 For a session without an A/B (where play is heaviest, §8.43 (c)), pull the whole log and read it by scene:
 `scp "$PYRA_HOST:$PYRA_DIR/watch.log" . && python3 docs/pyra/tools/watchsplit.py watch.log [MHz]` (the
@@ -759,6 +762,12 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     the frame rate: any two runs differ in 3,000-6,500 pixels, all NPCs. Compare dumps only between segments of
     one process (an A/B, or a CVar against itself with `SOH_BENCH_REPS`); a mask of the NPCs is not enough, a new
     pose uncovers pixels outside it.
+
+33. **A live `pyra-undervolt set` stalls the game, and the watch block does not show it** (2026-09-29, §8.51). A
+    switch takes ~1.2 s (sudo, a governor change, ~0.2 s at the next clock up while the point is set); blocks
+    overlapping one missed 3.2-3.7% of frames against 1-2.3% for the rest. The block samples the clock every few
+    frames and usually misses the excursion, so `cpu_min_mhz`/`cpu_max_mhz` still read 750. Drop such blocks by
+    time: `voltflip.sh` logs each switch's start and end, and `slowpairs.py watch.log volt ...` uses them.
 
 ## 6. Recipes
 

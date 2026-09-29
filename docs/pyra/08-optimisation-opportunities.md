@@ -3997,3 +3997,44 @@ optimisation work, which nothing here confirms or rules out. A candidate for a l
 
 `watchsplit.py` needs `SOH_BENCH_SPLIT` windows and fails on a session without them (TESTING, the real-play
 section); this session was read from the block lines directly.
+
+## 8.51 870 against 950 mV in one process, in play: no difference; §8.50's high Market was the session (2026-09-29)
+
+§8.50's misses ran above §11.14's, and a cross-session comparison could not say whether the voltage or the play did
+it. One watch process, the owner playing (the Market, then Death Mountain Trail, ~24 min), 30/750 in mode 2,
+`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0
+SOH_BENCH_AB_CVAR=gSettings.RenderThread SOH_BENCH_AB_VALUES=2,2`, and `docs/pyra/tools/voltflip.sh` on the device
+moving the 750 MHz point between 870 and 950 mV every 30 s: 47 switches, the rail read back at the requested value
+after every one, 870 mV left set at the end. The owner did not know which voltage was on. `slowpairs.py watch.log
+volt 870000 950000 voltflip.log 750` labels each block by the voltage in force over its whole span and drops the
+ones that overlap a switch (±0.3 s): 141 blocks, 10 off the pin, 42 across a switch, 89 kept. Die 49-68 °C. No
+kernel fault, no glitch seen.
+
+| frames over 40 ms | 870 mV | 950 mV | paired by block (950 − 870) |
+| --- | --- | --- | --- |
+| **Market** (22 and 21 blocks) | 1.05% (67 / 6,380) | 0.85% (52 / 6,090) | −0.15 points, t −0.55, MDE 0.56 (21 pairs) |
+| **Death Mountain Trail** (22 and 19) | 2.32% (148 / 6,380) | 2.32% (128 / 5,510) | −0.07 points, t −0.23, MDE 0.68 (19 pairs) |
+| all play | 1.67% | 1.49% | **−0.13 points, t −0.64, MDE 0.41** (42 pairs) |
+| over 67 ms | 0.31% | 0.26% | |
+
+Main-thread CPU per frame, same pairs: Market 17,300 µs at 870, +448 µs at 950 (t 1.19, MDE 793); Trail +27 µs
+(t 0.05, MDE 1,183); all +223 µs (t 0.69, MDE 641). **870 mV costs no frames and no CPU in play**, to within about
+0.4 points of miss rate and 0.6 ms of CPU, as the fixed clock and §8.49's fixture A/B said. The instrument reads
+null on a null: the same script on §8.50's all-870 session with invented 30 s flips gave −0.15 points (t −0.53,
+MDE 0.58), CPU t −0.52.
+
+**§8.50's Market (2.55%) was the session, not the voltage**: this session's Market at 870 mV is 1.05%, in line with
+§11.14's 0.84-0.99%.
+
+**The switch itself costs frames**: blocks overlapping one miss 3.71% at the Market (215 / 5,800) and 3.17% on the
+Trail (184 / 5,800), against 0.95% and 2.32% for the rest. `pyra-undervolt set` takes ~1.2 s (sudo, a governor
+change, ~0.2 s at 875 MHz while the point is set). Shipped play never switches (the boot service sets the point
+once), but any live `set` during a measurement has to be dropped by time, as here; the watch block's clock sampling
+does not see the excursion (TESTING trap 33).
+
+**The Trail does not meet the gate.** Death Mountain Trail in mode 2 at 750, every session with no switch in the
+block: §11.14's two 198 / 10,730, §8.50 264 / 10,440, this one 276 / 11,890: **2.23% (738 / 33,060)**, against the
+~1.9% bar (§11.6) that §11.14's pooled 1.85% was said to meet. With more play it reads over it, in three of the four
+sessions. The Market pooled the same way is 1.51% (494 / 32,770), under it. The misses at these rates were not felt
+(§11.14; the owner saw nothing in either session here). Whether that matters is the owner's call: 30/875 (§8.44) or
+more main-thread work off the Trail would be the ways to buy margin; nothing is reopened here.

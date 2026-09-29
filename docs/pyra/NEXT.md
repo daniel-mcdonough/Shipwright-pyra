@@ -3,7 +3,14 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-29**, evening: **real play at 870 mV is done (§8.50): stable.** ~20 min, 120 blocks, 8 scenes:
+Last revised **2026-09-29**, night: **870 mV costs nothing in play (§8.51).** One watch process, the owner playing,
+the 750 MHz point flipped between 870 and 950 mV every 30 s (`voltflip.sh`): frames over 40 ms −0.13 points
+(t −0.64, MDE 0.41, 42 pairs), main-thread CPU +223 µs (t 0.69, MDE 641). §8.50's high Market (2.55%) was the
+session; here it is 1.05% at 870. **The Trail does not meet the gate**: mode 2 at 750 pooled over four sessions is
+2.23% (738 / 33,060) against ~1.9%, over it in three of them; the Market 1.51%. The owner's call (4); nothing
+reopened. A live `pyra-undervolt set` stalls the game ~1 s (TESTING trap 33); shipped play never does one.
+
+Before that, 2026-09-29, evening: **real play at 870 mV is done (§8.50): stable.** ~20 min, 120 blocks, 8 scenes:
 no crash, hang or kernel fault, the rail at 870 mV throughout, and the owner saw nothing wrong. 870 mV stays. The
 misses ran higher than §11.14's mode 2 at 950 mV (Market 2.55% against 0.84-0.99%, Death Mountain Trail 2.53%
 against 1.34-2.23%, all play 1.97%), which one session cannot pin on the voltage or on content: task 0V below.
@@ -433,7 +440,9 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      ~5-minute screen; the 60-min soak at 870 passed. Finding the
      real edge needs the module's limit raised, and costs crashes below 850. The per-step dump has to be in-process
      (TESTING trap 32).
-   - **(7) = task 0V, next: is 870 mV costing frames in play?** §8.50's session missed more than §11.14's at 950 mV
+   - ~~**(7) = task 0V: is 870 mV costing frames in play?**~~ **Done (§8.51): no.** In one process, the voltage flipped
+     every 30 s: all play −0.13 points (t −0.64, MDE 0.41), CPU +223 µs (t 0.69, MDE 641). §8.50's Market was the
+     session. The brief was: §8.50's session missed more than §11.14's at 950 mV
      (Market 2.55% against 0.84-0.99%, Trail 2.53% against 1.34-2.23%), and a cross-session comparison cannot tell
      voltage from content. Voltage should not change frame time (the clock is fixed, and §8.49's in-process fixture
      A/B read none), so the expected answer is no. The test: one watch process at 30/750 in mode 2 with
@@ -847,6 +856,11 @@ P1 went; P5 only once P2 says draws are worth pricing.
       One indoor fixture is not a workload.
 
 ## 4 — Decisions waiting on the device's owner
+
+- [ ] **Death Mountain Trail misses 2.23% at 30/750 in mode 2** (§8.51, four sessions pooled), over the ~1.9%
+      gate the choice of 30/750 (§11.14) was made against; the Market is 1.51%. Not felt in play so far. Options:
+      accept it; 30/875 on the Trail's clock budget (§8.44: −0.17 W against 30/1000 instead of −0.49); or work
+      off the main thread aimed at the Trail. Bring the numbers, don't pick.
 
 - [x] **Default `gSettings.LeanResLookup` to 3** — done 2026-09-24 after the owner's real-play
       session (§8.23). Original entry, for the record: (§8.22). −12.1% of the Market frame, −14.6% at
