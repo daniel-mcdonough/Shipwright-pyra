@@ -7,8 +7,8 @@ Last revised **2026-09-29**, night: **870 mV costs nothing in play (§8.51).** O
 the 750 MHz point flipped between 870 and 950 mV every 30 s (`voltflip.sh`): frames over 40 ms −0.13 points
 (t −0.64, MDE 0.41, 42 pairs), main-thread CPU +223 µs (t 0.69, MDE 641). §8.50's high Market (2.55%) was the
 session; here it is 1.05% at 870. **The Trail does not meet the gate**: mode 2 at 750 pooled over four sessions is
-2.23% (738 / 33,060) against ~1.9%, over it in three of them; the Market 1.51%. The owner's call (4); nothing
-reopened. A live `pyra-undervolt set` stalls the game ~1 s (TESTING trap 33); shipped play never does one.
+2.23% (738 / 33,060) against ~1.9%, over it in three of them; the Market 1.51%. **The owner accepts it** (the Trail slows down on the N64 too, and play passes through it in ~30 s; §4).
+Nothing reopened. A live `pyra-undervolt set` stalls the game ~1 s (TESTING trap 33); shipped play never does one.
 
 Before that, 2026-09-29, evening: **real play at 870 mV is done (§8.50): stable.** ~20 min, 120 blocks, 8 scenes:
 no crash, hang or kernel fault, the rail at 870 mV throughout, and the owner saw nothing wrong. 870 mV stays. The
@@ -857,10 +857,11 @@ P1 went; P5 only once P2 says draws are worth pricing.
 
 ## 4 — Decisions waiting on the device's owner
 
-- [ ] **Death Mountain Trail misses 2.23% at 30/750 in mode 2** (§8.51, four sessions pooled), over the ~1.9%
-      gate the choice of 30/750 (§11.14) was made against; the Market is 1.51%. Not felt in play so far. Options:
-      accept it; 30/875 on the Trail's clock budget (§8.44: −0.17 W against 30/1000 instead of −0.49); or work
-      off the main thread aimed at the Trail. Bring the numbers, don't pick.
+- [x] **Death Mountain Trail misses 2.23% at 30/750 in mode 2** (§8.51, four sessions pooled), over the ~1.9%
+      gate the choice of 30/750 (§11.14) was made against; the Market is 1.51%. **Accepted by the owner,
+      2026-09-29**: the Trail slows down on the N64 as well, and play passes through it in about 30 seconds.
+      30/750 in mode 2 stays; 30/875 and Trail-specific main-thread work are not wanted for it. New main-thread
+      work still gets a real-play check on the Trail, so the miss rate doesn't grow.
 
 - [x] **Default `gSettings.LeanResLookup` to 3** — done 2026-09-24 after the owner's real-play
       session (§8.23). Original entry, for the record: (§8.22). −12.1% of the Market frame, −14.6% at
