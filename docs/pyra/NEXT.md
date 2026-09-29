@@ -3,14 +3,19 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-29**: **30 fps at 750 MHz with the GL thread is shipped.** `RenderThread` 2 is the
+Last revised **2026-09-29**, later: **the undervolt at 750 MHz is measured (§8.49).** Stepping from the table's
+950 mV was clean down to 850 mV, the module's floor (stress-ng `--verify`, in-process Market dumps in mode 2); at
+30/750 in mode 2, **870 mV is −0.159 W (t −18.7) and −1.5 °C with frames unchanged**. Not applied anywhere yet.
+**Next: the owner's call on shipping it (0T (6)): a long soak at 870 first, then where to apply it.**
+
+Before that, **30 fps at 750 MHz with the GL thread is shipped.** `RenderThread` 2 is the
 GLES2 default (§11.15; 0 on desktop GL), the two-core work is merged into `feature/pyra-port` (fast-forward;
 libultraship `feature/gles2-pyra`) and work continues there, and `pyra-soh` pins 750 MHz while the game runs
 (hardware repo `device/pyra-soh`, `device/pyra-cpu-pin`), putting the governor and ondemand's tuning back after.
 Against 30/1000 that is −0.30 W and −3.3 °C (§11.12) at the 1000 MHz miss rate (§11.14). Device runs are now in
 mode 2 unless they say otherwise (TESTING trap 31). Found on the way: every pinned `bench.sh` run had reset
 ondemand's `sampling_down_factor` to stock (fixed); the device build segfaults at quit like the host's (TESTING
-trap 18). **Next: the undervolt at 750 (0T (6)).**
+trap 18). Next was the undervolt at 750.
 
 Earlier, 2026-09-28, evening: **the owner chose 30 fps at 750 MHz with the GL thread** (§11.14). Real
 play, block-paired: mode 2 at 30/750 misses fewer frames than mode 0 (all play 4.31% → 1.61%, −2.77 points,
@@ -413,18 +418,14 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      (`pyra-gamemode`) is the obvious place, not the game.
    - ~~**(5) If 30 fps at 750 MHz is wanted**~~ **Done: 0A, 0S, then the two-core design (3) got it (§11.14).**
      The brief was: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750 against 35 at 875).
-   - **(6) NEXT. Undervolt the chosen point: 750 MHz (30 fps), chosen 2026-09-28 (§11.14)** (added 2026-09-26; hardware repo
-     `experiments/undervolt/`). Each clock step's voltage is a fixed device-tree value (625 MHz = 0.900 V,
-     50 mV per 125 MHz step), not calibrated for this chip. The rail follows the table (read back
-     from the PMIC). `pyra_undervolt.ko` changes one point's voltage at runtime and puts it back on unload
-     or reboot. It is built, and one 10 mV step reached the PMIC and reverted. Next: step 750 MHz down from
-     its table voltage (0.950 V by the 50 mV step; read it back first) in 10 mV steps. Each step has to pass `stress-ng --verify` on both cores, cold and hot, and
-     `SOH_BENCH_DUMP` frozen-Market frames pixel-identical to a stock-voltage reference. Back off 20-30 mV from the
-     first failure, then `thermcost` ABBA at 30/750 in mode 2, stock against undervolted. Expected 0.05-0.15 W
-     (~2% of CPU switching power per 10 mV), not measured. It also makes any later
-     clock drop worth more. Too little voltage gives silent wrong results, then a crash:
-     it cannot damage the chip, but it can corrupt the card, so the tested backup of 09-26
-     (hardware repo `docs/card-backup-restore.md`) comes first. Needs the device free for a few hours.
+   - **(6) NEXT: ship the undervolt, the owner's call (measured §8.49).** 750 MHz (table 950 mV) passed every 10 mV
+     step to 850 mV, the floor of `pyra_undervolt.ko` (100 mV); the edge is below and unknown. 870 mV at 30/750 in
+     mode 2: −0.159 W (t −18.7), −1.5 °C, frames lost unchanged (0.68% against 0.57-0.71%). Before shipping: a long
+     soak at 870 (30-60 min `stress-ng --verify` hot, then real play), since each step was a ~5-minute screen.
+     Where to apply it: `pyra-cpu-pin` (root, already sets 750 MHz for pyra-soh and restores after) could load the
+     module and set the point for the game only; or a boot service for the point everywhere. Finding the real
+     edge needs the module's limit raised, and costs crashes below 850. The per-step dump has to be in-process
+     (TESTING trap 32).
    The original brief of (1)-(3), for the record:
    - **(1) Pin 750 MHz, no code.** Estimate: Market render thread ~22 ms per frame (16.8 ms × 4/3,
      less for memory stalls that don't scale with the clock), plus ~2 ms of logic in play and the

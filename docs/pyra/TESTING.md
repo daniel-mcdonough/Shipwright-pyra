@@ -753,6 +753,12 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     2026-09-29 was mode 0 unless it said otherwise: main-thread CPU ~18% lower, the backend's counters
     approximate (trap 24). To compare with older absolutes, put `"RenderThread": 0` in the config or A/B it.
 
+32. **Frozen-fixture dumps from different processes do not match** (2026-09-29, §8.49). The settle is counted
+    in rendered frames and the game ticks on wall time, so the Market's dancers freeze at a phase that depends on
+    the frame rate: any two runs differ in 3,000-6,500 pixels, all NPCs. Compare dumps only between segments of
+    one process (an A/B, or a CVar against itself with `SOH_BENCH_REPS`); a mask of the NPCs is not enough, a new
+    pose uncovers pixels outside it.
+
 ## 6. Recipes
 
 **"Where does the main thread's time go?"** — `bench.sh ab gSettings.ProbeSplit 0 1 <fixture>`, then

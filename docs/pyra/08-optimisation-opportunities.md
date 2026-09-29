@@ -3907,3 +3907,43 @@ Hyrule Field −260 µs (−2.5%, t −26.1, MDE 26)**, window CPU unchanged. Th
 The Market (and Death Mountain Trail) at 30/750 miss ~3.5% of frames over 40 ms against ~1.9% at 1000 MHz,
 and the flat blocks could never have closed that: the owner's choice is now between the two-core design
 (NEXT.md 0T (3), a large build aimed at the render side) and settling on 30/875 or 20/625, which hold.
+
+## 8.49 The undervolt at 750 MHz: clean to 850 mV (the module's floor); 870 mV is −0.16 W and −1.5 °C at 30/750, frames unchanged
+
+NEXT.md 0T (6), 2026-09-29 (device clock), hardware repo `experiments/undervolt/` (README, `stepping/`) and
+`experiments/power-budget/` (`thermcost.sh undervolt`). The card was backed up first (hardware repo
+`docs/card-backup-restore.md`, `pyra-card-2026-09-28-twocore`).
+
+**Stepping.** The 750 MHz point's table voltage is 950 mV (patch 0007). From there in 10 mV steps, on the charger:
+`stress-ng --cpu 2 --cpu-method all --verify` for 180 s (die 62-70 °C), then the frozen Market pinned at 750 MHz in
+mode 2 with `SOH_BENCH_DUMP`. **Every step passed down to 850 mV**, which is as far as `pyra_undervolt.ko` goes (it
+refuses more than 100 mV below the device tree). The chip's edge is below 850 mV and unknown. Frame time did not
+move (16.2-17.5 ms a segment at every voltage, uncapped).
+
+**The dump check had to be in-process.** Two stock-voltage runs differ in ~6,000 pixels, all in the dancing NPCs
+and the crowd: the fixture freezes game logic after `SOH_BENCH_SETTLE` rendered frames, and the game ticks on
+wall time, so how far the dance got depends on the frame rate. Every pair of runs differed (3,000-6,500 pixels).
+The first check (mask where the stock runs differ) stopped 920 mV on 7 pixels of a fern uncovered by a pose
+neither stock run caught: a correct picture of a different phase. From 920 on each step ran six segments in one
+process (`bench.sh ab gSettings.LeanSwap 0 0 ... SOH_BENCH_REPS=3`) and required all twelve frames to match
+segment 0's pair: a stock control passed with 0 pixels, and so did every step. That checks for intermittent
+errors, which is how undervolt failures behave, not for a deterministic one shared by every segment (stress-ng's
+`--verify` covers that). TESTING trap 32.
+
+**Watts** (`thermcost.sh undervolt`, on battery, one game process at 30/750 in mode 2, the voltage switched live;
+ABBA 60 s blocks, first 15 s dropped; then 10-minute holds at 950, 870, 950):
+
+| | 950 mV | 870 mV | Δ |
+| --- | --- | --- | --- |
+| ABBA, n = 4 each | 4.174 W | 4.015 W | **−0.159 W (t −18.7)** |
+| holds | 4.212, 4.144 W | 4.024 W | −0.154 W against their mean |
+| CPU / GPU / core die, holds | 63.0 / 65.4 / 63.1, 63.8 / 66.3 / 64.1 °C | 61.9 / 64.7 / 62.5 °C | **−1.5 / −1.2 / −1.1 °C** |
+| frames lost (BENCH split windows) | 0.71%, 0.57% (ABBA 0.63%) | 0.68% (ABBA 0.67%) | none |
+
+The estimate was 0.05-0.15 W; 0.16 W is at its top. It is 3.8% of the game's watts and 11% of what the game costs
+above the desktop (2.76 W). Against 30/1000 in mode 0 (§11.12's hold, a separate run: 4.51 W, 67.6 °C), 30/750 in
+mode 2 at 870 mV reads −0.49 W and −5.7 °C.
+
+**870 mV is the candidate**: 30 mV above the last step tested, so at least 30 mV above any failure. Each step was
+a ~5-minute screen, not a stability proof. **Not done:** a long soak at 870 (30-60 min of stress-ng, then real
+play), and shipping it: nothing applies it yet (the module is loaded by hand; a reboot puts 950 mV back).
