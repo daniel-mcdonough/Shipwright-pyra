@@ -5,8 +5,9 @@ rewritten as things land. If it disagrees with a report, this file is newer.
 
 Last revised **2026-09-29**, later: **the undervolt at 750 MHz is measured (§8.49).** Stepping from the table's
 950 mV was clean down to 850 mV, the module's floor (stress-ng `--verify`, in-process Market dumps in mode 2); at
-30/750 in mode 2, **870 mV is −0.159 W (t −18.7) and −1.5 °C with frames unchanged**. Not applied anywhere yet.
-**Next: the owner's call on shipping it (0T (6)): a long soak at 870 first, then where to apply it.**
+30/750 in mode 2, **870 mV is −0.159 W (t −18.7) and −1.5 °C with frames unchanged**. **Shipped at the owner's
+request**: hardware repo `device/pyra-undervolt.service` sets it from boot (m4-kbdled only), before the long soak.
+Any crash or wrong result on the device from here on: suspect it first (`sudo pyra-undervolt off`, or boot l4).
 
 Before that, **30 fps at 750 MHz with the GL thread is shipped.** `RenderThread` 2 is the
 GLES2 default (§11.15; 0 on desktop GL), the two-core work is merged into `feature/pyra-port` (fast-forward;
@@ -418,13 +419,12 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
      (`pyra-gamemode`) is the obvious place, not the game.
    - ~~**(5) If 30 fps at 750 MHz is wanted**~~ **Done: 0A, 0S, then the two-core design (3) got it (§11.14).**
      The brief was: ~5 ms off the Market's worst ticks (p95 40 ms per tick at 750 against 35 at 875).
-   - **(6) NEXT: ship the undervolt, the owner's call (measured §8.49).** 750 MHz (table 950 mV) passed every 10 mV
+   - **(6) Done: shipped from boot, 2026-09-29 (hardware repo `device/pyra-undervolt`, owner's call; §8.49).** Left
+     open: the long soak. `sudo pyra-undervolt set 750000 <uV>` changes it on the fly. The measurement: 750 MHz (table 950 mV) passed every 10 mV
      step to 850 mV, the floor of `pyra_undervolt.ko` (100 mV); the edge is below and unknown. 870 mV at 30/750 in
-     mode 2: −0.159 W (t −18.7), −1.5 °C, frames lost unchanged (0.68% against 0.57-0.71%). Before shipping: a long
-     soak at 870 (30-60 min `stress-ng --verify` hot, then real play), since each step was a ~5-minute screen.
-     Where to apply it: `pyra-cpu-pin` (root, already sets 750 MHz for pyra-soh and restores after) could load the
-     module and set the point for the game only; or a boot service for the point everywhere. Finding the real
-     edge needs the module's limit raised, and costs crashes below 850. The per-step dump has to be in-process
+     mode 2: −0.159 W (t −18.7), −1.5 °C, frames lost unchanged (0.68% against 0.57-0.71%). Each step was a
+     ~5-minute screen; a long soak (30-60 min `stress-ng --verify` hot, then real play) is still owed. Finding the
+     real edge needs the module's limit raised, and costs crashes below 850. The per-step dump has to be in-process
      (TESTING trap 32).
    The original brief of (1)-(3), for the record:
    - **(1) Pin 750 MHz, no code.** Estimate: Market render thread ~22 ms per frame (16.8 ms × 4/3,
