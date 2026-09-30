@@ -256,6 +256,15 @@ GameLookupCache& ValidGameLookupCache() {
     return c;
 }
 
+} // namespace
+
+// The calling thread's cache, emptied. DeinitOTR calls it on the game thread before the context goes:
+// left to thread-exit teardown, the cached resources outlive the ResourceManager and segfault at quit.
+extern "C" void ResourceMgr_ReleaseLeanLookup() {
+    tGameLookup = GameLookupCache();
+}
+
+namespace {
 // The cached entry for path if it is still the answer, else nullptr.
 GameLookup* FindGameLookup(GameLookupCache& c, const char* path) {
     auto it = c.byAddress.find(path);

@@ -1623,6 +1623,7 @@ extern "C" void DeinitOTR() {
     // these shared ptrs.
     SohGui::Destroy();
     sohFast3dWindow = nullptr;
+    ResourceMgr_ReleaseLeanLookup();
 
     OTRGlobals::Instance->context = nullptr;
 }

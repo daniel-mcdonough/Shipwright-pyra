@@ -34,6 +34,7 @@ char** ResourceMgr_ListFiles(const char* searchMask, int* resultSize);
 uint8_t ResourceMgr_FileExists(const char* resName);
 uint8_t ResourceMgr_FileAltExists(const char* resName);
 void ResourceMgr_UnloadOriginalWhenAltExists(const char* resName);
+void ResourceMgr_ReleaseLeanLookup();
 uint8_t ResourceMgr_TexIsRaw(const char* texPath);
 uint8_t ResourceMgr_ResourceIsBackground(char* texPath);
 char* ResourceMgr_LoadJPEG(char* data, size_t dataSize);

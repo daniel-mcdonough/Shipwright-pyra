@@ -680,12 +680,18 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     saves the CVar; **watch mode does not** — after `watch stop`, remove the A/B CVar from
     `$PYRA_DIR/shipofharkinian.json`. Check that file for stray `Lean*`/`Probe*` keys before trusting a run.
 
-18. **The host build segfaults on exit** in `Ship::ResourceManager`'s destructor (static
-    teardown, seen every run 2026-09-24, with or without that day's changes). The results are
-    already written by then. Ignore it, or fix it separately; it is not a benchmark problem.
-    **The device build does it too** (2026-09-29): every Alt+F4 quit, four of four, in `RenderThread` 0 and
-    2 alike, ends in `Segmentation fault` about a second after the close. Not the GL thread. Closing the
-    window with `xdotool windowclose` is not a quit (it destroys the window; the game hangs): use Alt+F4.
+18. **Fixed 2026-09-30: the quit segfault, and the hang on SIGTERM/SIGINT.** Every quit (Alt+F4, the
+    harness's own exit, host and device, both render modes) segfaulted in `~ResourceManager` during
+    static teardown. Two of the port's caches held the last references past the Context's teardown:
+    LeanResLookup's `sLookupRm` (libultraship interpreter.cpp, now released in `Interpreter::Destroy`)
+    and LeanGameLookup's `thread_local` cache (now released in `DeinitOTR`). Separately, libultraship's
+    `ShutdownHandler` called `exit(1)` inside the signal handler. Static teardown then blocked forever
+    destroying the audio thread's condition variable, which is why `pyra-soh` found the game
+    "ignores SIGTERM". The handler now only records the signal; the SDL event loop quits normally, and a
+    second signal `_exit`s. Device, new binary: Alt+F4 3/3, SIGTERM 2/2, SIGINT 1/1 exit 0 in ≤2 s; the
+    old binary hung on SIGTERM/SIGINT 3/3. A GNU `timeout` signals its whole process group, so a
+    `timeout` around a script that backgrounds the game now quits the game too. Closing the window with
+    `xdotool windowclose` is still not a quit (it destroys the window; the game hangs): use Alt+F4.
 
 19. **Until §8.32 the camera override did not reliably hold.** The freeze does not stop
     `Camera_Update` (it runs after `Play_Update`'s frame-advance skip label) and the camera wrote its
