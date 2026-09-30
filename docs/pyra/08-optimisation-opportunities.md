@@ -4089,3 +4089,34 @@ drawn somewhere else (into the game framebuffer, or a second plane shown only wh
 does not add its own pass). That also takes X's copy of the window and the compositor out of every frame, which
 this probe did not price. It is the owner's decision whether a game that leaves the desktop while it runs is
 acceptable, before a feasibility test that VT-switches the desktop.
+
+## 8.53 Item F's feasibility: the SGX renders on KMS and a scaled, rotated plane works, but not both at once (2026-09-30)
+
+The hardware repo's `experiments/kms-plane/` (kmsprobe.c, planetest.sh, README) has the detail; in short:
+
+**Rendering on KMS without X works.** The Pyra's DDK package symlinks Mesa's libgbm as `libgbm.so.2`, which
+cannot drive it (no DRI driver for omapdrm; segfault). The DDK's `libpvrGBMWSEGL` is the `gbm_pvr` backend of
+TI's libgbm fork, which has to be built at that repo's 77a737d layout with a 32-bit `struct stat` (trixie's
+time64 default overwrites the backend's function pointers), and selected per process by a `powervr.ini` in the
+working directory (`WindowSystem=libpvrGBMWSEGL.so.1`; `/etc/powervr.ini` names X's DRI3 backend). Then the
+SGX renders a 640×360 GBM surface and flips it onto a scaled overlay plane at 60 fps, 0 failures.
+
+**X never gave up DRM master on a VT switch** (armsoc-omap5 0.6 counts master references and LeaveVT only
+drops at a count it never reaches). A driver patch fixes it: installed on the device as 0.6+dropmaster1, the
+stock package kept for rollback. With it, a VT switch hands the display over and X takes it back.
+
+**Planes:** a 640×360 TILER buffer at rotation 270 scaled 2× onto the 720×1280 panel is accepted; a linear
+buffer (dumb or GBM) is refused at any rotation but 0. **DDK 1.14 renders only into its own linear GBM buffers**
+(no surface import, no dma-buf or pixmap EGLImage), so the SGX cannot draw into the TILER buffer the rotated
+plane needs. Unrotated, the landscape frame on the portrait panel is sideways, so item F needs one of:
+
+| way to rotate | GPU work left | cost to build |
+| --- | --- | --- |
+| a rotate-copy of the 640×360 frame into a portrait 360×640 GBM surface; the plane scales it 2× unrotated | a quarter of today's 1280×720 pass | small: one pass in the present path |
+| render the scene rotated (clip-space rotation in the interpreter; viewports, scissors and framebuffer reads transposed) | none | large, touches every framebuffer path |
+| the GC320 2D core (etnaviv) blits into a TILER buffer | a 2D blit, unpriced | medium, a second GPU API |
+
+Whatever the rotation, item F also means the game on KMS outside the X session: its own input (evdev),
+ImGui on a second plane or in the frame, a VT switch around each run, and the game releasing the display
+before X's VT returns. Not yet measured: the quarter-size pass's watts (a probe that draws the game quad at
+640×360 under X would price it), and X's own copy of the window, which leaves with X.
