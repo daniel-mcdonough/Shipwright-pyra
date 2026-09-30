@@ -4120,3 +4120,35 @@ Whatever the rotation, item F also means the game on KMS outside the X session: 
 ImGui on a second plane or in the frame, a VT switch around each run, and the game releasing the display
 before X's VT returns. Not yet measured: the quarter-size pass's watts (a probe that draws the game quad at
 640×360 under X would price it), and X's own copy of the window, which leaves with X.
+
+## 8.54 Item F's rotations priced: the GC320 keeps 27% of the quad's watts, the SGX 55% (2026-09-30)
+
+§8.53 left the rotation to choose: DDK 1.14 cannot render into the TILER buffer a rotated plane needs. Both
+candidates, measured the way §8.52 measured the quad (hardware repo `thermcost.sh rotate`, 30/750 in mode 2 at
+870 mV, Market fixture with logic, on battery; one game process per option, 8 in-process ABBA pairs of 60 s
+against `ProbeSkipFlat` 1024, the skipped quad):
+
+- **SGX:** `ProbeSkipFlat` 2048 (benchmark builds) draws the 640×360 frame into a 360×640 portrait quad with its
+  texture coordinates turned 90°: the rotate-copy the KMS build would run into a portrait GBM surface. Seen on
+  screen as the frame, rotated, in a 360×640 corner.
+- **GC320:** the quad stays skipped, and the hardware repo's `kms-plane/gc320rot` rotates a 640×360 buffer into
+  360×640 on the 2D core 30 times a second, only while the harness's arm has bit 4096 (it reads the arm file).
+  Checked exact first: a coordinate-coded source comes back turned 90° with 0 mismatches of 230,400, clockwise by
+  destination rotation, counter-clockwise by source rotation.
+
+| over the skipped quad | Δ W | t | MDE | share of today's quad |
+| --- | --- | --- | --- | --- |
+| today's 1280×720 quad (§8.52, another session) | +0.158 | 21.7 | 0.017 | 100% |
+| SGX portrait rotate-copy | **+0.087** | 14.8 | 0.014 | 55% |
+| GC320 rotate-blit, 30 a second | **+0.043** | 14.2 | 0.007 | 27% |
+
+**The SGX's quarter-size pass keeps more than half the cost**: the pass's fixed part and the transposed texture
+reads, not the pixel count, dominate, so "¼ of the pixels" (§8.53's estimate) was wrong by 2×. **The GC320 is the
+cheaper rotation**, and its output is linear, so the plane shows it unrotated at 2× with no TILER buffer at all.
+Against today, on KMS: ~0.07 W saved with the SGX rotation, **~0.115 W with the GC320**, plus X's own copy of the
+window (GC320 work under X that neither arm here removed, unpriced). Frames: SGX arm period −16 µs (t −0.6, MDE 64),
+GC320 arm +69 µs (t 3.0, MDE 55): nothing at the cap. The two skip arms differ by 0.13 W across the two processes
+(the second ran ~3 °C hotter): compare within a process only, as every row above does.
+
+Not tested: the GC320 reading the SGX's GBM buffer (a dma-buf from omapdrm GEM into etnaviv; X's 2D acceleration
+already works on omapdrm buffers, so the path exists) and synchronising the blit with the SGX's frame.
