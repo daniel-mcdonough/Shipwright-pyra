@@ -782,6 +782,12 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     `online` to 0 on its own while USB networking stays up, so a thermcost run can start without the cable
     being pulled.
 
+35. **A fixture with logic running can be walked off** (2026-09-30, §8.54). `SOH_BENCH_STATIC=0` runs the game,
+    and the game buttons still move Link: in one watts run he ended up in an empty alley for half the segments
+    and moved one arm's delta by a third. Nothing flags it; the segments' `BENCH work draws=` do (the Market reads
+    ~108-118, the alley ~100). Read the draws per segment before trusting a long run, and keep hands off the
+    device during one.
+
 ## 6. Recipes
 
 **"Where does the main thread's time go?"** — `bench.sh ab gSettings.ProbeSplit 0 1 <fixture>`, then
