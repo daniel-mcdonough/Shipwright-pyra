@@ -4193,3 +4193,8 @@ or the display controller keeps fetching a full-screen buffer nobody sees; its w
 
 Not yet built or priced: the game on this path (its own EGL/GBM window, evdev input, ImGui on a second plane or in
 the frame, the VT switch around a run), and the chain's watts against today's desktop present with X's window copy.
+
+**Closed by the owner (2026-10-02): not built.** The prize is ~0.115 W (§8.54), about 3% of the game's 4.2 W at
+30/750 and ~1 °C at §8.44's 7-9 °C per watt, against a second display path that takes the game out of the
+desktop. X's own window copy, the one unpriced extra, is GC320 work like the +0.043 W rotate-blit and is unlikely to
+change the answer. The probe and this section stay as the record if it is ever reopened.
