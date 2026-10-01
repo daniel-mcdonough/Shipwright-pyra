@@ -249,17 +249,17 @@ waiting on the GPU.
    the clock under the harness in both directions (§8.20, TESTING.md trap 12). A segment off the
    pin is discarded, and the report says so.
 
-## 1 — Finish the save-corruption job (report 10)
+## 1 — Finish the save-corruption job (report 10) — **done 2026-10-02**
 
-The mechanism is settled and the save file is defended. The cause is not found.
+**The cause is found and fixed** (report 10 §10.7): the SGX driver's X11 window system
+(`/lib/libpvrDRI3WSEGL.so`) closed each buffer's dma-buf descriptor a second time after libxcb had closed
+it, taking whatever file had reused the number: the game's log in 54 of 63 harness runs, once a save. Patched
+system-wide by the hardware repo's `device/pyra-wsegl-fdfix.sh` (stock kept, `rollback`).
 
-- [ ] **Run `scripts/pyra/fdguard.c` on the device.** Needs a free Pyra and a save to happen. It
-      names whoever closes the log's descriptor, with a backtrace. Until this runs, every other
-      descriptor in the process is still exposed and we are guessing at the culprit.
-- [ ] Apply the same verified write to `Config::Save()` — `libultraship/src/ship/config/Config.cpp`
-      has the identical defect (no temp file, no check).
-- [ ] Surface a failed save on screen. Right now it is loud in the log and silent to the player.
-- [ ] `fsync` before `rename`. Removable-battery handheld; the rename can land before the data.
+- [x] **Run `scripts/pyra/fdguard.c` on the device.** Named the caller in the first run (§10.7).
+- [x] Apply the same verified write to `Config::Save()` (§10.8).
+- [x] Surface a failed save on screen (§10.8; `Notification::Emit` is now safe from any thread).
+- [x] `fsync` before `rename`, and the directory after (§10.8).
 
 The host build works again as of report 10 §10.6 (`text.h` was missing `<functional>` under
 GCC 16). It compiles and links, which is enough for the kind of cheap experiment §10.2 used.

@@ -51,7 +51,7 @@ case "${1:-build}" in
   fdguard)
     # LD_PRELOAD shim that names whoever closes the log's descriptor. Report 10 section 10.3.
     run arm-linux-gnueabihf-gcc -shared -fPIC -O1 -g -funwind-tables \
-        -o "/src/$BUILD_DIR/fdguard.so" /src/scripts/pyra/fdguard.c -ldl
+        -o "/src/$BUILD_DIR/fdguard.so" /src/scripts/pyra/fdguard.c -ldl -lpthread
     echo "built $BUILD_DIR/fdguard.so"
     ;;
   allocshim)

@@ -2,6 +2,7 @@
 #include "Notification.h"
 #include <libultraship/libultraship.h>
 #include "soh/OTRGlobals.h"
+#include <mutex>
 
 extern "C" {
 #include "functions.h"
@@ -13,6 +14,23 @@ namespace Notification {
 
 static uint32_t nextId = 0;
 static std::vector<Options> notifications = {};
+// Emit() may be called from any thread (the save thread reports a failed save through it), but
+// notifications is walked by Draw() and the sound goes through the game's audio state, both on
+// the main thread. So Emit() only queues; UpdateElement() takes the queue on the main thread.
+static std::mutex pendingMutex;
+static std::vector<Options> pending = {};
+
+static void Present(Options notification) {
+    notification.id = nextId++;
+    if (notification.remainingTime == 0.0f) {
+        notification.remainingTime = CVarGetFloat(CVAR_SETTING("Notifications.Duration"), 10.0f);
+    }
+    notifications.push_back(notification);
+    if (!notification.mute && !CVarGetInteger(CVAR_SETTING("Notifications.Mute"), 0)) {
+        Audio_PlaySoundGeneral(NA_SE_SY_METRONOME, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
+                               &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+    }
+}
 
 void Window::Draw() {
     auto vp = ImGui::GetMainViewport();
@@ -111,6 +129,15 @@ void Window::Draw() {
 }
 
 void Window::UpdateElement() {
+    std::vector<Options> arrived;
+    {
+        std::lock_guard<std::mutex> lock(pendingMutex);
+        arrived.swap(pending);
+    }
+    for (auto& notification : arrived) {
+        Present(notification);
+    }
+
     for (int index = 0; index < notifications.size(); ++index) {
         auto& notification = notifications[index];
 
@@ -126,15 +153,8 @@ void Window::UpdateElement() {
 }
 
 void Emit(Options notification) {
-    notification.id = nextId++;
-    if (notification.remainingTime == 0.0f) {
-        notification.remainingTime = CVarGetFloat(CVAR_SETTING("Notifications.Duration"), 10.0f);
-    }
-    notifications.push_back(notification);
-    if (!notification.mute && !CVarGetInteger(CVAR_SETTING("Notifications.Mute"), 0)) {
-        Audio_PlaySoundGeneral(NA_SE_SY_METRONOME, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
-                               &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
-    }
+    std::lock_guard<std::mutex> lock(pendingMutex);
+    pending.push_back(std::move(notification));
 }
 
 } // namespace Notification

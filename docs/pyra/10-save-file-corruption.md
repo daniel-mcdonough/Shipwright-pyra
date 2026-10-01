@@ -151,3 +151,84 @@ This is not a Pyra issue — the cross container is GCC 14 and was never affecte
 having, because a working host build is where cheap experiments belong. It is not a *substitute*
 for the device: there is no ROM or `oot.o2r` on the host, so the game still cannot be launched
 here, and the reproduction in §10.2 deliberately needed neither.
+
+## 10.7 The close is found: the SGX driver's X11 window system closes a descriptor twice (2026-10-02)
+
+**It was never rare.** 54 of the 63 harness run logs on the device carried `Failed flush to file ./logs/Ship
+of Harkinian.log: Bad file descriptor`, most within seconds of launch. The log's descriptor was being closed in
+nearly every run; a save only gets hurt when it is the next file opened, which is why report 7 saw a
+corrupt save once.
+
+**fdguard named it in the first run** (harness binary at the title screen, ~40 s). Two additions first, so a
+silence could be trusted: `close_range`/`closefrom` wrappers, and a watcher thread that reports a watched
+descriptor disappearing with no wrapper having seen it (a raw syscall or a libc-internal close); both
+proved on the host against a plain `close()` and a raw `syscall(SYS_close)`. Built with `-funwind-tables`
+and printing the wrapper's own return address through `dladdr`, because on ARM `backtrace()` returned
+nothing without unwind tables:
+
+```
+FDGUARD: fd 12 opened on watched file ./logs/Ship of Harkinian.log
+./dri3_ws.c:843: WSEGL_SwapControlInterval: WSEGL_SwapControlInterval 0
+FDGUARD:   called from /lib/libpvrDRI3WSEGL.so+0x154d (?)
+FDGUARD: close(12) on watched file /home/pyra/soh-bench2/logs/Ship of Harkinian.log
+FDGUARD: fd 12 was the watched file, fopen() just gave it to /etc/powervr.ini
+```
+
+**The mechanism**, from the disassembly of `libpvrDRI3WSEGL.so` (the DDK's X11/DRI3 window system, a blob
+from 2020, no package owns it):
+
+- Buffer creation (`0x1f9a`-`0x202c`) exports each buffer as a dma-buf with `DRM_IOCTL_PRIME_HANDLE_TO_FD`,
+  keeps the number at offset `0x10` of its buffer record, imports it into the SGX (`PVRSRVMapDmaBuf`), and
+  passes it to `xcb_dri3_pixmap_from_buffer_checked`. **libxcb owns a descriptor once it is passed**: it
+  sends it to X and closes it.
+- Buffer destruction (`0x1520`-`0x1560`: `munmap`, `xcb_free_pixmap`, `PVRSRVUnmapDmaBuf`, then
+  `close(buf->fd)`, then `DRM_IOCTL_MODE_DESTROY_DUMB`) closes the stored number **again**.
+
+Between the two, the number is free, and whatever opens next gets it: the game's log (opened after the
+window's first buffers), or, if the timing falls that way, a save. The buffers are rebuilt when the game sets
+its swap interval (`WSEGL_SwapControlInterval 0`, the frame cap's own pacing), which is when the second close
+lands. Every EGL program on the Pyra's desktop has the same double close; the game is just the one that
+noticed.
+
+**The fix is in the driver**: the second `close()` (`blx close@plt` at `0x1548`, its result unused) becomes two
+Thumb NOPs. Tested in a private copy loaded through a per-directory `powervr.ini` first, then installed
+system-wide on the owner's decision with the hardware repo's `device/pyra-wsegl-fdfix.sh` (checks the stock
+sha256, keeps `/lib/libpvrDRI3WSEGL.so.stock`, replaces by rename because running programs have it mapped;
+`rollback` restores):
+
+| run (title screen, ~40 s) | log descriptor | `Bad file descriptor` | process descriptors at +5/15/25/35 s | dma-buf descriptors |
+| --- | --- | --- | --- | --- |
+| stock module | closed at +5 s | 3 | 20, 20, 20, 20 | 0 |
+| patched module | open to exit (spdlog's own `fclose` at quit) | 0 | 21, 21, 21, 21 | 0 |
+
+The flat count is the leak check: had libxcb not closed its copy, removing the driver's close would leave one
+descriptor behind per rebuilt buffer. The play install, launched by `pyra-soh` with the system-wide fix: log
+open to the end, 0 errors.
+
+## 10.8 The defences finished
+
+The cause is fixed, but a removable-battery handheld still loses power without warning, and the next stray
+close would be someone else's. §10.5's list, closed:
+
+- **`fsync` before `rename`** in `WriteJsonVerified` (POSIX builds; Windows, Switch and Wii U unchanged): the
+  read-back-verified temp file is synced, renamed, and the directory synced, so after a power cut the save is
+  either the old one or the whole new one. A failed file sync counts as a failed attempt; a failed directory
+  sync is logged (the save is in place either way).
+- **`Config::Save()`** (libultraship) writes a temp file, reads it back, syncs it and renames it over the config,
+  instead of streaming over the live file; a failed write leaves the old config. Switch and Wii U keep the
+  direct write (rename is unreliable there, as `SaveManager` already notes).
+- **A failed save is on screen**: when `WriteJsonVerified` gives up, a notification says the save was not
+  written and the previous one is intact. `Notification::Emit` was not safe from the save thread (it pushed
+  into the list the UI walks every frame and played a sound through the game's audio state), so it now queues
+  under a mutex and the notification window takes the queue on the main thread each frame; existing callers
+  are unchanged but for one frame of delay.
+- **The log dying silently** is moot with the driver fixed; left as it is.
+
+**Tested on the device** (harness install, the owner saving from the pause menu, 2026-10-02):
+
+| test | result |
+| --- | --- |
+| a normal save | `file1.sav` replaced by rename (new inode), parses, `Save File Finish ... (written)`; the whole save with both syncs 38 ms |
+| a save with the temp path blocked (a non-empty directory at `Save/file1.temp`) | both attempts logged, `NOT WRITTEN`; the red "Save failed:" notification on screen (owner); `file1.sav` byte-identical to the previous save |
+| the config | `shipofharkinian.json` replaced by rename at the in-run CVar save and at exit (new inode each time), content unchanged, no `.temp` left |
+| the log, whole session, with the driver fix | 0 `Bad file descriptor` |

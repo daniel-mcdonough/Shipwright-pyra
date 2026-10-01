@@ -26,6 +26,13 @@
 #include <iterator>
 #include <array>
 #include <mutex>
+#include "soh/Notification/Notification.h"
+
+#if !defined(_WIN32) && !defined(__SWITCH__) && !defined(__WIIU__)
+#include <fcntl.h>
+#include <unistd.h>
+#define SOH_SAVE_FSYNC 1
+#endif
 
 extern "C" SaveContext gSaveContext;
 using namespace std::string_literals;
@@ -80,11 +87,38 @@ namespace {
 // this can go wrong - a short write, a truncated tail, a stale file left by a failed attempt - and
 // because a parse of a 200 KB save costs more than a compare of one.
 //
-// This does not fix the descriptor bug. Nothing here can defend against that one - you cannot
-// stop another thread closing your descriptor, and by the time you notice, the number belongs to
-// somebody else. It has to be fixed where the close is; scripts/pyra/fdguard.c exists to find the
-// caller, and docs/pyra/10-save-file-corruption.md has the mechanism. What this fixes is the
-// consequence that matters: a corrupt write now costs this save, not the save.
+// This does not fix the descriptor bug; nothing here can, because by the time you notice, the number
+// belongs to somebody else. On the Pyra the close was the SGX driver's X11 window system closing each
+// buffer's dma-buf descriptor a second time after libxcb had closed it (docs/pyra/10-save-file-corruption.md
+// section 10.7; the hardware repo's device/pyra-wsegl-fdfix.sh patches it). What this fixes is the
+// consequence that matters, whatever the next stray close is: a corrupt write costs this save, not the save.
+#ifdef SOH_SAVE_FSYNC
+// Flushes a file, or a directory's entries, to the card. A rename is only as durable as the data it
+// points at: on a removable-battery handheld the rename can reach the card before the bytes do, and
+// a power cut then leaves the new name on an empty or partial file. So the temp file is synced
+// before the rename, and the directory after it, so the rename itself survives too.
+bool SyncPath(const std::filesystem::path& path, bool directory) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    if (fd < 0) {
+        return false;
+    }
+    const bool ok = ::fsync(fd) == 0;
+    ::close(fd);
+    return ok;
+}
+#endif
+
+// A save that did not happen is reported on screen as well as in the log; the player otherwise
+// believes the game saved. Notification::Emit is safe from this thread (it queues for the UI).
+void ReportSaveFailure(const std::filesystem::path& finalPath) {
+    Notification::Emit({
+        .prefix = "Save failed:",
+        .prefixColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+        .message = finalPath.filename().string() + " was not written. The previous save is intact.",
+        .remainingTime = 20.0f,
+    });
+}
+
 bool WriteJsonVerified(const std::filesystem::path& finalPath, const std::filesystem::path& tempPath,
                        const nlohmann::json& block) {
     // Matches what "output << std::setw(1) << block << std::endl" produced before, byte for byte,
@@ -131,22 +165,36 @@ bool WriteJsonVerified(const std::filesystem::path& finalPath, const std::filesy
         }
         std::filesystem::remove(tempPath, ec);
 #else
+#ifdef SOH_SAVE_FSYNC
+        if (!SyncPath(tempPath, false)) {
+            SPDLOG_ERROR("Save: fsync of {} failed (attempt {} of {})", tempPath.string(), attempt, kAttempts);
+            continue;
+        }
+#endif
         std::filesystem::rename(tempPath, finalPath, ec);
         if (ec) {
             SPDLOG_ERROR("Save: renaming {} into place failed: {} (attempt {} of {})", tempPath.string(),
                          ec.message(), attempt, kAttempts);
             continue;
         }
+#ifdef SOH_SAVE_FSYNC
+        // The save is in place either way; a failed directory sync only means the rename may not
+        // survive a power cut, so it is logged and not retried.
+        if (!SyncPath(finalPath.parent_path(), true)) {
+            SPDLOG_WARN("Save: fsync of {} failed after the rename", finalPath.parent_path().string());
+        }
+#endif
 #endif
         return true;
     }
 
     // Loud, because the alternative is a player who thinks the game saved. The previous save is
-    // still the previous save, which is the whole point, but nothing on screen says so yet.
+    // still the previous save, which is the whole point, and the screen says so.
     std::error_code ec;
     std::filesystem::remove(tempPath, ec);
     SPDLOG_ERROR("Save: gave up writing {}. The previous save is intact and this one was not written.",
                  finalPath.string());
+    ReportSaveFailure(finalPath);
     return false;
 }
 
@@ -1267,7 +1315,7 @@ void SaveManager::SaveFileThreaded(int fileNum, SaveContext* saveContext, int se
     InitMeta(fileNum);
     // The hooks still fire on a failed write. Plenty of game and UI state keys off OnSaveFile, and
     // suppressing it would trade a known data-loss bug for an unknown state one. The failure is in
-    // the log and in the line below; making it visible to the player is the outstanding half.
+    // the log, in the line below, and on screen (WriteJsonVerified's notification).
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnSaveFile>(fileNum, sectionID);
     SPDLOG_INFO("Save File Finish - fileNum: {} ({})", fileNum, written ? "written" : "NOT WRITTEN");
     saveMtx.unlock();
