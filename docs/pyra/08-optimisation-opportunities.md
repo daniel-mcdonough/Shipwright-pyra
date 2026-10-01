@@ -4159,3 +4159,37 @@ GC320 arm +69 µs (t 3.0, MDE 55): nothing at the cap. The two skip arms differ 
 
 Not tested: the GC320 reading the SGX's GBM buffer (a dma-buf from omapdrm GEM into etnaviv; X's 2D acceleration
 already works on omapdrm buffers, so the path exists) and synchronising the blit with the SGX's frame.
+
+## 8.55 Item F's chain works end to end: SGX → dma-buf → GC320 rotate → scaled plane, 60 fps, no fence needed (2026-10-02)
+
+§8.54 left two unknowns: the GC320 reading the SGX's GBM buffer, and syncing the blit to the SGX's frame. The
+hardware repo's `experiments/kms-plane/kmsprobe` grew a `chain` mode (the GC320 stream moved to `gc320.h`, shared
+with `gc320rot`; `chaintest.sh` wraps the on-screen run in a VT switch). Each frame the SGX renders a 640×360 GBM
+surface (a per-frame colour, a green top-left corner; `KMSPROBE_LOAD=N` adds N blended full-frame quads so the
+frame takes real 3D time), the locked bo is exported from omapdrm (`drmPrimeHandleToFD`) and imported into etnaviv
+(`etna_bo_from_dmabuf`, once per bo), and the GC320 rotates it clockwise into one of two 360×640 omapdrm scanout bos
+(`OMAP_BO_SCANOUT | OMAP_BO_WC`, also imported into etnaviv), which a plane scales 2× to the 720×1280 panel.
+
+**The dma-buf handoff works both ways**: the SGX's GBM bos and the omapdrm scanout bos all import into etnaviv, and
+the blit is exact in orientation (the green corner lands top-right of the portrait buffer, as clockwise should).
+Import + blit + finish: 1.13-1.27 ms a frame of CPU wall time.
+
+**No sync is needed beyond the lock.** `gbm_surface_lock_front_buffer` waits for the SGX to finish the frame: split,
+issuing the draws costs 0.02 / 0.53 / 2.01 ms at load 0 / 200 / 600, the swap ~0.1 ms, and **the lock 0.75 / 4.77 /
+12.53 ms**, growing with the GPU work. An EGL fence (`EGL_KHR_fence_sync`, present) after the lock then waits a flat
+0.3-0.4 ms whatever the load, and with no wait at all **0 of ~1,400 frames were stale** at loads 0-600 (a stale frame
+would show the bo's previous colour). One exception, not reproduced: frame 1 of the first run after boot (no load)
+had the body right and both top corners black, i.e. read mid-render; every later run's frame 1 was whole. A game build
+should still put an EGL fence behind the first frame or two (0.3 ms) rather than trust that.
+
+**On the panel** (`chaintest.sh 8 200 none`, run twice, the owner watching): **481 frames in 8.00 s, 60.1 fps, 0
+failures**; render + lock 5.9-6.0 ms, blit 1.27 ms; the plane at crtc-0 with a 360×640 fb; nothing in dmesg; X came
+back on VT 7. The owner saw the green block top-left with the Pyra held as a landscape handheld and the colour cycling
+smoothly: right way up, no tearing seen.
+
+**One thing a build must do that the probe did not:** plane-0 kept scanning out X's 1280×720 framebuffer under the
+game's plane the whole time. The KMS build should disable plane-0 (or point it at a tiny black buffer) while it runs,
+or the display controller keeps fetching a full-screen buffer nobody sees; its watts are not in §8.54's numbers.
+
+Not yet built or priced: the game on this path (its own EGL/GBM window, evdev input, ImGui on a second plane or in
+the frame, the VT switch around a run), and the chain's watts against today's desktop present with X's window copy.
