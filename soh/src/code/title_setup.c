@@ -1,6 +1,6 @@
 #include "global.h"
 
-#ifdef SOH_BENCHMARK
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
 #include "soh/Enhancements/benchmark.h"
 #endif
 
@@ -8,7 +8,7 @@ void TitleSetup_InitImpl(GameState* gameState) {
     osSyncPrintf("ゼルダ共通データ初期化\n"); // "Zelda common data initalization"
     SaveContext_Init();
     gameState->running = false;
-#ifdef SOH_BENCHMARK
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
     // Skip the logo, title screen and file select entirely and drop straight into the fixture
     // scene on a debug save, the same way the debug warp screen reaches Play_Init.
     if (Benchmark_IsActive()) {

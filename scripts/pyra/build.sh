@@ -15,7 +15,8 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE=soh-pyra-cross
-BUILD_DIR=build-pyra
+# PYRA_BUILD_DIR: a second tree beside build-pyra, e.g. the counter-free harness build (report 12).
+BUILD_DIR="${PYRA_BUILD_DIR:-build-pyra}"
 # Proprietary PowerVR SGX driver, rsynced off the device. Not redistributable,
 # so it lives outside the repo and is mounted read-only.
 DDK="${PYRA_DDK:-$HOME/.cache/pyra-ddk}"

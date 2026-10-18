@@ -82,6 +82,16 @@ if(SOH_BENCHMARK)
     message(STATUS "SOH_BENCHMARK enabled - benchmark harness compiled in")
     add_compile_definitions(SOH_BENCHMARK)
 endif()
+# The counter-free harness (soh/soh/Enhancements/benchlite.cpp, report 12): the same fixture in
+# two different builds. Never together with SOH_BENCHMARK.
+option(SOH_BENCHMARK_LITE "Build the counter-free benchmark harness, for comparing builds" OFF)
+if(SOH_BENCHMARK_LITE)
+    if(SOH_BENCHMARK)
+        message(FATAL_ERROR "SOH_BENCHMARK and SOH_BENCHMARK_LITE are exclusive")
+    endif()
+    message(STATUS "SOH_BENCHMARK_LITE enabled - counter-free benchmark harness compiled in")
+    add_compile_definitions(SOH_BENCHMARK_LITE)
+endif()
 
 set(NATO_PHONETIC_ALPHABET
   "Alfa" "Bravo" "Charlie" "Delta" "Echo" "Foxtrot" "Golf" "Hotel"

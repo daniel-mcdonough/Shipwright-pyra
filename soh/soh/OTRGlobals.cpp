@@ -26,7 +26,7 @@
 #include "Enhancements/controls/SohInputEditorWindow.h"
 #include "Enhancements/audio/AudioCollection.h"
 #include "Enhancements/debugconsole.h"
-#ifdef SOH_BENCHMARK
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
 #include "Enhancements/benchmark.h"
 #endif
 #include "Enhancements/randomizer/randomizer.h"
@@ -1791,15 +1791,19 @@ void RunCommands(Gfx* Commands, const std::vector<std::unordered_map<Mtx*, MtxF>
     ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIWidgets::ColorValues.at(themeColor));
     for (const auto& m : mtx_replacements) {
 #ifdef SOH_BENCHMARK
+        Benchmark_SplitMark(SPLIT_WIN_BEGIN, 0);
+#endif
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
         // One iteration is one rendered frame and one buffer swap, which is the unit the
         // benchmark counts. A game tick emits InterpolationFPS/20 of them, so counting ticks
         // instead would measure something else entirely.
-        Benchmark_SplitMark(SPLIT_WIN_BEGIN, 0);
         Benchmark_FrameBegin();
 #endif
         wnd->DrawAndRunGraphicsCommands(Commands, m);
-#ifdef SOH_BENCHMARK
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
         Benchmark_FrameEnd();
+#endif
+#ifdef SOH_BENCHMARK
         Benchmark_SplitMark(SPLIT_WIN_END, 0);
 #endif
         intp->mInterpolationIndex++;

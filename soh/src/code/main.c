@@ -7,7 +7,7 @@
 #include "vt.h"
 #include "stdio.h"
 #include <soh/Enhancements/bootcommands.h>
-#ifdef SOH_BENCHMARK
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
 #include "soh/Enhancements/benchmark.h"
 #endif
 #include "soh/OTRGlobals.h"
@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
     // TODO: Was moved to below InitOTR because it requires window to be setup. But will be late to catch crashes.
     CrashHandlerRegisterCallback(CrashHandler_PrintSohData);
     BootCommands_Init();
-#ifdef SOH_BENCHMARK
+#if defined(SOH_BENCHMARK) || defined(SOH_BENCHMARK_LITE)
     Benchmark_Init();
 #endif
 
