@@ -1,55 +1,138 @@
 ![Ship of Harkinian](docs/shiptitle.darkmode.png#gh-dark-mode-only)
 ![Ship of Harkinian](docs/shiptitle.lightmode.png#gh-light-mode-only)
 
-## Website
+# Ship of Harkinian for the DragonBox Pyra
 
-Official Website: https://www.shipofharkinian.com/
+This is an unofficial port of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) 9.2.3
+"Ackbar" to the [DragonBox Pyra](https://pyra-handheld.com/) handheld (OMAP5432, PowerVR SGX544MP2,
+OpenGL ES 2.0, 1280×720 panel). It targets the Pyra only. It was tuned on the device rather than kept
+upstreamable, so use [upstream's releases](https://github.com/HarbourMasters/Shipwright/releases) on
+any other platform.
 
-## Discord
+**Do not take problems with this port to the Ship of Harkinian Discord or issue tracker.** They do
+not support it. Open an issue here instead.
 
-Official Discord: https://discord.com/invite/shipofharkinian
+The port spans three repositories:
 
-If you're having any trouble after reading through this `README`, feel free to ask for help in the Support text channels. Please keep in mind that we do not condone piracy.
+| Repository | What it holds |
+|---|---|
+| **Shipwright-pyra** (this one) | The game: the GLES2 port, Pyra defaults, performance work and save safety. Branch `feature/pyra-port`. |
+| [libultraship-pyra](https://github.com/daniel-mcdonough/libultraship-pyra) | The engine library, as a submodule: the GLES2 renderer, the GL render thread, config-file safety. Branch `feature/gles2-pyra`. |
+| [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra) | The OS side: the `pyra-soh` launcher, the SGX driver fix, input and thermal fixes, kernel patches. |
 
-# Quick Start
+## What you get
 
-The Ship does not include any copyrighted assets.  You are required to provide a supported copy of the game.
+- **A steady 30 fps on a 750 MHz CPU.** OpenGL work moves to a second core, so the busiest scenes
+  tested (Market, Death Mountain Trail) miss the 30 fps deadline on only about 1–2% of frames. A
+  lower clock means a cooler device and longer battery life.
+- **Settings tuned for the Pyra on first launch.** It renders at 640×360 (half the panel), the frame
+  rate is capped at 30, VSync is off, MSAA is off (GLES2 has none) and textures use bilinear
+  filtering. These are written only when a setting is missing, so your own menu changes stick.
+- **Faster rendering with no visual change.** Draw calls, asset lookups, frame interpolation and GL
+  state handling were each reworked. Except for draw grouping, which moves a few pixels by one
+  colour step, the output is pixel-identical to before.
+- **Saves you can trust.** Every save is written to a temporary file, read back and compared, synced
+  to the SD card and only then swapped in. `global.sav` and `shipofharkinian.json` used to be written
+  straight over the live file. If a save fails, the game says so on screen and the previous save is
+  untouched.
+- **A clean quit.** Alt+F4, SIGTERM and Ctrl+C now save and exit in a second or two. Before, quitting
+  crashed and SIGTERM hung.
+- Everything else is Ship of Harkinian 9.2.3: enhancements, randomizer, mods.
 
-### 1. Verify your ROM dump
-You can verify you have dumped a supported copy of the game by using the compatibility checker at https://ship.equipment/. If you'd prefer to manually validate your ROM dump, you can cross-reference its `sha1` hash with the hashes [here](docs/supportedHashes.json).
+## Getting started
 
-### 2. Download The Ship of Harkinian from [Releases](https://github.com/HarbourMasters/Shipwright/releases)
+There are no prebuilt binaries. The game must link the PowerVR driver that is on your Pyra, and that
+driver cannot be redistributed. You need an x86_64 Linux PC with Docker, plus your own legally dumped
+ROM ([supported versions](docs/supportedHashes.json)).
 
-### 3. Launch the Game!
-#### Windows
-* Extract the zip
-* Launch `soh.exe`
+1. **Prepare the Pyra.** The port is built and tested on Debian 13 (trixie) with the fixes from
+   [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra). Two of them matter most:
+   - The SGX driver patch (`pyra-wsegl-fdfix.sh`). The driver closes file descriptors twice, which
+     corrupts logs and can make saves fail.
+   - The `pyrainput` service. Without it the nubs and buttons are dead.
 
-#### Linux
-* Place your supported copy of the game in the same folder as the appimage.
-* Execute `soh.appimage`.  You may have to `chmod +x` the appimage via terminal.
+   The stock bookworm image has not been tested.
+2. **Copy the GPU driver to the PC.** Run
+   `rsync -a pyra@<your-pyra>:/opt/omap5-sgx-ddk-um-linux/ ~/.cache/pyra-ddk/`.
+3. **Cross-build the game** (`git clone --recursive`, then):
+   ```sh
+   ./scripts/pyra/build.sh image      # build the cross-compile container
+   ./scripts/pyra/build.sh configure
+   ./scripts/pyra/build.sh build      # -> build-pyra/soh/soh.elf
+   ```
+4. **Build the asset archives on the PC.** The extractor cannot run in the cross build, so make a
+   normal desktop build of this same branch (see [docs/BUILDING.md](docs/BUILDING.md)). Then:
+   - Run `cmake --build build-cmake --target GenerateSohOtr` to make `soh.o2r`. It must come from
+     this branch, because it carries this port's shaders.
+   - Launch that desktop build once with your ROM next to it to make `oot.o2r`.
+5. **Install.** Copy `soh.elf`, `soh.o2r` and `oot.o2r` into `~/soh-pyra` on the Pyra, then start the
+   game with `pyra-soh` from dragonbox-pyra. The launcher points SDL at the SGX driver, starts the
+   game from its own directory (where the game looks for saves and config) and pins the CPU at
+   750 MHz. To launch by hand instead, run
+   `cd ~/soh-pyra && SDL_VIDEO_X11_FORCE_EGL=1 SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1 ./soh.elf`
+   from a logged-in desktop session.
 
-#### macOS
-* Run `soh.app`. When prompted, select your supported copy of the game.
-* You should see a notification saying `Processing OTR`, then, once the process is complete, you should get a notification saying `OTR Successfully Generated`, then the game should start.
+Controls are upstream's standard gamepad mapping. The Pyra's nubs and buttons reach the game as an
+SDL gamepad through `pyrainput`. Rebind them in the in-game input editor.
 
-#### Nintendo Switch
-* Run one of the PC releases to generate an `oot.o2r` and/or `oot-mq.o2r` file. After launching the game on PC, you will be able to find these files in the same directory as `soh.exe` or `soh.appimage`. On macOS, these files can be found in `/Users/<username>/Library/Application Support/com.shipofharkinian.soh/`
-* Copy the files to your sd card
-```
-sdcard
-└── switch
-    └── soh
-        ├── oot-mq.o2r
-        ├── oot.o2r
-        ├── soh.nro
-        └── soh.o2r
-```
-* Launch via Atmosphere's `Game+R` launcher method.
+**Known limitations:**
+- There is no MSAA.
+- On GLES2 the depth buffer cannot be read back, so lens flare and light glows are not hidden behind
+  walls.
+- Textures that mirror in one direction and clamp in the other fall back to mirroring in both.
+- Closing the window from outside (for example `xdotool windowclose`) still hangs the game. Use
+  Alt+F4.
+- Audio runs at the game's native 32 kHz through PulseAudio. 44.1 kHz was measured and was slower.
 
-### 4. Play!
+## Architectural changes and what they bought
 
-Congratulations, you are now sailing with the Ship of Harkinian! Have fun!
+Every number below is a change in Ship of Harkinian or libultraship alone. Each was measured by an
+A/B benchmark built into the game: with the camera frozen at a fixed spot (Market Day, Hyrule Field
+or Kokiri Forest), both versions alternate in one process, seconds apart, at a fixed CPU clock. The
+OS, kernel, driver, temperature and clock are therefore the same in both, so OS-side work (driver
+fixes, undervolt, thermal tuning) is excluded. "Real play" rows come from the same A/B run during
+normal play.
+
+Two cautions:
+- The percentages measure different things (frame time, render-thread CPU, window CPU), so **do not
+  add them up**.
+- No single run compares stock against everything on. The closest is a same-day chain at the Market
+  at 1250 MHz: **33.4 ms → 23.8 ms per frame (29.9 → 42.0 fps)**. It covers three of these changes,
+  with bilinear filtering already on, and it predates the render thread and the later Lean changes.
+
+| Change | Why | Measured gain |
+|---|---|---|
+| **GLES2 renderer** in libultraship (`USE_OPENGLES2`) | The SGX544 only speaks OpenGL ES 2.0; upstream's renderer targets desktop GL and GLES 3 | Makes it run at all. Not a speed change |
+| **GL render thread** (`RenderThread 2`): renderer calls are recorded and replayed on a GL thread on the second core | The game and GL driver shared one core | Frame time −28% at Market (~34 → 47 fps), −33% at Hyrule Field, at 750 MHz. In real play, frames over 40 ms went from 4.3% to 1.6%. Uses ~10% more total CPU across both cores |
+| **Client-side vertex arrays** (`LeanGLState`), replacing a `glBufferData` upload per draw | Buffer uploads are slow on this driver | Frame time −13.4% Market (36.3 → 42.0 fps), −7.3% Field. Real play −13.6% render CPU, Kokiri −20% |
+| **Per-frame asset-lookup cache** (`LeanResLookup`) | About 418 resource lookups per frame, each hashing a path | Frame time −12.1% Market, −14.6% Field. Real play −11.7% |
+| **Arena-allocated interpolation recording** (`LeanInterp`, `LeanInterpMap`) | Building the frame-interpolation tree cost 2.15 ms | Render CPU −8.0% Market (+0.9% more from moving the map instead of copying it), −2.7% Field. Real play −8.1% |
+| **Exact cache of the game's own path lookups** (`LeanGameLookup`) | Repeated string building and hashing | −7.3% Market, −4.4% Field. Real play −5.6% |
+| **Grouping opaque draws by shader and texture** (`LeanGroup`, `LeanTexReuse`) | Every program or texture switch flushes a batch | Draws per frame 261 → 145. Window CPU −5.8% and −1.1% |
+| **Simpler colour-combiner shaders** (`ShaderOpts 3`): drop a no-op wrap, pass sizes as `vec2` | Fragment ALU is scarce on the SGX | Frame time −4.9% Market (29.9 → 31.4 fps), −4.6% Field |
+| **Bilinear texture filtering by default** instead of three-point | Three-point costs three fetches plus ALU per pixel in the shader; on this content bilinear looks the same at 3× zoom | ~−20% frame time at Kokiri (27.1 → 33.9 fps). Measured before the CPU-clock pin was fixed, so the size is approximate |
+| **Allocation-free hot paths** (`LeanTexLoad`, `LeanCVar`, `LeanGeom`, `LeanCosmetics`) | Heap allocations per frame | −1% to −5% each. Allocations per frame 3,202 → 178 across these and the caches above |
+| **Blend off for the present pass** (`LeanPresent`) | The final full-screen blit does not need blending | −0.32 ms of GPU time per frame (−14% of that pass) |
+| **640×360 internal resolution** by default | Halving each axis quarters the pixels the GPU fills | ~+75% fps (16.4 → 28.7) against 1280×720. An early, noisier measurement taken before audio moved off the CPU, so indicative only |
+| **Verified, synced saves** (SaveManager, libultraship `Config::Save`) | Saves were being silently corrupted, and `global.sav` was written over the live file | Safety, not speed. A full save with both syncs takes 38 ms |
+
+Every Lean change is a `gSettings.Lean*` setting, on by default. Set it to 0 in
+`shipofharkinian.json` to compare. The method, every measurement and the ideas that were tried and
+dropped are in [docs/pyra/](docs/pyra/README.md). Start with
+[08-optimisation-opportunities.md](docs/pyra/08-optimisation-opportunities.md) and
+[11-two-core-render.md](docs/pyra/11-two-core-render.md).
+
+---
+
+# Upstream Ship of Harkinian
+
+The rest of this README is upstream's, lightly trimmed. The links below point to the upstream project.
+
+- Website: https://www.shipofharkinian.com/
+- Discord: https://discord.com/invite/shipofharkinian (upstream support; not for this port)
+
+The Ship does not include any copyrighted assets. You are required to provide a supported copy of the
+game, and we do not condone piracy.
 
 # Configuration
 
