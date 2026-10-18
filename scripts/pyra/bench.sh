@@ -8,6 +8,7 @@
 #   ./scripts/pyra/bench.sh deploy                 copy the binary to the device
 #   ./scripts/pyra/bench.sh run [VAR=VAL ...]      run once, print the results
 #   ./scripts/pyra/bench.sh ab <cvar> <a> <b>      interleaved A/B on one CVar
+#   ./scripts/pyra/bench.sh preset <file>          interleaved A/B where an arm is a set of CVars
 #   ./scripts/pyra/bench.sh watch start|read|stop  author a fixture with the controls
 #
 # Any SOH_BENCH* variable can be passed through on the command line, e.g.
@@ -117,8 +118,26 @@ unpin_cpu() {
     echo \"restored \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq)-\$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq) kHz, governor \$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor), sampling_down_factor \$(cat /sys/devices/system/cpu/cpufreq/ondemand/sampling_down_factor 2>/dev/null || echo -)\"" >&2
 }
 
+# SOH_BENCH_AB_PRESET=<file> names a file on this host (scripts/pyra/presets/); it is copied into
+# the install directory and the argument rewritten to the device's copy. Used by run and watch.
+PRESET_ARGS=()
+push_preset() {
+  PRESET_ARGS=()
+  local a f
+  for a in "$@"; do
+    if [[ "$a" == SOH_BENCH_AB_PRESET=* ]]; then
+      f="${a#SOH_BENCH_AB_PRESET=}"
+      [[ -f "$f" ]] || { echo "preset not found: $f" >&2; exit 1; }
+      scp -q "$f" "$HOST:$REMOTE_DIR/preset-$(basename "$f")"
+      a="SOH_BENCH_AB_PRESET=$REMOTE_DIR/preset-$(basename "$f")"
+    fi
+    PRESET_ARGS+=("$a")
+  done
+}
+
 run() {
-  local env_args=("SOH_BENCH=1" "SOH_BENCH_OUT=$REMOTE_DIR/bench.txt" "$@")
+  push_preset "$@"
+  local env_args=("SOH_BENCH=1" "SOH_BENCH_OUT=$REMOTE_DIR/bench.txt" "${PRESET_ARGS[@]}")
   trap unpin_cpu EXIT INT TERM
   pin_cpu
   echo "==> ${env_args[*]}" >&2
@@ -162,7 +181,8 @@ run() {
 watch_start() {
   watch_stop
   if [[ "${PYRA_WATCH_PIN:-0}" == 1 ]]; then pin_cpu; fi
-  local env_args=("SOH_BENCH=1" "SOH_BENCH_WATCH=1" "$@")
+  push_preset "$@"
+  local env_args=("SOH_BENCH=1" "SOH_BENCH_WATCH=1" "${PRESET_ARGS[@]}")
   echo "==> ${env_args[*]}" >&2
   # The redirect and the & are grouped around the launch alone. Putting them after a
   # `cd ... && rm ... &&` list backgrounds the whole list, so the earlier commands keep
@@ -209,5 +229,11 @@ case "${1:-run}" in
     cvar="$1"; a="$2"; b="$3"; shift 3
     run "SOH_BENCH_AB_CVAR=$cvar" "SOH_BENCH_AB_VALUES=$a,$b" "$@"
     ;;
-  *) echo "usage: $0 {deploy|run|ab|watch}" >&2; exit 1 ;;
+  preset)
+    shift
+    [[ $# -ge 1 ]] || { echo "usage: $0 preset <file> [VAR=VAL ...]" >&2; exit 1; }
+    f="$1"; shift
+    run "SOH_BENCH_AB_PRESET=$f" "$@"
+    ;;
+  *) echo "usage: $0 {deploy|run|ab|preset|watch}" >&2; exit 1 ;;
 esac

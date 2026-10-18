@@ -1,0 +1,4 @@
+# Validation: only ShaderOpts differs, so the run must reproduce report 8 section 8.20's
+# single-CVar A/B (bench.sh ab gSettings.ShaderOpts 0 3) within its MDE.
+off: gSettings.ShaderOpts=0
+on: gSettings.ShaderOpts=3

@@ -119,6 +119,13 @@ struct Config {
     std::string abCVar;
     std::vector<std::string> abValues;
     int reps = 5; // pairs, so reps * abValues.size() segments
+    // SOH_BENCH_AB_PRESET: an arm is a set of CVars rather than one value. abValues then holds the
+    // arm names and abCVar reads "preset=<file>", so every path that tests abCVar still sees an A/B.
+    struct PresetArm {
+        std::string name;
+        std::vector<std::pair<std::string, std::string>> sets;
+    };
+    std::vector<PresetArm> preset;
 
     // The window size is the render target size, so a window that is not always the same size
     // is a resolution confound sitting inside every measurement. Fullscreen is the only size
@@ -215,6 +222,51 @@ std::vector<std::string> SplitCommas(const std::string& in) {
         start = comma + 1;
     }
     return out;
+}
+
+// SOH_BENCH_AB_PRESET's file: one arm per line, "name: cvar=value cvar=value ...". Blank lines and
+// lines starting with # are skipped. Arms run in file order, ABBA when there are two.
+std::vector<Config::PresetArm> ParsePreset(const char* path) {
+    std::vector<Config::PresetArm> arms;
+    FILE* f = fopen(path, "r");
+    if (f == nullptr) {
+        SPDLOG_ERROR("Benchmark: cannot read preset {}", path);
+        return arms;
+    }
+    char buf[4096];
+    while (fgets(buf, sizeof(buf), f) != nullptr) {
+        std::string line(buf);
+        const size_t colon = line.find(':');
+        const size_t first = line.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos || line[first] == '#' || colon == std::string::npos) {
+            continue;
+        }
+        Config::PresetArm arm;
+        arm.name = line.substr(first, colon - first);
+        arm.name.erase(arm.name.find_last_not_of(" \t") + 1);
+        size_t pos = colon + 1;
+        while (true) {
+            const size_t start = line.find_first_not_of(" \t\r\n", pos);
+            if (start == std::string::npos) {
+                break;
+            }
+            size_t end = line.find_first_of(" \t\r\n", start);
+            if (end == std::string::npos) {
+                end = line.size();
+            }
+            const std::string token = line.substr(start, end - start);
+            const size_t eq = token.find('=');
+            if (eq == std::string::npos || eq == 0) {
+                SPDLOG_ERROR("Benchmark: preset arm {}: \"{}\" is not cvar=value, skipped", arm.name, token);
+            } else {
+                arm.sets.emplace_back(token.substr(0, eq), token.substr(eq + 1));
+            }
+            pos = end;
+        }
+        arms.push_back(arm);
+    }
+    fclose(f);
+    return arms;
 }
 
 bool ParseVec3(const char* name, float out[3]) {
@@ -451,14 +503,19 @@ bool gInitialised = false;
 bool gPlayerMoved = false;
 // The A/B CVar is left exactly as it was found. Without this a run would quietly persist
 // whichever arm happened to be last into the user's config on exit.
+// Whether each A/B CVar existed before the run is kept too. The game saves CVars on its own mid-run
+// (a GUI window's visibility sync can trigger it), so an arm can land in the config file; §8.31
+// found gSettings.LeanCVar=1 persisted that way, silently on in every later run. At the end each
+// CVar is put back exactly - cleared if it was absent, since reading an absent CVar as 0 would
+// replace a default of 1 - and the config is saved. A preset run keeps one entry per CVar any of
+// its arms touches.
+struct OriginalCVar {
+    std::string name;
+    std::string value;
+    bool existed = false;
+};
 bool gHaveOriginalArm = false;
-std::string gOriginalArm;
-// Whether the A/B CVar existed before the run. The game saves CVars on its own mid-run (a GUI
-// window's visibility sync can trigger it), so an arm can land in the config file; §8.31 found
-// gSettings.LeanCVar=1 persisted that way, silently on in every later run. At the end the CVar
-// is put back exactly - cleared if it was absent, since reading an absent CVar as 0 would
-// replace a default of 1 - and the config is saved.
-bool gOriginalArmExisted = false;
+std::vector<OriginalCVar> gOriginalArm;
 
 int ArmCount() {
     return gCfg.abCVar.empty() ? 1 : (int)gCfg.abValues.size();
@@ -486,25 +543,18 @@ size_t ArmIndexForSegment(int segment) {
 // SetTextureFilter does that for us. CVAR_SHADER_OPTS is compiled in the same way and drops the
 // cache directly. Anything else here is assumed to be read live; if a future A/B target is not,
 // it needs a case adding rather than silently measuring nothing.
-bool ArmIsFloat() {
-    return gCfg.abCVar == std::string(CVAR_INTERNAL_RESOLUTION);
+bool CVarIsFloat(const std::string& name) {
+    return name == std::string(CVAR_INTERNAL_RESOLUTION);
 }
 
-void ApplyArm(const std::string& value) {
-    // SOH_BENCH_ARM_FILE: write <SOH_BENCH_ARM_PREFIX><value>-<n> to this file on every change (n counts
-    // the changes, so ABBA's back-to-back segments of one arm stay apart), so an outside sampler
-    // (hardware repo thermcost.sh) can label its readings by arm within one process (§8.52).
-    if (const char* armFile = getenv("SOH_BENCH_ARM_FILE")) {
-        static int applied = 0;
-        if (FILE* f = fopen(armFile, "w")) {
-            fprintf(f, "%s%s-%d\n", EnvOr("SOH_BENCH_ARM_PREFIX", ""), value.c_str(), applied++);
-            fclose(f);
-        }
-    }
-    if (ArmIsFloat()) {
-        CVarSetFloat(gCfg.abCVar.c_str(), strtof(value.c_str(), nullptr));
-    } else {
-        CVarSetInteger(gCfg.abCVar.c_str(), (int)strtol(value.c_str(), nullptr, 0));
+// The side effects above, for a set of CVars that has just changed. Run once after all are set, so
+// a preset arm that changes TextureFilter and ShaderOpts together compiles one set of shaders.
+void RunSideEffects(const std::vector<std::string>& names) {
+    bool filter = false, shaderOpts = false, resolution = false;
+    for (const auto& name : names) {
+        filter |= name == std::string(CVAR_TEXTURE_FILTER);
+        shaderOpts |= name == std::string(CVAR_SHADER_OPTS);
+        resolution |= CVarIsFloat(name);
     }
     // Read here rather than per lookup, so the probe's own flag costs nothing (§8.31).
     const int memoLookup = CVarGetInteger("gSettings.ProbeMemoLookup", 0);
@@ -518,15 +568,113 @@ void ApplyArm(const std::string& value) {
         return;
     }
 
-    if (gCfg.abCVar == std::string(CVAR_TEXTURE_FILTER)) {
-        wnd->SetTextureFilter((Fast::FilteringMode)strtol(value.c_str(), nullptr, 0));
-    } else if (gCfg.abCVar == std::string(CVAR_SHADER_OPTS)) {
+    if (filter) {
+        // Drops the shader cache as well, which covers a ShaderOpts change in the same set. Read
+        // back from the CVar so that a cleared one takes the shipped default.
+        wnd->SetTextureFilter((Fast::FilteringMode)CVarGetInteger(CVAR_TEXTURE_FILTER, Fast::FILTER_LINEAR));
+    } else if (shaderOpts) {
         wnd->ResetShaderCache();
-    } else if (ArmIsFloat()) {
+    }
+    if (resolution) {
         // The interpreter copies the multiplier once at Init; the CVar alone changes nothing.
         // Gui::CalculateGameViewport rescales the framebuffer from it on the next frame.
-        wnd->SetResolutionMultiplier(strtof(value.c_str(), nullptr));
+        wnd->SetResolutionMultiplier(CVarGetFloat(CVAR_INTERNAL_RESOLUTION, 1.0f));
     }
+}
+
+void ApplySets(const std::vector<std::pair<std::string, std::string>>& sets) {
+    std::vector<std::string> names;
+    for (const auto& [name, value] : sets) {
+        if (CVarIsFloat(name)) {
+            CVarSetFloat(name.c_str(), strtof(value.c_str(), nullptr));
+        } else {
+            CVarSetInteger(name.c_str(), (int)strtol(value.c_str(), nullptr, 0));
+        }
+        names.push_back(name);
+    }
+    RunSideEffects(names);
+}
+
+std::vector<std::pair<std::string, std::string>> SetsForArm(const std::string& value) {
+    if (gCfg.preset.empty()) {
+        return { { gCfg.abCVar, value } };
+    }
+    for (const auto& arm : gCfg.preset) {
+        if (arm.name == value) {
+            return arm.sets;
+        }
+    }
+    return {};
+}
+
+// Every CVar the run can change: the A/B CVar, or the union of a preset's arms.
+std::vector<std::string> ArmCVars() {
+    std::vector<std::string> names;
+    for (const auto& value : gCfg.abValues) {
+        for (const auto& set : SetsForArm(value)) {
+            if (std::find(names.begin(), names.end(), set.first) == names.end()) {
+                names.push_back(set.first);
+            }
+        }
+    }
+    return names;
+}
+
+void SaveOriginalArm() {
+    if (gHaveOriginalArm) {
+        return;
+    }
+    gOriginalArm.clear();
+    for (const auto& name : ArmCVars()) {
+        OriginalCVar o;
+        o.name = name;
+        o.value = CVarIsFloat(name) ? std::to_string(CVarGetFloat(name.c_str(), 1.0f))
+                                    : std::to_string(CVarGetInteger(name.c_str(), 0));
+        o.existed = CVarGet(name.c_str()) != nullptr;
+        gOriginalArm.push_back(o);
+    }
+    gHaveOriginalArm = true;
+}
+
+// sideEffects is false at shutdown, where only the stored values matter.
+void RestoreOriginalArm(bool sideEffects) {
+    if (!gHaveOriginalArm) {
+        return;
+    }
+    std::vector<std::string> names;
+    for (const auto& o : gOriginalArm) {
+        if (!o.existed) {
+            CVarClear(o.name.c_str());
+        } else if (CVarIsFloat(o.name)) {
+            CVarSetFloat(o.name.c_str(), strtof(o.value.c_str(), nullptr));
+        } else {
+            CVarSetInteger(o.name.c_str(), (int)strtol(o.value.c_str(), nullptr, 0));
+        }
+        names.push_back(o.name);
+    }
+    if (sideEffects) {
+        RunSideEffects(names);
+    }
+    CVarSave();
+    gHaveOriginalArm = false;
+}
+
+void ApplyArm(const std::string& value) {
+    // SOH_BENCH_ARM_FILE: write <SOH_BENCH_ARM_PREFIX><value>-<n> to this file on every change (n counts
+    // the changes, so ABBA's back-to-back segments of one arm stay apart), so an outside sampler
+    // (hardware repo thermcost.sh) can label its readings by arm within one process (§8.52).
+    if (const char* armFile = getenv("SOH_BENCH_ARM_FILE")) {
+        static int applied = 0;
+        if (FILE* f = fopen(armFile, "w")) {
+            fprintf(f, "%s%s-%d\n", EnvOr("SOH_BENCH_ARM_PREFIX", ""), value.c_str(), applied++);
+            fclose(f);
+        }
+    }
+    const auto sets = SetsForArm(value);
+    if (sets.empty()) {
+        SPDLOG_ERROR("Benchmark: preset has no arm named \"{}\"", value);
+    }
+    ApplySets(sets);
 }
 
 // Two-sided 5% critical value of Student's t. Small table rather than a computed inverse: the
@@ -1130,6 +1278,8 @@ void WatchBlockFrame(uint32_t micros, uint64_t windowCpu) {
         }
         gWatch = WatchBlock{};
         if (!gCfg.abCVar.empty()) {
+            // Watch mode never ends on its own; Benchmark_Shutdown puts these back at quit.
+            SaveOriginalArm();
             ApplyArm(gCfg.abValues[ArmIndexForSegment(gWatchBlockIndex)]);
         }
         return;
@@ -1196,10 +1346,7 @@ void EnterMeasuring() {
     gRunSegments.push_back(Segment{ gCfg.abCVar.empty() ? std::string("single") : gCfg.abValues[0], {} });
     gRunSegments.back().frameMicros.reserve((size_t)gCfg.measureFrames);
     if (!gCfg.abCVar.empty()) {
-        gOriginalArm = ArmIsFloat() ? std::to_string(CVarGetFloat(gCfg.abCVar.c_str(), 1.0f))
-                                    : std::to_string(CVarGetInteger(gCfg.abCVar.c_str(), 0));
-        gHaveOriginalArm = true;
-        gOriginalArmExisted = CVarGet(gCfg.abCVar.c_str()) != nullptr;
+        SaveOriginalArm();
         ApplyArm(gCfg.abValues[0]);
         // Same reasoning as AdvanceSegment: arm 0 may differ from whatever the config booted
         // with, so the first segment gets the same recompilation grace as the rest.
@@ -1219,13 +1366,7 @@ void AdvanceSegment() {
     if (gSegmentIndex >= TotalSegments()) {
         gPhase = Phase::Done;
         WriteResults();
-        if (gHaveOriginalArm) {
-            ApplyArm(gOriginalArm);
-            if (!gOriginalArmExisted) {
-                CVarClear(gCfg.abCVar.c_str());
-            }
-            CVarSave();
-        }
+        RestoreOriginalArm(true);
         if (gCfg.exitWhenDone) {
             Ship::Context::GetInstance()->GetWindow()->Close();
         }
@@ -1316,6 +1457,31 @@ extern "C" void Benchmark_Init(void) {
         }
     }
 
+    if (const char* presetPath = getenv("SOH_BENCH_AB_PRESET")) {
+        if (!gCfg.abCVar.empty()) {
+            SPDLOG_ERROR("SOH_BENCH_AB_PRESET and SOH_BENCH_AB_CVAR are both set; using the preset");
+        }
+        gCfg.abCVar.clear();
+        gCfg.abValues.clear();
+        gCfg.preset = ParsePreset(presetPath);
+        if (gCfg.preset.size() < 2) {
+            SPDLOG_ERROR("SOH_BENCH_AB_PRESET {} needs at least two arms (\"name: cvar=value ...\" per line); "
+                         "falling back to a single-arm run",
+                         presetPath);
+            gCfg.preset.clear();
+        } else {
+            gCfg.abCVar = std::string("preset=") + presetPath;
+            for (const auto& arm : gCfg.preset) {
+                gCfg.abValues.push_back(arm.name);
+                std::string desc;
+                for (const auto& [name, value] : arm.sets) {
+                    desc += " " + name + "=" + value;
+                }
+                SPDLOG_INFO("Benchmark preset arm {}:{}", arm.name, desc);
+            }
+        }
+    }
+
     if (!gCfg.haveEye && !gCfg.havePos) {
         SPDLOG_WARN("Benchmark viewpoint is whatever entrance 0x{:04X} spawns with. That is a property of the "
                     "entrance table, not a considered choice, and some spawns face a wall. Run once, read the "
@@ -1333,6 +1499,15 @@ extern "C" void Benchmark_Init(void) {
                 gCfg.entrance, gCfg.linkAge, gCfg.staticScene, gCfg.settleFrames, gCfg.warmupFrames,
                 gCfg.soakTargetC, gCfg.measureFrames, gCfg.reps,
                 gCfg.abCVar.empty() ? "(none)" : gCfg.abCVar, ReadTempMilliC() / 1000.0);
+}
+
+// From DeinitOTR. Watch mode never ends on its own, so its A/B CVars are put back here, at quit;
+// a frozen run has already restored them and this does nothing.
+extern "C" void Benchmark_Shutdown(void) {
+    if (!gCfg.enabled) {
+        return;
+    }
+    RestoreOriginalArm(false);
 }
 
 extern "C" void Benchmark_SetupDebugSave(void) {

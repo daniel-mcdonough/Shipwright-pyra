@@ -1,0 +1,5 @@
+# Tier 1 of NEXT.md section 0: every fork switch at its upstream value against the shipped
+# defaults, in one process. LeanSwap ships off and stays off in both arms. Internal resolution
+# is a menu setting, not a switch, and is left at the config's 0.5x.
+stock: gSettings.ShaderOpts=0 gSettings.TextureFilter=0 gSettings.RenderThread=0 gSettings.LeanGLState=0 gSettings.LeanResLookup=0 gSettings.LeanGroup=0 gSettings.LeanPresent=0 gSettings.LeanInterp=0 gSettings.LeanInterpMap=0 gSettings.LeanGameLookup=0 gSettings.LeanTexLoad=0 gSettings.LeanCVar=0 gSettings.LeanGeom=0 gSettings.LeanTexReuse=0 gSettings.LeanCosmetics=0 gSettings.LeanSwap=0
+shipped: gSettings.ShaderOpts=3 gSettings.TextureFilter=1 gSettings.RenderThread=2 gSettings.LeanGLState=3 gSettings.LeanResLookup=3 gSettings.LeanGroup=1 gSettings.LeanPresent=1 gSettings.LeanInterp=1 gSettings.LeanInterpMap=1 gSettings.LeanGameLookup=1 gSettings.LeanTexLoad=1 gSettings.LeanCVar=1 gSettings.LeanGeom=1 gSettings.LeanTexReuse=1 gSettings.LeanCosmetics=1 gSettings.LeanSwap=0

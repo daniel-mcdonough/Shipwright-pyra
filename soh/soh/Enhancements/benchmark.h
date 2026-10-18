@@ -35,6 +35,10 @@ void Benchmark_Init(void);
 // the debug warp screen does in Select_LoadGame. Only valid when Benchmark_IsActive().
 void Benchmark_SetupDebugSave(void);
 
+// Puts back any A/B CVars still applied (watch mode never ends on its own) and saves. At quit,
+// from DeinitOTR.
+void Benchmark_Shutdown(void);
+
 // Bracket one rendered frame - that is, one DrawAndRunGraphicsCommands call, not one game tick.
 void Benchmark_FrameBegin(void);
 void Benchmark_FrameEnd(void);

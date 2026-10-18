@@ -160,6 +160,21 @@ Five or six pairs resolves around 0.5% on a quiet device; a single noisy segment
 1.5%, which is why the `mde_us` line matters more than the `t`. If you need to separate "no
 effect" from "no effect this could see", add pairs.
 
+**An arm that is a set of CVars (NEXT.md §0).** `bench.sh preset <file> $MARKET ...` takes the same
+variables as `ab`. The file has one arm per line, `name: cvar=value cvar=value ...`, with `#` comments; arms
+run in file order, ABBA when there are two, and `arm=` in the log is the arm's name (`pairs.py run.log
+<name>`). `bench.sh` copies the file into the install directory as `preset-<basename>`. Every arm change
+sets the whole line, then runs each recompile path once: `TextureFilter` (which also drops the shader
+cache), `ShaderOpts`, `InternalResolution`. `RenderThread` needs nothing extra, since the proxy reads it at
+every `StartFrame`. At the end every CVar any arm touched is put back as it was, cleared if it was absent,
+and saved. In watch mode (`SOH_BENCH_AB_PRESET=<host file>` on `watch start`) that happens at quit, from
+`DeinitOTR`, so `watch stop` (a normal SIGTERM quit since trap 18) leaves the config clean for presets and
+single CVars alike. Ready-made files are in `scripts/pyra/presets/`: `stock-vs-shipped.txt` (Tier 1: every
+switch at its upstream value against shipped defaults), `stock-vs-shipped-3pt.txt` (the same with
+three-point held in both arms), and the two validation files, `null.txt` (identical arms) and
+`shaderopts.txt` (only `ShaderOpts`, which must agree with `ab gSettings.ShaderOpts 0 3` taken in the same
+session).
+
 **Several probe arms in one run (§8.48).** `bench.sh run $MARKET SOH_BENCH_AB_CVAR=<cvar>
 SOH_BENCH_AB_VALUES=0,7,0,24,0,992 SOH_BENCH_REPS=4`: with more than two values the arms go round-robin,
 not ABBA, so interleave the baseline and read the run with `docs/pyra/tools/bracket.py run.log 0 1000`,

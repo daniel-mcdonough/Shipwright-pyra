@@ -1604,6 +1604,9 @@ extern "C" void SaveManager_ThreadPoolWait() {
 }
 
 extern "C" void DeinitOTR() {
+#ifdef SOH_BENCHMARK
+    Benchmark_Shutdown();
+#endif
     SaveManager_ThreadPoolWait();
     OTRAudio_Exit();
     if (CVarGetInteger(CVAR_REMOTE_CROWD_CONTROL("Enabled"), 0)) {
