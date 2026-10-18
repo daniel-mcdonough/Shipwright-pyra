@@ -93,12 +93,26 @@ OS, kernel, driver, temperature and clock are therefore the same in both, so OS-
 fixes, undervolt, thermal tuning) is excluded. "Real play" rows come from the same A/B run during
 normal play.
 
-Two cautions:
-- The percentages measure different things (frame time, render-thread CPU, window CPU), so **do not
-  add them up**.
-- No single run compares stock against everything on. The closest is a same-day chain at the Market
-  at 1250 MHz: **33.4 ms → 23.8 ms per frame (29.9 → 42.0 fps)**. It covers three of these changes,
-  with bilinear filtering already on, and it predates the render thread and the later Lean changes.
+**The whole fork, measured at once** ([report 12](docs/pyra/12-stock-vs-optimised.md)): every switch below
+set to its upstream value against the shipped defaults, in one process, frozen camera, uncapped, at
+640×360. Frame time per frame, 6 pairs per cell:
+
+| Clock | Market | Hyrule Field | Kokiri Forest |
+|---|---|---|---|
+| **750 MHz** (shipped) | 59.0 → 21.4 ms, **−64%** (16.9 → 46.8 fps), t −121, MDE 1.4% | 39.9 → 14.2 ms, **−65%** (25.1 → 70.6 fps), t −138, MDE 1.2% | 54.5 → 18.2 ms, **−67%** (18.4 → 55.0 fps), t −115, MDE 1.5% |
+| **1250 MHz** | 42.0 → 14.4 ms, **−66%** (23.8 → 69.7 fps), t −105, MDE 1.6% | 29.4 → 10.7 ms, **−64%** (34.0 → 93.7 fps), t −122, MDE 1.3% | 40.0 → 13.4 ms, **−67%** (25.0 → 74.9 fps), t −195, MDE 0.9% |
+| 750 MHz, three-point filtering in both | −62% (17.0 → 44.6 fps) | −53% (25.3 → 53.7 fps) | −61% (18.3 → 47.4 fps) |
+| 1250 MHz, three-point filtering in both | −58% (24.0 → 56.8 fps) | −43% (34.1 → 59.8 fps) | −57% (25.1 → 57.9 fps) |
+
+In practice: at the shipped 750 MHz clock, stock settings draw the busiest scenes at 17-18 fps, under
+the 30 fps cap, so the game would run slow. This port draws them at 47-55 fps and holds the cap with
+room to spare. The fps are uncapped figures from a frozen frame, not what you see in play, and both
+arms are this build with its switches flipped, not a separate stock binary (report 12 §12.4-12.6
+has the caveats and the work still to do). An earlier three-change chain (33.4 → 23.8 ms at the
+Market, 1250 MHz) understated the total by about half.
+
+The per-change rows below each answer a different question, one change against that day's baseline.
+They measure different things (frame time, render-thread CPU, window CPU), so **do not add them up**.
 
 | Change | Why | Measured gain |
 |---|---|---|
@@ -110,7 +124,7 @@ Two cautions:
 | **Exact cache of the game's own path lookups** (`LeanGameLookup`) | Repeated string building and hashing | −7.3% Market, −4.4% Field. Real play −5.6% |
 | **Grouping opaque draws by shader and texture** (`LeanGroup`, `LeanTexReuse`) | Every program or texture switch flushes a batch | Draws per frame 261 → 145. Window CPU −5.8% and −1.1% |
 | **Simpler colour-combiner shaders** (`ShaderOpts 3`): drop a no-op wrap, pass sizes as `vec2` | Fragment ALU is scarce on the SGX | Frame time −4.9% Market (29.9 → 31.4 fps), −4.6% Field |
-| **Bilinear texture filtering by default** instead of three-point | Three-point costs three fetches plus ALU per pixel in the shader; on this content bilinear looks the same at 3× zoom | ~−20% frame time at Kokiri (27.1 → 33.9 fps). Measured before the CPU-clock pin was fixed, so the size is approximate |
+| **Bilinear texture filtering by default** instead of three-point | Three-point costs three fetches plus ALU per pixel in the shader; on this content bilinear looks the same at 3× zoom | With the rest of the fork on: −19 to −36% frame time at 1250 MHz, −5 to −24% at 750 MHz, depending on the scene (report 12 §12.3, read across runs). Largest at Hyrule Field |
 | **Allocation-free hot paths** (`LeanTexLoad`, `LeanCVar`, `LeanGeom`, `LeanCosmetics`) | Heap allocations per frame | −1% to −5% each. Allocations per frame 3,202 → 178 across these and the caches above |
 | **Blend off for the present pass** (`LeanPresent`) | The final full-screen blit does not need blending | −0.32 ms of GPU time per frame (−14% of that pass) |
 | **640×360 internal resolution** by default | Halving each axis quarters the pixels the GPU fills | ~+75% fps (16.4 → 28.7) against 1280×720. An early, noisier measurement taken before audio moved off the CPU, so indicative only |

@@ -52,4 +52,5 @@ for k in ('thread_us', 'period_us', 'window_us', 'win_cpu_us', 'swap_us', 'eof_c
     ds = [p[k][1] - p[k][0] for p in pairs]; a = sum(p[k][0] for p in pairs) / n
     mu = sum(ds) / n; sd = math.sqrt(sum((x - mu) ** 2 for x in ds) / (n - 1)) if n > 1 else float('nan')
     se = sd / math.sqrt(n)
-    print(f'{k:10s} n={n} A={a:.0f} delta={mu:+.0f} us ({100*mu/a:+.1f}%) t={mu/se:.1f} mde={T.get(n-1, 2.0)*se:.0f}')
+    pct = f'{100*mu/a:+.1f}%' if a else 'A=0'  # gl_us in a mode 0 arm
+    print(f'{k:10s} n={n} A={a:.0f} delta={mu:+.0f} us ({pct}) t={mu/se:.1f} mde={T.get(n-1, 2.0)*se:.0f}')

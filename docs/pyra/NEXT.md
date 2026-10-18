@@ -3,7 +3,7 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-10-18**: **the open task is the stock-vs-optimised comparison (section 0 below).** Every
+Last revised **2026-10-18, evening**: **Tier 1 of the stock-vs-optimised comparison is measured (report 12): the whole fork is −64% to −67% frame time at the three fixtures, at 750 and 1250 MHz (−43% to −62% with three-point filtering held).** Tiers 2 and 3 and Tier 1 in real play remain (section 0). Before that, 2026-10-18: **the open task was the stock-vs-optimised comparison.** Every
 gain in reports 8 and 11 was measured one change at a time, against whatever was shipped that day. Nobody has
 measured the whole fork against a stock Ship of Harkinian in one design. The README's "What they bought"
 table says so, and the only cumulative figure it can give is a three-link chain (Market 33.4 → 23.8 ms at
@@ -233,6 +233,15 @@ and −11.7% of render-thread CPU in real play. §8.21: the frame is the render 
 waiting on the GPU.
 
 ## 0 — Stock vs optimised: one comparison of the whole fork (open, 2026-10-18)
+
+**Status, 2026-10-18 evening: Tier 1 frozen is done (report 12).** Items 1 (preset arms, validated) and 2
+(the no-switch audit, §12.5) are built. Tier 1 at the three fixtures, 6 pairs, at 750 and 1250 MHz, all
+switches and three-point held: **−64% to −67% frame time with everything on, −43% to −62% with three-point
+held** (t −83 to −282, MDE ≤1.6%). In-process dumps with three-point held match except 34 px (Market)
+and 29 px (Hyrule Field) at ±1, LeanGroup's ties. **Open:** Tier 1 in real play (needs the owner;
+a TextureFilter flip hitches at each arm change, so check `kWatchSkipFrames` or hold the filter), and
+Tiers 2 and 3. Item 3 below is not built: porting the harness's counters to stock drags optimisation
+code in, so build a counter-free "lite" harness into both a stock and a tip binary instead (§12.6).
 
 **Question.** How much faster is this fork's Ship of Harkinian than a stock one, on the same Pyra, same
 OS, same boot, same clock? Only the SoH and libultraship code and settings may differ. OS-side work
