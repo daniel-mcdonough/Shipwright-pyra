@@ -1,7 +1,7 @@
 # Pyra Port — Audit Executive Summary
 
 Audit date: 2026-09-20
-Repo: `Shipwright` @ `feature/touchpad-bindings` (91abd3b), submodule `libultraship` @ `e03c0ea5`
+Repo: `Shipwright` @ `feature/touchpad-bindings` (91abd3b), submodule `libultraship` @ `911fd17d`
 Target verified live over SSH against the actual device (Debian 13 trixie, kernel 5.6.19-freq, armv7l).
 
 > **This is an audit snapshot, not a status page.** It records what was true when the port was

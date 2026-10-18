@@ -218,7 +218,7 @@ here, and the owner is back to choosing between 30/875 and 20/625.
 
 Built and run on the host's native benchmark build (desktop GL, so LeanGLState 0 and no grouping),
 frozen and in motion at the Market, `gSettings.RenderThread` 0 against 3 in one process. libultraship
-`f7b827dd`.
+`1b60274c`.
 
 **What the host showed:**
 
@@ -252,7 +252,7 @@ frozen A/B 0 → 1 for the cost and `replay_us`.
 
 ## 11.9 Stage 1 on the device: exact, nearly free, and the gate passes (2026-09-27)
 
-The device free for the session, `feature/pyra-two-core` at libultraship `f7b827dd`, all defaults
+The device free for the session, `feature/pyra-two-core` at libultraship `1b60274c`, all defaults
 (LeanGLState 3, LeanGroup 1). Pinned at 1000 MHz; every segment below was on the pin.
 
 **Equivalence in motion** (`SOH_BENCH_STATIC=0`, Market, mode 0 against 3, 2 pairs): **2,172,912
@@ -296,7 +296,7 @@ Next: stage 2 (§11.6), starting with the context moving to a second thread on t
 
 ## 11.10 Stage 2: the GL thread works, and at 750 MHz the frame period falls by a third (2026-09-27)
 
-libultraship `784bf4f4` and after: `gSettings.RenderThread` 2 (4 with the checks). The stream is cut into
+libultraship `e7d1e4dc` and after: `gSettings.RenderThread` 2 (4 with the checks). The stream is cut into
 64 KB blocks, published to the GL thread as they fill, so the GL thread starts on a frame while the
 interpreter is still producing it; the swap is a queued frame-end record, and the main thread may run
 one frame ahead and no more. Calls that need an answer (shader creation, framebuffers, the texture-name
@@ -405,7 +405,7 @@ worth keeping, so it came before §11.11's longer real-play A/B. Hardware repo
 `experiments/power-budget/thermcost.sh twocore` (its README's 2026-09-28 section; `thermclock.py . twocore`
 reproduces everything): on battery, the Market fixture with game logic running (`SOH_BENCH_STATIC=0`) at the
 game's frame cap, battery-gauge watts, userspace-pinned clock. RenderThread 2 is applied by the harness's
-one-valued A/B CVar after the settle, i.e. in a running game. The build is 30f9261 (libultraship 1b0ccaa8),
+one-valued A/B CVar after the settle, i.e. in a running game. The build is 235fb2c (libultraship bf9c4386),
 the same binary as §11.11. Mode 0 against 2 at 750 MHz is ABBA by process, 180 s blocks; 750 against 625 in
 mode 2 is ABBA in one process, 60 s blocks; temperatures from one 10-minute hold per arm.
 
@@ -447,7 +447,7 @@ builds the atlas and sets `TexID`, and the context moves at that frame's `StartF
 libultraship or the game destroys the font texture afterwards (no `DestroyFontsTexture`/`DestroyDeviceObjects`
 call), so the backend never builds it again.
 
-**The guard** (libultraship `b32aac46`): the interface gains `RunNow(fn, arg)`, which runs fn where the
+**The guard** (libultraship `01c9e8e7`): the interface gains `RunNow(fn, arg)`, which runs fn where the
 context is and returns when it has run (the proxy's existing synchronous `Call`). `Gui::ImGuiBackendNewFrame`
 uses it while `io.Fonts->TexID` is null, and `RunInOrder` after. Today that is only the first frame, in mode 0,
 where both run the call at once, so nothing changes. It stops a reordering of the frame from bringing the race
@@ -471,7 +471,7 @@ PROMPT task 2).
 ## 11.14 Real play settles it: mode 2 at 750, not 625 (2026-09-28)
 
 Two watch sessions, the owner playing the Market then Death Mountain Trail, ~13 and ~15 minutes, the build of
-§11.13 (315e144, libultraship b32aac46), `PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start
+§11.13 (f5c6901, libultraship 01c9e8e7), `PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start
 SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0 SOH_BENCH_AB_CVAR=gSettings.RenderThread`, frames over 40 ms
 (`hist_ms` 50 + 67 + over) pooled and paired by block (TESTING trap 26). The input method was not recorded.
 
@@ -520,7 +520,7 @@ three times the misses) and 20/625 (−0.50 W and ~4 °C more, at 20 fps). Again
 
 ## 11.15 RenderThread 2 is the default on GLES2 (2026-09-29)
 
-libultraship `e0516fad`: `kRenderThreadDefault` (in `gfx_threaded.h`) is 2 under `USE_OPENGLES2` and 0
+libultraship `198321e2`: `kRenderThreadDefault` (in `gfx_threaded.h`) is 2 under `USE_OPENGLES2` and 0
 elsewhere, so the desktop GL build is unchanged; the proxy's `StartFrame` reads the CVar with it. A config
 key still wins, and so does the harness's A/B CVar.
 

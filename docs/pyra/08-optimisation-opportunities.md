@@ -1380,7 +1380,7 @@ That rule was stricter than correctness needs: once a lookup has filled the cach
 already holds entries for both `path` and `alt/path`, and a `NotFound` cached for `alt/path` is never
 overwritten (the lookup returns early). Only an erase, the alt-asset toggle, or a newly loaded `alt/`
 asset — which overrides its base — can change a cached answer. The generation now moves on those
-alone (libultraship `2170510b`). A texture pack streaming `alt/` assets would still flush, once per
+alone (libultraship `e93d3ceb`). A texture pack streaming `alt/` assets would still flush, once per
 new pack asset rather than once per frame.
 
 ### A real-play A/B
@@ -1520,7 +1520,7 @@ every attribute (`UnloadShader`) and re-enabled and re-pointed them all (`LoadSh
 each, 51–63 switches a frame. GLES 2 has no VAOs, so that is global state reset to mostly the same
 values.
 
-`gSettings.LeanGLState` (libultraship `f011db32`, default 0):
+`gSettings.LeanGLState` (libultraship `e9e158ac`, default 0):
 
 - **1** — shadow the attribute arrays: enable, disable and re-point only what differs between the
   old and the new program. Re-established from nothing every frame (ImGui draws in the same
@@ -1875,7 +1875,7 @@ light is one dependent chain, was tested and **is refuted**.
 
 ### The change, and proof it was exact
 
-`gSettings.LeanLight=1` (libultraship `537c92cc`, reverted in `12e0a6ef`) lit a `GfxSpVertex`
+`gSettings.LeanLight=1` (libultraship `560c9701`, reverted in `f4fd863a`) lit a `GfxSpVertex`
 call's vertices in a separate pass, four at a time. It used the same operations the inline loop
 compiles to, spelled with `fmaf`, because GCC contracts to `VFMA` under its default
 `-ffp-contract=fast` (checked in the disassembly: the dot product is
@@ -2157,7 +2157,7 @@ of residue, larger here, and not caused by the change.
 ### Default
 
 The change is exact by construction, verified entry by entry in motion, and a clear win at both
-fixtures, so **`gSettings.LeanInterp` defaults to 1** (`2c4b3d4`). A single segment with the CVar
+fixtures, so **`gSettings.LeanInterp` defaults to 1** (`8e76b6d`). A single segment with the CVar
 absent from the device's config read 15,600 µs render-thread CPU, the arm-1 value (15,692; arm 0
 was 17,057).
 
@@ -2726,7 +2726,7 @@ The period moved within its MDE in every run (225-499 µs); the thread's CPU is 
   entries, not the allocator. That also says the rest of the ceiling (~210 µs) is the map's inserts
   and the interpreter's lookups, which no storage change touches; a flat table keyed by `Mtx*` would
   change libultraship's interface to reach part of it.
-- **Mode 1 is the default** (`d185540`): exact by construction, pixel-identical, and it holds no state
+- **Mode 1 is the default** (`5eec6e4`): exact by construction, pixel-identical, and it holds no state
   across ticks except a capacity hint, so no real-play A/B. Mode 2 is exact in motion and stays
   available; it is not the default because it keeps pools across ticks for a gain the rig cannot
   resolve. With the CVar absent from the config, one Market segment read **178 allocations per frame**
@@ -2734,7 +2734,7 @@ The period moved within its MDE in every run (225-499 µs); the thread's CPU is 
 
 ### The render side, split
 
-Two new instruments (libultraship `7168444`):
+Two new instruments (libultraship `b90be17`):
 
 - **`eof_cpu_us`** on the `BENCH oncpu` line: the render thread's CPU time from the backend's
   `EndFrame` (depth discard, `glFlush`) through the swap — the driver's per-frame kick, as work rather
@@ -2799,7 +2799,7 @@ avoidable ones.
 
 ### Two instruments
 
-libultraship `9520c3dd`:
+libultraship `e9d1b876`:
 
 - **`gSettings.ProbeSkipDraw` 3 and 4** (benchmark builds): 3 issues every `glDrawArrays` in
   `DrawTriangles` twice, the second with no state change between; 4 repeats only the first triangle.
@@ -2864,7 +2864,7 @@ H**. A merged draw makes no state change, so what it saves is the repeat price, 
 
 ### The change: `gSettings.LeanTexReuse`
 
-`fd067827`. Before the texture site flushes, `TextureAlreadyBound` builds the cache key exactly as
+`b3e55a43`. Before the texture site flushes, `TextureAlreadyBound` builds the cache key exactly as
 `ImportTexture` would and looks it up; if it resolves to the entry already in `mRenderingState.mTextures[i]`
 **and** the backend confirms that texture id is bound in unit `i` (`GfxRenderingAPI::IsTextureBound`, new;
 false in every backend but OpenGL), the batch stays open and the entry moves to the back of the LRU as a
@@ -2913,7 +2913,7 @@ Measured 2026-09-25 night, the device free, frozen Market pinned at 1000 MHz, so
 
 ### The probe
 
-`gSettings.ProbeSkipDraw` 5 and 6 (libultraship `60114393`), A/B'd against mode 3 (every draw twice), so
+`gSettings.ProbeSkipDraw` 5 and 6 (libultraship `8753979a`), A/B'd against mode 3 (every draw twice), so
 the delta is only what a texture bind adds to the repeat. Both bind on unit 0; the other texture is the
 one unit 0 held at the previous draw (a real scene texture), or a complete 1×1 texture when that is the
 same one. Unit 0 and the backend's shadow end as they started.
@@ -2962,7 +2962,7 @@ unchanged uniform would price it the same way.
 Same session and conditions as §8.38 (frozen Market, 1000 MHz, soaked, 65 °C between runs, all 24
 segments on the pin, `LeanTexReuse=1`, 228 draws).
 
-`gSettings.ProbeSkipDraw` 7 and 8 (libultraship `b931969e`), against mode 3 as in §8.38, on draws whose
+`gSettings.ProbeSkipDraw` 7 and 8 (libultraship `969f185e`), against mode 3 as in §8.38, on draws whose
 program samples a texture (226 of 228): **7** re-uploads the texture-size uniform with the value it holds
 before the repeat; **8** draws the repeat with the first width one larger, then restores it.
 
@@ -2998,7 +2998,7 @@ texture could remove before building any reordering.
 
 ### The probes
 
-`gSettings.ProbeSkipDraw` 9, 10 and 11 (libultraship `dd32139f`, mode 10 as below from `3d5a2408`), each
+`gSettings.ProbeSkipDraw` 9, 10 and 11 (libultraship `3b09c542`, mode 10 as below from `b810390b`), each
 A/B'd against mode 3 (every draw twice) as in §8.38, so the delta is only what the extra calls add to the
 repeat:
 
@@ -3107,7 +3107,7 @@ were on the pin; no pair was dropped.
 
 ### The change: `gSettings.LeanGroup` (default 0)
 
-libultraship `4c2fbd4c`, GLES2 backend, only with `LeanGLState=3`. A draw whose state is groupable (depth
+libultraship `6c5df4c4`, GLES2 backend, only with `LeanGLState=3`. A draw whose state is groupable (depth
 test on with `GL_LESS`, depth writes, no polygon offset, no blend) is not drawn: its vertices are copied
 into a bucket keyed by program, the texture ids it reads (sampled, or read for the size and filtering
 uniforms, in the pairs `SetPerDrawUniforms` reads them) and the frame uniforms the program holds. Anything
@@ -3193,7 +3193,7 @@ every pair of this run.
 ### What this leaves
 
 - ~~Whether to make `LeanGroup=1` the GLES2 default~~ **Made the GLES2 default at the owner's call**
-  (libultraship, after `4c2fbd4c`), the first default that is not exact. Checked with the key absent from
+  (libultraship, after `6c5df4c4`), the first default that is not exact. Checked with the key absent from
   the device's config: one soaked Market segment at 1000 MHz drew 145 `glDrawArrays`, deferred 159, and
   read 13.51 ms of window CPU (the A/B's arm 1: ~13.55).
 - Program switches are the part of a draw grouping did not take (~48 per Market frame, ~5.8 µs each at
@@ -3576,8 +3576,8 @@ far above what this setting reaches.
 ## 8.46 The present pass and the swap: blend-off is exact and −0.32 ms of GPU; the swap waits for the GPU, and deferring it helps the fixtures but not play; 30 fps at 750 MHz nearly holds real play
 
 *NEXT.md item I (task 3), then task 2's question (30 fps at a lower clock) from a new side. 2026-09-26/27,
-device on the charger except where noted, kernel `5.6.19-m4-kbdled` with 0034. libultraship `0583dd89`
-(probes), `e9aa2684` (the default).*
+device on the charger except where noted, kernel `5.6.19-m4-kbdled` with 0034. libultraship `a08793bf`
+(probes), `2040bd19` (the default).*
 
 **Question.** §8.42 found the present pass, one blended 1280×720 quad plus a clear, costing 2.87 ms of 3D
 per frame, more than the scene. NEXT.md said it "removes GPU work, not CPU work". What of it can go, and
@@ -3716,7 +3716,7 @@ only have hurt it if anything leaks across a block.
   The 12-pair capped Market run (20 of 24 segments at 639×325) is not used above.
 
 **What this leaves.**
-- **LeanPresent=1 is the GLES2 default** (`e9aa2684`; bits 2 and 4 stay probes). A capture with no CVar set
+- **LeanPresent=1 is the GLES2 default** (`2040bd19`; bits 2 and 4 stay probes). A capture with no CVar set
   shows the present/scene ratio at 0.90, the blend-off level (0.90-0.92; blend on 1.08-1.10).
 - **30 fps at 750 MHz needs the Market's heavy ticks**, not a general speed-up: task 2's candidates (the audio
   stack, the flat blocks), judged in real play at the Market, where 3% of frames miss.

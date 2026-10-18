@@ -41,7 +41,7 @@ as the default, the branch into `feature/pyra-port`, the 750 MHz pin in the laun
 
 Earlier, 2026-09-28, later: **`RenderThread` 2 can be a launch setting** (§11.13). §11.10's first-frame
 race did not exist: ImGui's backend `NewFrame` runs before the proxy changes mode. It is now guarded anyway
-(libultraship `b32aac46`), and launches in mode 2 or 4 checked clean (0 mismatches in 1.1M checks, 0 pixels at
+(libultraship `01c9e8e7`), and launches in mode 2 or 4 checked clean (0 mismatches in 1.1M checks, 0 pixels at
 both fixtures). Next: real play in mode 2 at 625 and 750 with the owner (0T (3)).
 
 Earlier, 2026-09-28: **the GL thread pays in watts** (§11.12, fixture, on battery). It costs +0.09 W at
@@ -412,7 +412,7 @@ and paired render CPU (`watchpairs.py`), not the frozen fixtures' mean. §8.44's
        paired by block (−2.77 points, t −5.6); 625 misses 3.52% against 750's 1.11% (t 5.3). The owner chose
        30/750 in mode 2.** Pooled, the Market 0.91%, the Trail 1.85%: gate met, the Trail with no margin.
      - ~~**Ship it**~~ **Done 2026-09-29.** ~~(a) `gSettings.RenderThread` default 2 on the GLES2 path~~ **done (§11.15, libultraship
-       `e0516fad`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; ~~(b) the branch into `feature/pyra-port`~~ **done 2026-09-29, fast-forward (libultraship `feature/gles2-pyra`
+       `198321e2`): no key launches in mode 2, key 0 stays direct, the harness overrides it**; ~~(b) the branch into `feature/pyra-port`~~ **done 2026-09-29, fast-forward (libultraship `feature/gles2-pyra`
        likewise); work continues there**; ~~(c) the 750 MHz pin~~
        **done 2026-09-29, in the `pyra-soh` wrapper, not the launcher** (the launcher is not installed on the
        device; hardware repo `device/pyra-soh` + `device/pyra-cpu-pin`, a root helper allowed by a narrow sudoers
@@ -685,7 +685,7 @@ In order:
   `o_three_point_filtering` is a compile-time substitution, so the branch is not in the shipped
   shader at all (§8.16). The branch-flattening A/B that both documents wanted is moot with it.
 - **Item 4, `GL_EXT_discard_framebuffer`.** Implemented, measured at no gain (§8.10). Decide
-  keep-or-revert on commit `e1fae43d`; it is dead weight either way, not a regression.
+  keep-or-revert on commit `42977925`; it is dead weight either way, not a regression.
 
 ### Item A is measured, confirmed and shipped
 

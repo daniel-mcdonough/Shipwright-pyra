@@ -99,7 +99,7 @@ ssh -n "$PYRA_HOST" "cd $PYRA_DIR && { SDL_VIDEO_X11_FORCE_EGL=1 \
 
 The `{ ... & }` form is what keeps ssh from waiting on the game (trap 4). Without `SOH_BENCH` the harness is
 off, and nothing pins the clock. Report 11's GL thread (`gSettings.RenderThread` 2) can be in the config for
-a launch since libultraship `b32aac46` (§11.13): five hand launches and three harness runs started in mode 2
+a launch since libultraship `01c9e8e7` (§11.13): five hand launches and three harness runs started in mode 2
 or 4 drew and checked clean. The owner's own install, `~/soh-pyra`, is launched from the desktop and is not
 ours to start.
 
