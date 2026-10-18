@@ -3,7 +3,13 @@
 The numbered reports are a record of what happened. This file is the opposite: a live queue,
 rewritten as things land. If it disagrees with a report, this file is newer.
 
-Last revised **2026-09-29**, night: **870 mV costs nothing in play (§8.51).** One watch process, the owner playing,
+Last revised **2026-10-18**: **the open task is the stock-vs-optimised comparison (section 0 below).** Every
+gain in reports 8 and 11 was measured one change at a time, against whatever was shipped that day. Nobody has
+measured the whole fork against a stock Ship of Harkinian in one design. The README's "What they bought"
+table says so, and the only cumulative figure it can give is a three-link chain (Market 33.4 → 23.8 ms at
+1250 MHz, §8.20-8.24). Section 0 replaces that with a measurement.
+
+Before that, 2026-09-29, night: **870 mV costs nothing in play (§8.51).** One watch process, the owner playing,
 the 750 MHz point flipped between 870 and 950 mV every 30 s (`voltflip.sh`): frames over 40 ms −0.13 points
 (t −0.64, MDE 0.41, 42 pairs), main-thread CPU +223 µs (t 0.69, MDE 641). §8.50's high Market (2.55%) was the
 session; here it is 1.05% at 870. **The Trail does not meet the gate**: mode 2 at 750 pooled over four sessions is
@@ -225,6 +231,96 @@ call": removing 43% of GL calls saved 0.5%. Before that, §8.22–8.23: the asse
 (`gSettings.LeanResLookup`, **default 3**) is −12.1% of the Market frame and −15.1% at Hyrule Field,
 and −11.7% of render-thread CPU in real play. §8.21: the frame is the render thread *computing*, not
 waiting on the GPU.
+
+## 0 — Stock vs optimised: one comparison of the whole fork (open, 2026-10-18)
+
+**Question.** How much faster is this fork's Ship of Harkinian than a stock one, on the same Pyra, same
+OS, same boot, same clock? Only the SoH and libultraship code and settings may differ. OS-side work
+(the SGX driver patch, undervolt, thermal daemon, GPU idle fix, the 750 MHz pin itself) has to be common
+to both arms, so it cancels out. The answer goes in a new **report 12** (`12-stock-vs-optimised.md`) and
+in the README.
+
+**What "stock" means.** Upstream SoH cannot run on this GPU at all, because it has no GLES2 path. So
+stock is the least the device needs to run the game, and three tiers measure three different things.
+Report each separately and never chain them.
+
+| Tier | Arm A ("stock") | Arm B ("optimised") | Design | Answers |
+|---|---|---|---|---|
+| **1. Switches** | `feature/pyra-port`, every fork switch at its upstream value (below) | the same binary at shipped defaults | **one process**, ABBA, the existing harness | what the switchable work buys. This is the cleanest number. |
+| **2. Code** | a stock build: `f1822a4af` with libultraship `cdf0d7e6` (GLES2 port, NEON audio build fix, Pyra first-run defaults, nothing measured or optimised yet) plus the harness (item 3 below) | `feature/pyra-port` | **separate binaries**, launches alternated ABAB on one boot, each soaked to one temperature | everything, including the code that has no switch |
+| **3. Out of the box** | Tier 2's stock build with upstream's *settings*: 1.0× resolution, `InterpolationFPS` 20, VSync on, three-point filtering | shipped defaults | as Tier 2 | what a player feels moving from stock settings to this port. It is settings plus code, and the report must say so. |
+
+Hold the internal resolution at 0.5× (640×360) in both arms of Tiers 1 and 2. Resolution is a menu
+setting a stock player could also choose, not an optimisation. Tier 3 is the only place it moves.
+
+**Tier 1 arms.** Build the list from the code, not from this table. Run
+`grep -rn 'gSettings\.\(Lean\|ShaderOpts\|RenderThread\|TextureFilter\)' soh/soh libultraship/src libultraship/include`,
+read each read site's default, and check that the "off" value takes the upstream code path and not the
+fork's restructured fallback. As of 2026-10-18 the switches are:
+- `ShaderOpts` 3 → 0
+- `TextureFilter` bilinear → three-point (`FILTER_THREE_POINT` = 0)
+- `RenderThread` 2 → 0
+- `LeanGLState` 3 → 0
+- `LeanResLookup` 3 → 0
+- `LeanGroup`, `LeanPresent`, `LeanInterp`, `LeanInterpMap`, `LeanGameLookup`, `LeanTexLoad`, `LeanCVar`,
+  `LeanGeom`, `LeanTexReuse` and `LeanCosmetics`: 1 → 0
+- `LeanSwap` stays 0 in both arms. It ships off.
+
+Run a second Tier 1 pair with three-point filtering in *both* arms. That splits the filter default (a
+fidelity choice) from the code work. In the report, the headline is the all-switches number and the
+filter-held number sits next to it.
+
+**What has to be built first (host only, no device):**
+1. **Preset arms in the harness.** The A/B flips one CVar (`SOH_BENCH_AB_CVAR`). Add
+   `SOH_BENCH_AB_PRESET=<file>`: one arm per line, `name: cvar=value cvar=value ...`. Every arm change
+   applies the whole set. `TextureFilter` and `ShaderOpts` still take their recompile path
+   (`benchmark.cpp`, the special cases next to `CVAR_TEXTURE_FILTER`). Restore every CVar the preset
+   touched at the end, as §8.31 does for one. Support it in watch mode too (real play). Count it as
+   correct only after a preset whose two arms are identical gives a null, and a preset that flips only
+   `ShaderOpts` reproduces §8.20 within its MDE.
+2. **An audit of the code with no switch.** Diff `develop..feature/pyra-port` and list every per-frame
+   path that changed without a switch: the GLES2 backend fixes, the ConsoleVariable generation fix
+   (§8.48), `Config::Save`, the quit fixes and anything else the diff shows. Tier 1 cannot see these.
+   Tier 2 can. The list goes in report 12, so the difference between the two tiers has an explanation.
+3. **The stock build** (branch `bench/stock`, not pushed until it works). Start at `f1822a4af`, but
+   **not at its libultraship pin**. That pin is upstream `fdcaf633`, which has no GLES2 target. The
+   superproject did not bump the pointer until the harness commit `7fa41e829`; the early device runs
+   used a submodule checkout ahead of its pin. Pin libultraship to **`cdf0d7e6`** ("add an OpenGL ES 2.0 /
+   GLSL ES 1.00 backend target"). Its only other ancestors past upstream are shader-failure logging
+   and two gamepad touchpad mappings, none of which run per frame. Leave out `42977925` (the
+   framebuffer discard, measured at no gain, §8.10) and everything after it. If `cdf0d7e6` fails a
+   shader or draws a fixture wrong, carry forward only the GLES2 *correctness* fixes it needs (the
+   `gl_FragDepth` and varying-budget work, reports 2 and 5 §5.6) and name each one in report 12. A
+   stock build that draws differently has nothing to compare against. Port the harness forward as one patch at its *current* version:
+   `benchmark.cpp`, its hooks, `bench.sh`, the uncap, the pin, the soak and the fixture pin fix. Strip
+   the counters for features stock does not have. If porting the harness drags in optimisation code,
+   stop and write up why rather than carrying it in. A `bench/stock` that is not stock answers nothing.
+   Check that the stock build draws the three fixtures the same as the tip, with an `xwd` grab per
+   fixture in both builds and a control pair.
+
+**Measuring (device, only once the owner says it is free):**
+- **Tier 1:** a frozen preset A/B at **Market, Hyrule Field and Kokiri**, 6 pairs each, soaked to 70 °C,
+  cooled to ~65 °C between runs. Run it at **750 MHz** (the shipped clock) *and* **1250 MHz** (the clock
+  most of report 8 used, so its per-change numbers can sit beside this). Then a **real-play** watch A/B
+  with the preset, owner playing, `SOH_BENCH_UNCAP=0`, at 30/750. Report frames over 40 ms per scene
+  (`slowpairs.py`) and `thread_cpu_us` (`watchpairs.py`), 50 pairs or more.
+- **Tiers 2 and 3:** first an **A-vs-A launch null**: the tip against itself over alternated launches,
+  6 pairs, soaked, at each clock. That launch-to-launch MDE is the floor for both tiers. If it is wider
+  than ~2%, say the tier numbers are indicative and why, as reports 5 and 7 should have. Then
+  stock against tip at the same fixtures and clocks. Frozen only: two binaries cannot share a real-play
+  block, so Tier 2 has no real-play number. Do not invent one.
+- **Visual:** an in-process dump of Tier 1's two arms with three-point held in both. They should match
+  except for LeanGroup's ±1 on ~26 px at Hyrule Field (§8.41). Anything else is a finding.
+- Read every segment's `cpu_min_mhz`/`cpu_max_mhz` and `temp_c`. Discard any segment off the pin, and
+  say how many were discarded.
+
+**What the README gets.** A single "stock → optimised" line per tier and clock, with t and MDE, in place
+of the chain caveat in "Architectural changes and what they bought". Per-change rows stay as they
+are, since they answer a different question.
+
+**Not in scope:** the OS side. If someone wants "stock Pyra OS + stock SoH vs everything", that is
+a different experiment across reboots and images. It belongs in the hardware repo, and nothing here
+should be quoted as that number.
 
 ## Ground rules that keep being learned the hard way
 
