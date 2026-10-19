@@ -67,9 +67,11 @@ See [Architectural changes](#architectural-changes-and-what-they-bought) for wha
 
 ## Getting started
 
-There are no prebuilt binaries. The game must link the PowerVR driver that is on your Pyra, and that
-driver cannot be redistributed. You need an x86_64 Linux PC with Docker, plus your own legally dumped
-ROM ([supported versions](docs/supportedHashes.json)).
+Prebuilt `soh.elf` + `soh.o2r` archives come from the `pyra` workflow (`soh-pyra.tar.gz`, on the
+Releases page for `pyra-v*` tags, or as a CI artifact). The binary does not contain the PowerVR
+driver. It loads the copy already installed on your Pyra at `/opt/omap5-sgx-ddk-um-linux/lib`. The
+build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
+([supported versions](docs/supportedHashes.json)).
 
 1. **Prepare the Pyra.** The port is built and tested on Debian 13 (trixie) with the fixes from
    [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra). Two of them matter most:
@@ -78,25 +80,35 @@ ROM ([supported versions](docs/supportedHashes.json)).
    - The `pyrainput` service. Without it the nubs and buttons are dead.
 
    The stock bookworm image has not been tested.
-2. **Copy the GPU driver to the PC.** Run
-   `rsync -a pyra@<your-pyra>:/opt/omap5-sgx-ddk-um-linux/ ~/.cache/pyra-ddk/`.
-3. **Cross-build the game** (`git clone --recursive`, then):
-   ```sh
-   ./scripts/pyra/build.sh image      # build the cross-compile container
-   ./scripts/pyra/build.sh configure
-   ./scripts/pyra/build.sh build      # -> build-pyra/soh/soh.elf
-   ```
-4. **Build the asset archives on the PC.** The extractor cannot run in the cross build, so make a
-   normal desktop build of this same branch (see [docs/BUILDING.md](docs/BUILDING.md)). Then:
-   - Run `cmake --build build-cmake --target GenerateSohOtr` to make `soh.o2r`. It must come from
-     this branch, because it carries this port's shaders.
-   - Launch that desktop build once with your ROM next to it to make `oot.o2r`.
-5. **Install.** Copy `soh.elf`, `soh.o2r` and `oot.o2r` into `~/soh-pyra` on the Pyra, then start the
+2. **Get `soh.elf` and `soh.o2r`.** Download `soh-pyra.tar.gz`, or build them yourself (below).
+3. **Make `oot.o2r` from your ROM.** The extractor cannot run on the Pyra, so make a normal desktop
+   build of this same branch (see [docs/BUILDING.md](docs/BUILDING.md)) and launch it once with your
+   ROM next to it.
+4. **Install.** Copy `soh.elf`, `soh.o2r` and `oot.o2r` into `~/soh-pyra` on the Pyra, then start the
    game with `pyra-soh` from dragonbox-pyra. The launcher points SDL at the SGX driver, starts the
    game from its own directory (where the game looks for saves and config) and pins the CPU at
    750 MHz. To launch by hand instead, run
    `cd ~/soh-pyra && SDL_VIDEO_X11_FORCE_EGL=1 SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1 ./soh.elf`
    from a logged-in desktop session.
+
+**Building it yourself.** You need an x86_64 Linux PC with Docker.
+1. **Get the GPU driver for linking.** The linker needs the driver's `libGLESv2.so.1`. Extract the
+   stock `omap5-sgx-ddk-um-linux` armhf `.deb` so that `~/.cache/pyra-ddk/lib` exists, or set
+   `PYRA_DDK` to another location. Don't use the copy from a Pyra that has the dragonbox-pyra fixes
+   applied, because the fd patch modifies `libsrv_um.so`. The driver is only used at link time and
+   does not end up in the build.
+2. **Cross-build the game** (`git clone --recursive`, then):
+   ```sh
+   ./scripts/pyra/build.sh image      # build the cross-compile container
+   ./scripts/pyra/build.sh configure
+   ./scripts/pyra/build.sh build      # -> build-pyra/soh/soh.elf
+   ```
+3. **Make `soh.o2r`.** In the desktop build from install step 3, run
+   `cmake --build build-cmake --target GenerateSohOtr`. It must come from this branch, because it
+   carries this port's shaders.
+
+To run the same build in CI on a fork, set the repository variables `PYRA_DDK_DEB_URL` and
+`PYRA_DDK_DEB_SHA256` to point at the stock driver `.deb` (see `.github/workflows/pyra.yml`).
 
 Controls are upstream's standard gamepad mapping. The Pyra's nubs and buttons reach the game as an
 SDL gamepad through `pyrainput`. Rebind them in the in-game input editor.

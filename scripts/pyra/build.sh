@@ -17,8 +17,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE=soh-pyra-cross
 # PYRA_BUILD_DIR: a second tree beside build-pyra, e.g. the counter-free harness build (report 12).
 BUILD_DIR="${PYRA_BUILD_DIR:-build-pyra}"
-# Proprietary PowerVR SGX driver, rsynced off the device. Not redistributable,
-# so it lives outside the repo and is mounted read-only.
+# Proprietary PowerVR SGX driver (TI TSPA licence), needed only so the linker can
+# resolve libGLESv2.so.1; the binary loads the Pyra's own copy at runtime. Kept
+# outside the repo and mounted read-only. CI points this at the stock .deb.
 DDK="${PYRA_DDK:-$HOME/.cache/pyra-ddk}"
 
 run() {

@@ -1,0 +1,153 @@
+name: pyra
+# Cross-builds soh.elf for the DragonBox Pyra and packages it with soh.o2r.
+#
+# The game links the PowerVR SGX driver's libGLESv2.so.1 (see the PYRA block in
+# CMakeLists.txt), so the linker needs the driver at build time. The release
+# never contains it: on the Pyra the loader finds the copy already installed in
+# /opt/omap5-sgx-ddk-um-linux/lib.
+#
+# Set these repository variables (Settings > Secrets and variables > Actions >
+# Variables) to the stock, unmodified driver package:
+#   PYRA_DDK_DEB_URL     URL of omap5-sgx-ddk-um-linux_<ver>_armhf.deb
+#   PYRA_DDK_DEB_SHA256  its sha256
+# Do not use a copy taken off a Pyra running the dragonbox-pyra fixes: the
+# WSEGL descriptor patch modifies libsrv_um.so.
+on:
+  push:
+    branches: [feature/pyra-port]
+    tags: ['pyra-v*']
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+
+  # soh.o2r carries this branch's shaders, so it must be generated from this
+  # tree. Same steps as generate-builds.yml.
+  generate-soh-otr:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Git Checkout
+      uses: actions/checkout@v6
+      with:
+        submodules: true
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $(cat .github/workflows/apt-deps.txt) libzip-dev zipcmp zipmerge ziptool
+    - name: Restore Cached deps folder
+      uses: actions/cache/restore@v5
+      with:
+        key: ${{ runner.os }}-deps-${{ github.ref }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-deps-${{ github.ref }}-
+          ${{ runner.os }}-deps-
+        path: deps
+    - name: Create deps folder
+      run: mkdir -p deps
+    - name: Install latest SDL
+      run: |
+        if [ ! -d "deps/SDL2-2.30.3" ]; then
+          wget https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz
+          tar -xzf SDL2-2.30.3.tar.gz -C deps
+        fi
+        cd deps/SDL2-2.30.3
+        ./configure --enable-hidapi-libusb
+        make -j 10
+        sudo make install
+        sudo cp -av /usr/local/lib/libSDL* /lib/x86_64-linux-gnu/
+    - name: Install latest tinyxml2
+      run: |
+        sudo apt-get remove libtinyxml2-dev
+        if [ ! -d "deps/tinyxml2-10.0.0" ]; then
+          wget https://github.com/leethomason/tinyxml2/archive/refs/tags/10.0.0.tar.gz
+          tar -xzf 10.0.0.tar.gz -C deps
+        fi
+        cd deps/tinyxml2-10.0.0
+        mkdir -p build
+        cd build
+        cmake ..
+        make
+        sudo make install
+    - name: Generate soh.o2r
+      run: |
+        cmake --no-warn-unused-cli -H. -Bbuild-cmake -GNinja -DCMAKE_BUILD_TYPE:STRING=Release
+        cmake --build build-cmake --config Release --target GenerateSohOtr -j3
+    - name: Upload soh.o2r
+      uses: actions/upload-artifact@v7
+      with:
+        name: pyra-soh.o2r
+        path: soh.o2r
+        retention-days: 3
+
+  build-pyra:
+    needs: generate-soh-otr
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Git Checkout
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+    - name: Fetch PowerVR driver (link-time only)
+      env:
+        DDK_URL: ${{ vars.PYRA_DDK_DEB_URL }}
+        DDK_SHA256: ${{ vars.PYRA_DDK_DEB_SHA256 }}
+      run: |
+        if [ -z "$DDK_URL" ] || [ -z "$DDK_SHA256" ]; then
+          echo "::error::Set the PYRA_DDK_DEB_URL and PYRA_DDK_DEB_SHA256 repository variables (see the top of pyra.yml)."
+          exit 1
+        fi
+        curl -fsSL --retry 3 -o "$RUNNER_TEMP/ddk.deb" "$DDK_URL"
+        echo "$DDK_SHA256  $RUNNER_TEMP/ddk.deb" | sha256sum -c -
+        dpkg-deb -x "$RUNNER_TEMP/ddk.deb" "$RUNNER_TEMP/ddk"
+        test -e "$RUNNER_TEMP/ddk/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1"
+        echo "PYRA_DDK=$RUNNER_TEMP/ddk/opt/omap5-sgx-ddk-um-linux" >> "$GITHUB_ENV"
+    - name: Build cross container
+      run: ./scripts/pyra/build.sh image
+    - name: Configure
+      run: ./scripts/pyra/build.sh configure
+    - name: Build
+      run: ./scripts/pyra/build.sh build
+    - name: Check the driver is linked, not bundled
+      run: |
+        readelf -d build-pyra/soh/soh.elf | tee "$RUNNER_TEMP/dyn.txt"
+        grep -q 'Shared library: \[libGLESv2.so.1\]' "$RUNNER_TEMP/dyn.txt"
+        grep -q '/opt/omap5-sgx-ddk-um-linux/lib' "$RUNNER_TEMP/dyn.txt"
+    - name: Download soh.o2r
+      uses: actions/download-artifact@v7
+      with:
+        name: pyra-soh.o2r
+        path: build-pyra/soh
+    - name: Package
+      run: |
+        mkdir -p soh-pyra
+        cp build-pyra/soh/soh.elf build-pyra/soh/soh.o2r soh-pyra/
+        cp README.md soh-pyra/readme.txt
+        tar -czf soh-pyra.tar.gz soh-pyra
+    - name: Upload build
+      uses: actions/upload-artifact@v7
+      with:
+        name: soh-pyra
+        path: soh-pyra.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/pyra-v')
+    needs: build-pyra
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+    - name: Download build
+      uses: actions/download-artifact@v7
+      with:
+        name: soh-pyra
+    - name: Publish release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" soh-pyra.tar.gz \
+          --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
+          --notes "Ship of Harkinian for the DragonBox Pyra (Debian 13 trixie). See readme.txt in the archive for setup; you still need your own ROM to make oot.o2r."
