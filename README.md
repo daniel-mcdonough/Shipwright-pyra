@@ -39,6 +39,32 @@ The port spans three repositories:
   crashed and SIGTERM hung.
 - Everything else is Ship of Harkinian 9.2.3: enhancements, randomizer, mods.
 
+## Measured performance on the Pyra
+
+Measured on a Pyra at the shipped 750 MHz clock, against a stock build. The stock build is the same
+GLES2 port with none of this fork's performance work. Each test froze the camera at a fixed spot and
+alternated launches of the two builds. Every run had a thermal soak and a pinned CPU clock. The full
+method and raw data are in [report 12](docs/pyra/12-stock-vs-optimised.md).
+
+| | Market Day (busiest scene) | Hyrule Field |
+|---|---|---|
+| **Out of the box**: each build at its own default settings, frame cap on | Stock: **13.3 fps**, short of its own 20 fps cap, so the game runs at about ⅔ speed<br>This port: **30 fps**, at its cap | Stock: **18.1 fps**, short of 20<br>This port: **30 fps**, at its cap |
+| **Same settings in both builds**, uncapped | 18.3 → **52.3 fps** (2.9× faster)<br>frame time 54.6 → 19.1 ms, **−65%** | 27.2 → **73.9 fps** (2.7× faster)<br>frame time 36.7 → 13.5 ms, **−63%** |
+| CPU time per frame, same settings | **−41%** | **−35%** |
+
+A second test flipped every performance switch inside one build, at three scenes and two clocks.
+Frame time fell by 64–67% in all six cases (Market, Hyrule Field and Kokiri Forest, at 750 and
+1250 MHz). With the texture filter held at upstream's three-point setting in both arms, it still fell
+by 43–62%. The filter change accounts for the rest.
+
+How to read these numbers:
+- Every effect is many times larger than the noise. Two launches of the same build differed by at
+  most 2.9% at the Market and 1.3% at Hyrule Field. The smallest t-statistic in any test was 86.
+- The uncapped fps are from a frozen frame. They show how much spare time each frame has, not the
+  frame rate you see in play, which the cap holds at 30.
+
+See [Architectural changes](#architectural-changes-and-what-they-bought) for what each change contributes.
+
 ## Getting started
 
 There are no prebuilt binaries. The game must link the PowerVR driver that is on your Pyra, and that
