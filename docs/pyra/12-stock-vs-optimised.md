@@ -5,8 +5,8 @@ time, against whatever was shipped that day. This report measures the whole fork
 Ship of Harkinian in one design, on the same OS, boot and clock, so that OS-side work (the SGX driver
 patch, the undervolt, the thermal daemon, the 750 MHz pin itself) is common to both arms and cancels.
 
-NEXT.md section 0 defines three tiers. **Only Tier 1 is done.** §12.6 says what Tiers 2 and 3 need and
-why they were not run in this session.
+NEXT.md section 0 defines three tiers. All three are measured: Tier 1 at three fixtures and two clocks,
+Tiers 2 and 3 at the Market and Hyrule Field at the shipped 750 MHz (§12.6). Tier 1 in real play is not.
 
 ## 12.1 Headline
 
@@ -30,6 +30,21 @@ The number is the frame period (`period_us`: start of frame to start of frame, w
 game's own work outside the timed window). Every effect is 40-280 standard errors from zero; the MDEs
 (0.6-1.6% of the stock period) are two orders of magnitude below the effects, so precision is not the
 question here. What the numbers mean is (§12.4).
+
+**Tier 2 (a stock binary against the tip, same menu settings, separate launches, 750 MHz)** and
+**Tier 3 (the stock binary at upstream's settings against shipped, both capped as they ship)**:
+
+| | Market | Hyrule Field |
+|---|---|---|
+| Launch-to-launch null (tip against itself) | +0.7%, t 0.6, MDE 2.9% | +0.4%, t 0.9, MDE 1.3% |
+| **Tier 2**, code and switch defaults, uncapped | 54.5 → 19.1 ms, **−64.9%** (18.3 → 52.3 fps), t −330 | 36.7 → 13.5 ms, **−63.1%** (27.2 → 73.9 fps), t −240 |
+| **Tier 3**, out of the box, capped (settings *and* code) | 13.3 fps against a 20 fps target → **30.0 fps**, its cap | 18.1 fps against 20 → **30.0 fps** |
+
+Tier 2 agrees with Tier 1 within two points at both fixtures (−63.8% and −64.5%). Tier 3 says what a
+player of a stock build at upstream's settings would see on this device at 750 MHz: the game short of
+its own 20 fps target, so running at two-thirds speed at the Market and nine-tenths at Hyrule Field.
+The shipped build holds 30 fps at both. The Market null's MDE is over the 2% NEXT.md set, so the
+Market's Tier 2 and 3 numbers are indicative by that rule. The effects are twenty times the MDE.
 
 **What a player gets from this.** The game is capped at 30 fps. Stock settings at the shipped 750 MHz
 draw the Market at 17 fps and Kokiri at 18: below the cap, so a stock build at this clock would run
@@ -117,15 +132,16 @@ how far wrong it was).
 - **Uncapped.** The shipped game runs capped at 30 fps; the fps above are what the frame would allow,
   not what anyone sees.
 - **The stock arm is the tip with its switches off, not a stock binary.** Code that changed without a
-  switch is in both arms and invisible here. A code audit (§12.5) found nothing large in that list.
-  Tier 2 is the measurement that would see it.
+  switch is in both arms and invisible here. A code audit (§12.5) found nothing large in that list,
+  and Tier 2 (§12.6), a real stock binary, agrees with Tier 1 within two points.
 - **Mode 0 is reached by switching in-process.** The GL context moves back from the GL thread at the
   arm change (`RenderThread: GL context moved` in the log at each switch), and the recording proxy
   stays in the call path, forwarding every call (report 11). Report 11 counts mode 0 as the
   unmodified path.
 - **Both arms are benchmark builds.** `BENCH_GL_CALL` counts every GL call and mode 0 issues more of
-  them, and a few counters sit in one arm's code path only. This biases slightly against the stock
-  arm. Not priced; small against a 60% effect, but the effect is not release-exact.
+  them, and a few counters sit in one arm's code path only. Priced in §12.6: the counters cost the
+  shipped Market 11% and the stock arm 8%, so Tier 1's percentages hold but its absolutes are slow.
+  Read absolutes from Tier 2.
 - **Not chained, not added.** The per-change percentages in reports 8 and 11 do not sum to this, and
   this does not split into them. Each was measured against a different baseline.
 
@@ -159,25 +175,68 @@ None of this can make a large Tier 2 − Tier 1 gap. If Tier 2 comes out far fro
 the `TextureFilter` default (stock three-point, tip bilinear; the first-run defaults do not set it)
 and at benchmark-counter work present in one build only.
 
-## 12.6 Not done: real play, Tiers 2 and 3
+## 12.6 Tiers 2 and 3: a stock binary
 
-- **Tier 1 in real play** needs the owner holding the device: watch mode with the preset
-  (`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0
-  SOH_BENCH_AB_PRESET=scripts/pyra/presets/stock-vs-shipped.txt`), 50+ pairs, `slowpairs.py` and
-  `watchpairs.py`. Watch out for one thing a single CVar did not have: a `TextureFilter` change
-  re-uploads every texture and recompiles every shader, so each arm change will hitch. The first
-  10 frames of a block are skipped (`kWatchSkipFrames`); check that this covers it, or hold the filter
-  in both arms for the real-play run.
-- **Tier 2 (a stock binary) is a build-engineering job.** The harness's counters live in ~25 files
-  across libultraship's interpreter, the GL backend and frame interpolation, many inside the switches'
-  code paths. Porting the harness to `f1822a4af` + libultraship `cdf0d7e6` either carries those
-  counters (and the code they sit in) or strips them, in which case the tip must be built without them
-  too, or the counter work biases the comparison. NEXT.md says to stop and say so if porting the
-  harness drags optimisation code in; it would. The clean design is a counter-free "lite" harness
-  (fixture, pin, soak, period, `oncpu`) built into both a stock and a tip binary, each with its own
-  `soh.o2r` and install directory, `TextureFilter` written explicitly into both configs. Then the
-  A-vs-A launch null at each clock first.
-- **Tier 3** depends on Tier 2's stock build.
+**The stock build** is branch `bench/stock` (local, not pushed): `f1822a4af` with libultraship pinned to
+`cdf0d7e6`, the GLES2 backend and nothing measured or optimised. Its `soh.o2r` is the tip's with
+`shaders/opengl/default.shader.fs` replaced by `cdf0d7e6`'s; nothing else in `soh/assets` changed between
+the two trees, and the vertex shader is identical. No GLES2 correctness fix was needed: grabs of both
+fixtures (`xwd`, §12.7) show the same frame as the tip's, filtering aside.
+
+**The instrument.** The full harness could not be ported (NEXT.md section 0 said to stop if porting it
+dragged optimisation code in, and it would have: its counters sit inside the fork's code paths).
+`benchlite.cpp` (`-DSOH_BENCHMARK_LITE=ON`) is a counter-free implementation of the same entry points:
+the fixture, the soak, the uncap, per-segment period and CPU time. The identical file and the identical
+three hooks are in both builds (tip commit `7761d505e`, stock `4525fa966`). Measuring the tip with it
+showed what the full harness costs: **the shipped Market reads 19.1 ms with the lite harness against
+21.4 ms with the full one (−11%)**, and the stock arm 54.5 against 59.0 (−8%). So Tier 1's absolutes
+are slowed by the counters in both arms by about the same share, which is why its percentages agree
+with Tier 2's while its absolutes do not. Read absolutes from Tier 2.
+
+**Design.** One arm per launch, launches in ABBA order, 6 pairs per comparison (12 launches). Each
+launch: its install's pristine `shipofharkinian.json` restored (the game saves its config at quit),
+soak to 60 °C with a 1200-frame floor, then 3 segments of 600 frames; a launch's value is the mean of
+its segments. CPU pinned at 750 MHz; every segment of all 72 launches stayed on it (none dropped). The
+die ran 65-74 °C. Three installs on the device:
+
+| Install | Binary | Settings |
+|---|---|---|
+| `~/soh-t2-tip` | tip, lite harness | shipped (0.5×, 30 fps, VSync off, `TextureFilter` 1 written explicitly, `RenderThread` 2) |
+| `~/soh-t2-stock` | `bench/stock` | 0.5×, 30 fps, VSync off, `TextureFilter` 0 (stock's default, written explicitly) |
+| `~/soh-t3-stock` | `bench/stock` | upstream: 1.0×, `InterpolationFPS` 20, VSync on, `TextureFilter` 0 |
+
+Tier 2 is uncapped, like Tier 1. Tier 3 runs both arms capped (`SOH_BENCH_UNCAP=0`), each at its own cap,
+because a cap and VSync are what "out of the box" means; uncapped, `InterpolationFPS` and VSync would
+mean nothing. The tip's arm in Tier 3 reads 19% (Market) and 4% (Hyrule Field) of frames over 40 ms
+with a mean of exactly 33.37 ms: that is start-of-frame jitter from the swap living on the GL thread in
+mode 2 (TESTING trap on `hist_ms`), not lost frames. Stock misses 40 ms on every frame at both.
+
+**Results** (`python3 docs/pyra/tools/launchpairs.py docs/pyra/data/12/tier23 <tag> <A> <B>`):
+
+| Run | A | B | Period | Δ | t | MDE | Process CPU Δ |
+|---|---|---|---|---|---|---|---|
+| null-market | tip | tip | 19.05 / 19.18 ms | +0.7% | 0.6 | 561 µs (2.9%) | +0.3% |
+| t2-market | stock | tip | 54.55 → 19.13 ms | **−64.9%** | −330 | 276 µs (0.5%) | −40.7% |
+| t3-market | stock, upstream settings | tip | 75.18 → 33.38 ms (capped) | −55.6% | −86 | 1246 µs | −42.4% |
+| null-field | tip | tip | 13.47 / 13.53 ms | +0.4% | 0.9 | 172 µs (1.3%) | +0.2% |
+| t2-field | stock | tip | 36.71 → 13.54 ms | **−63.1%** | −240 | 248 µs (0.7%) | −34.9% |
+| t3-field | stock, upstream settings | tip | 55.25 → 33.37 ms (capped) | −39.6% | −298 | 189 µs | −39.3% |
+
+Process CPU is every thread, audio included; for the tip it includes the GL thread, which the main-thread
+figure does not.
+
+**Tier 2 against Tier 1.** −64.9% against −63.8% at the Market, −63.1% against −64.5% at Hyrule Field.
+§12.5 predicted the code with no switch would not open a large gap, and it does not: the two tiers agree
+within the Market's launch MDE. Tier 1's in-process design, with the full harness, measured the fork's
+size correctly.
+
+**Still open:** Tier 1 in real play. It needs the owner holding the device: watch mode with the preset
+(`PYRA_WATCH_PIN=1 PYRA_PIN_FREQ=750000 bench.sh watch start SOH_BENCH_ENTRANCE=0x00B1 SOH_BENCH_UNCAP=0
+SOH_BENCH_AB_PRESET=scripts/pyra/presets/stock-vs-shipped.txt`), 50+ pairs, `slowpairs.py` and
+`watchpairs.py`. A `TextureFilter` change re-uploads every texture and recompiles every shader, so each
+arm change will hitch; check that the 10 skipped frames per block (`kWatchSkipFrames`) cover it, or hold
+the filter in both arms for the real-play run. Tiers 2 and 3 at Kokiri and at 1250 MHz were not run
+(scope: Market and Hyrule Field at 750, by the owner's choice).
 
 ## 12.7 Visual check
 
@@ -191,3 +250,14 @@ arms at 1250 MHz, one process each, 6 pairs. Each comparison takes the closer of
 
 Both arms draw the same picture. The ±1 pixels are `LeanGroup`'s depth ties (§8.41: 26 px at ±1 at
 Hyrule Field), the one known inexact switch.
+
+**The stock binary** cannot dump frames (the lite harness has no dump), so it was checked by screen grab
+during a run at each fixture, against a grab of the tip-lite build. Both draw the same frame: viewpoint,
+actors, HUD; only the filtering differs, three-point against bilinear. Not pixel-compared: separate
+launches freeze the NPCs at different phases (TESTING trap 32).
+
+**`xwd` photographs the screensaver.** The first grabs were black, the tip's too: the MATE screensaver
+(blank-only, no lock, 30-minute idle) had come on over the game on the unattended device. One launch each
+with it on and off read 21.01 and 20.66 ms at the Market (−1.7%, within the launch MDE), so it does not
+move the numbers much, but it is not controlled in Tier 1. The Tier 2/3 driver held it off with
+`mate-screensaver-command -i` for the whole run (TESTING trap 36).

@@ -104,11 +104,24 @@ set to its upstream value against the shipped defaults, in one process, frozen c
 | 750 MHz, three-point filtering in both | −62% (17.0 → 44.6 fps) | −53% (25.3 → 53.7 fps) | −61% (18.3 → 47.4 fps) |
 | 1250 MHz, three-point filtering in both | −58% (24.0 → 56.8 fps) | −43% (34.1 → 59.8 fps) | −57% (25.1 → 57.9 fps) |
 
+The first table's absolute figures come from a benchmark build whose counters cost both arms 8-11%;
+its percentages hold (the second table confirms them), and the second table's absolutes have no counters.
+
+Against a separately built stock binary (the GLES2 port and nothing else; [report 12 §12.6](docs/pyra/12-stock-vs-optimised.md)),
+at 750 MHz, launches alternated:
+
+| | Market | Hyrule Field |
+|---|---|---|
+| Same menu settings, uncapped | 18.3 → 52.3 fps, **−65%** frame time, t −330 | 27.2 → 73.9 fps, **−63%**, t −240 |
+| Out of the box: stock at upstream settings (1.0×, 20 fps cap, VSync, three-point) against shipped, both capped | 13.3 fps (short of its 20 fps cap) → **30 fps** | 18.1 fps (short of 20) → **30 fps** |
+
+The launch-to-launch noise floor was 2.9% at the Market and 1.3% at Hyrule Field.
+
 In practice: at the shipped 750 MHz clock, stock settings draw the busiest scenes at 17-18 fps, under
 the 30 fps cap, so the game would run slow. This port draws them at 47-55 fps and holds the cap with
-room to spare. The fps are uncapped figures from a frozen frame, not what you see in play, and both
-arms are this build with its switches flipped, not a separate stock binary (report 12 §12.4-12.6
-has the caveats and the work still to do). An earlier three-change chain (33.4 → 23.8 ms at the
+room to spare. The fps are uncapped figures from a frozen frame, not what you see in play, and the first
+table's arms are this build with its switches flipped; the stock binary above agrees with it within two
+points (report 12 has the caveats). An earlier three-change chain (33.4 → 23.8 ms at the
 Market, 1250 MHz) understated the total by about half.
 
 The per-change rows below each answer a different question, one change against that day's baseline.

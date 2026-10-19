@@ -175,6 +175,17 @@ three-point held in both arms), and the two validation files, `null.txt` (identi
 `shaderopts.txt` (only `ShaderOpts`, which must agree with `ab gSettings.ShaderOpts 0 3` taken in the same
 session).
 
+**Two builds: the counter-free harness (report 12 §12.6).** The full harness's counters sit inside
+the fork's code paths and cost the shipped Market ~11% of its frame, so it cannot compare the tip with a
+stock build. `-DSOH_BENCHMARK_LITE=ON` builds `benchlite.cpp` instead: the same fixture variables, the soak
+and the uncap, one arm per launch, `SOH_BENCH_REPS` identical segments, `BENCHL` lines in `run.log` and
+`bench.txt`, and `SOH_BENCH_LABEL` to name the arm. Build it beside the full one:
+`PYRA_BUILD_DIR=build-pyra-lite ./scripts/pyra/build.sh configure -DSOH_BENCHMARK_LITE=ON`. Branch
+`bench/stock` carries the same file and hooks. Give each build its own install directory with its own
+`soh.o2r` and a `shipofharkinian.json.pristine` restored before every launch, alternate launches ABBA, and
+pair them with `docs/pyra/tools/launchpairs.py`. Take a tip-against-itself launch null first: its MDE is
+the floor (1.3-2.9% at 750 MHz, against ~0.5-1.5% in one process).
+
 **Several probe arms in one run (§8.48).** `bench.sh run $MARKET SOH_BENCH_AB_CVAR=<cvar>
 SOH_BENCH_AB_VALUES=0,7,0,24,0,992 SOH_BENCH_REPS=4`: with more than two values the arms go round-robin,
 not ABBA, so interleave the baseline and read the run with `docs/pyra/tools/bracket.py run.log 0 1000`,
@@ -808,6 +819,15 @@ Put the level back afterwards (delete the key). Debug is not ruinous — a short
     and moved one arm's delta by a third. Nothing flags it; the segments' `BENCH work draws=` do (the Market reads
     ~108-118, the alley ~100). Read the draws per segment before trusting a long run, and keep hands off the
     device during one.
+
+36. **On an unattended device the screensaver covers the game** (2026-10-18, report 12 §12.7). MATE's
+    screensaver (blank-only, no lock, 30-minute idle) comes on over a fullscreen game nobody is touching,
+    and then every `xwd` grab is black, desktop included. It moved one Market launch by −1.7% (within
+    launch noise), but it is an uncontrolled variable across launches. Before a long unattended session,
+    start `{ DISPLAY=:0 nohup mate-screensaver-command -i -n soh-bench -r benchmark > /dev/null 2>&1 < /dev/null & }`
+    on the device (it inhibits while it runs) and kill it afterwards with `pkill -f '^mate-screensaver-command -i'`.
+    Checking for a running inhibitor with `pgrep -f '[s]creensaver-command -i'` inside the same ssh command
+    matches that command's own text (trap 23 again): anchor the pattern with `^`.
 
 ## 6. Recipes
 
