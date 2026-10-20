@@ -83,10 +83,9 @@ build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
 2. **Get the game.** Download `soh-pyra.tar.gz`, or build it yourself (below). The archive holds
    `soh.elf`, `soh.o2r` and the extractor's `assets/` folder.
 3. **Add your ROM.** Unpack the archive to `~/soh-pyra` on the Pyra and put your ROM in the same
-   folder. On first launch the game makes `oot.o2r` from it. This takes a while on the Pyra, but only
-   happens once. (Making `oot.o2r` on the device has not been confirmed on hardware yet. If it fails,
-   launch a desktop build of this same branch once with the ROM next to it
-   ([docs/BUILDING.md](docs/BUILDING.md)) and copy its `oot.o2r` across.)
+   folder. On first launch the game asks to make `oot.o2r` from it. This takes about 2.5 minutes at
+   750 MHz and only happens once. You need a `pyra-soh` from dragonbox-pyra that includes the
+   first-launch check (commit `234c2cc` or later). Older versions refuse to start without `oot.o2r`.
 4. **Start the game** with `pyra-soh` from dragonbox-pyra. The launcher points SDL at the SGX
    driver, starts the game from its own directory (where the game looks for saves and config) and pins the CPU at
    750 MHz. To launch by hand instead, run
