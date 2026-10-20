@@ -25,6 +25,9 @@ docs/doxygen/
 *.z64
 *.n64
 *.v64
+*.Z64
+*.N64
+*.V64
 *.map
 *.dump
 out.txt
