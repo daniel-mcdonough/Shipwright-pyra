@@ -67,7 +67,7 @@ See [Architectural changes](#architectural-changes-and-what-they-bought) for wha
 
 ## Getting started
 
-Prebuilt `soh.elf` + `soh.o2r` archives come from the `pyra` workflow (`soh-pyra.tar.gz`, on the
+Prebuilt archives come from the `pyra` workflow (`soh-pyra.tar.gz`, on the
 Releases page for `pyra-v*` tags, or as a CI artifact). The binary does not contain the PowerVR
 driver. It loads the copy already installed on your Pyra at `/opt/omap5-sgx-ddk-um-linux/lib`. The
 build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
@@ -80,13 +80,15 @@ build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
    - The `pyrainput` service. Without it the nubs and buttons are dead.
 
    The stock bookworm image has not been tested.
-2. **Get `soh.elf` and `soh.o2r`.** Download `soh-pyra.tar.gz`, or build them yourself (below).
-3. **Make `oot.o2r` from your ROM.** The extractor cannot run on the Pyra, so make a normal desktop
-   build of this same branch (see [docs/BUILDING.md](docs/BUILDING.md)) and launch it once with your
-   ROM next to it.
-4. **Install.** Copy `soh.elf`, `soh.o2r` and `oot.o2r` into `~/soh-pyra` on the Pyra, then start the
-   game with `pyra-soh` from dragonbox-pyra. The launcher points SDL at the SGX driver, starts the
-   game from its own directory (where the game looks for saves and config) and pins the CPU at
+2. **Get the game.** Download `soh-pyra.tar.gz`, or build it yourself (below). The archive holds
+   `soh.elf`, `soh.o2r` and the extractor's `assets/` folder.
+3. **Add your ROM.** Unpack the archive to `~/soh-pyra` on the Pyra and put your ROM in the same
+   folder. On first launch the game makes `oot.o2r` from it. This takes a while on the Pyra, but only
+   happens once. (Making `oot.o2r` on the device has not been confirmed on hardware yet. If it fails,
+   launch a desktop build of this same branch once with the ROM next to it
+   ([docs/BUILDING.md](docs/BUILDING.md)) and copy its `oot.o2r` across.)
+4. **Start the game** with `pyra-soh` from dragonbox-pyra. The launcher points SDL at the SGX
+   driver, starts the game from its own directory (where the game looks for saves and config) and pins the CPU at
    750 MHz. To launch by hand instead, run
    `cd ~/soh-pyra && SDL_VIDEO_X11_FORCE_EGL=1 SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1 ./soh.elf`
    from a logged-in desktop session.
@@ -103,9 +105,12 @@ build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
    ./scripts/pyra/build.sh configure
    ./scripts/pyra/build.sh build      # -> build-pyra/soh/soh.elf
    ```
-3. **Make `soh.o2r`.** In the desktop build from install step 3, run
+3. **Make `soh.o2r`.** ZAPD cannot run inside the cross build, so make a normal desktop build of
+   this same branch (see [docs/BUILDING.md](docs/BUILDING.md)) and run
    `cmake --build build-cmake --target GenerateSohOtr`. It must come from this branch, because it
    carries this port's shaders.
+4. **Assemble `~/soh-pyra`.** Copy in `soh.elf` and `soh.o2r`, plus the contents of
+   `soh/assets/extractor/` as `assets/` and `soh/assets/xml/` as `assets/xml/`.
 
 To run the same build in CI on a fork, set the repository variables `PYRA_DDK_DEB_URL` and
 `PYRA_DDK_DEB_SHA256` to point at the stock driver `.deb` (see `.github/workflows/pyra.yml`).

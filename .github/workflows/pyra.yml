@@ -123,8 +123,12 @@ jobs:
         path: build-pyra/soh
     - name: Package
       run: |
-        mkdir -p soh-pyra
+        mkdir -p soh-pyra/assets/xml
         cp build-pyra/soh/soh.elf build-pyra/soh/soh.o2r soh-pyra/
+        # The in-game extractor reads these next to soh.elf to make oot.o2r from
+        # the player's ROM on the Pyra (same layout as CMakeLists.txt install()).
+        cp -r soh/assets/extractor/. soh-pyra/assets/
+        cp -r soh/assets/xml/. soh-pyra/assets/xml/
         cp README.md soh-pyra/readme.txt
         tar -czf soh-pyra.tar.gz soh-pyra
     - name: Upload build
@@ -150,4 +154,4 @@ jobs:
       run: |
         gh release create "$GITHUB_REF_NAME" soh-pyra.tar.gz \
           --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" \
-          --notes "Ship of Harkinian for the DragonBox Pyra (Debian 13 trixie). See readme.txt in the archive for setup; you still need your own ROM to make oot.o2r."
+          --notes "Ship of Harkinian for the DragonBox Pyra (Debian 13 trixie). Unpack to ~/soh-pyra and add your own ROM; see readme.txt for setup."
