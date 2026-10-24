@@ -10,8 +10,8 @@ name: pyra
 # Variables) to the stock, unmodified driver package:
 #   PYRA_DDK_DEB_URL     URL of omap5-sgx-ddk-um-linux_<ver>_armhf.deb
 #   PYRA_DDK_DEB_SHA256  its sha256
-# Do not use a copy taken off a Pyra running the dragonbox-pyra fixes: the
-# WSEGL descriptor patch modifies libsrv_um.so.
+# Use the package, not a copy taken from a Pyra: an installed copy is not
+# guaranteed to match it (the test Pyra's libsrv_um.so does not).
 on:
   push:
     branches: [feature/pyra-port]
