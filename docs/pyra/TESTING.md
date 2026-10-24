@@ -12,9 +12,18 @@ benchmark on it unless the owner has said so in the current session.
 ## 0. Session setup
 
 ```sh
-. ~/git/dragonbox-pyra/pyra-local.conf    # finds the agent holding the Pyra's key, exports PYRA_HOST
+export PYRA_HOST=pyra-trixie              # or pyra-bw, the stock bookworm card; see below
+. ~/git/dragonbox-pyra/pyra-local.conf    # finds the agent holding the Pyra's key, keeps PYRA_HOST
 export PYRA_DIR=/home/pyra/soh-bench2
 ```
+
+There are two SD cards: the modified trixie card and the stock bookworm card. The PC's
+`~/.ssh/config` has an alias for each, `pyra-trixie` and `pyra-bw`. It supplies the user and key and
+gives each card its own `HostKeyAlias`, so swapping cards doesn't trip the known_hosts check the way a
+bare IP does. Both aliases reach the same USB ethernet address, so whichever card is in answers. The
+wrong alias fails with "REMOTE HOST IDENTIFICATION HAS CHANGED", which means the other card is in.
+Switch alias; don't edit known_hosts to get past it. Over wifi only, the aliases don't apply: use
+the bare WLAN address from `pyra-local.conf`.
 
 Several ssh agents run at once and only one holds the key the Pyra accepts. The old one-liner here,
 `ls -t ~/.ssh/agent/s.*.agent.* | head -1`, picked the newest socket, and on 2026-09-25 that was the
