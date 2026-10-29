@@ -74,7 +74,9 @@ build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
    stock bookworm image cannot run it, because the binary is built against trixie's libraries. The
    official trixie image needs some fixes first, and
    [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra) applies all of them. Its
-   `docs/fixes.md` explains each one. The game itself does not depend on that repository.
+   `docs/fixes.md` explains the numbered fixes, and
+   `reports/pyra-ddk-dri3-wsegl-double-close.md` the descriptor fix. The game itself does not
+   depend on that repository.
 
    Required:
    - **A desktop that starts.** Xorg on the trixie image crashes at startup. dragonbox-pyra fix 4
