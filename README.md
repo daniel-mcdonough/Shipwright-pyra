@@ -4,10 +4,9 @@
 # Ship of Harkinian for the DragonBox Pyra
 
 This is an unofficial port of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) 9.2.3
-"Ackbar" to the [DragonBox Pyra](https://pyra-handheld.com/) handheld (OMAP5432, PowerVR SGX544MP2,
-OpenGL ES 2.0, 1280×720 panel). It targets the Pyra only. It was tuned on the device rather than kept
-upstreamable, so use [upstream's releases](https://github.com/HarbourMasters/Shipwright/releases) on
-any other platform.
+"Ackbar" to the [DragonBox Pyra](https://pyra-handheld.com/) handheld. The optimizations target
+the Pyra, so most of the work isn't upstreamable. Use
+[upstream's releases](https://github.com/HarbourMasters/Shipwright/releases) on any other platform.
 
 **Do not take problems with this port to the Ship of Harkinian Discord or issue tracker.** They do
 not support it. Open an issue here instead.
@@ -16,32 +15,30 @@ The port spans three repositories:
 
 | Repository | What it holds |
 |---|---|
-| **Shipwright-pyra** (this one) | The game: the GLES2 port, Pyra defaults, performance work and save safety. Branch `feature/pyra-port`. |
+| **Shipwright-pyra** | The game: the GLES2 port, Pyra defaults, performance work and save safety. Branch `feature/pyra-port`. |
 | [libultraship-pyra](https://github.com/daniel-mcdonough/libultraship-pyra) | The engine library, as a submodule: the GLES2 renderer, the GL render thread, config-file safety. Branch `feature/gles2-pyra`. |
-| [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra) | The OS side: the `pyra-soh` launcher, the SGX driver fix, input and thermal fixes, kernel patches. |
+| [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra) | Optional. The OS side: the `pyra-soh` launcher and the trixie image fixes (Xorg, GPU start-up, controls, the SGX descriptor fix, sound). |
 
 ## What you get
 
-- **A steady 30 fps on a 750 MHz CPU.** OpenGL work moves to a second core, so the busiest scenes
-  tested (Market, Death Mountain Trail) miss the 30 fps deadline on only about 1–2% of frames. A
-  lower clock means a cooler device and longer battery life.
-- **Settings tuned for the Pyra on first launch.** It renders at 640×360 (half the panel), the frame
-  rate is capped at 30, VSync is off, MSAA is off (GLES2 has none) and textures use bilinear
-  filtering. These are written only when a setting is missing, so your own menu changes stick.
+- **A steady 30 fps with the CPU locked at 750 MHz.** OpenGL work has been split out and now runs
+  on a second core. This lowers per-core load, which lets the Pyra run at a lower clock.
+- **Settings tuned for the Pyra on first launch.** It renders at 640×360, the frame rate is capped at 30,
+  VSync is off, MSAA is off (GLES2 has none) and textures use bilinear filtering. These are written
+  only when the setting is missing, so you can change them in the game menu.
 - **Faster rendering with no visual change.** Draw calls, asset lookups, frame interpolation and GL
-  state handling were each reworked. Except for draw grouping, which moves a few pixels by one
-  colour step, the output is pixel-identical to before.
+  state handling were each reworked.
 - **Saves you can trust.** Every save is written to a temporary file, read back and compared, synced
   to the SD card and only then swapped in. `global.sav` and `shipofharkinian.json` used to be written
   straight over the live file. If a save fails, the game says so on screen and the previous save is
-  untouched.
+  untouched. This was discovered when the test harness kept losing its save.
 - **A clean quit.** Alt+F4, SIGTERM and Ctrl+C now save and exit in a second or two. Before, quitting
   crashed and SIGTERM hung.
 - Everything else is Ship of Harkinian 9.2.3: enhancements, randomizer, mods.
 
 ## Measured performance on the Pyra
 
-Measured on a Pyra at the shipped 750 MHz clock, against a stock build. The stock build is the same
+Measured on a Pyra at a 750 MHz clock against a stock build. The stock build is the same
 GLES2 port with none of this fork's performance work. Each test froze the camera at a fixed spot and
 alternated launches of the two builds. Every run had a thermal soak and a pinned CPU clock. The full
 method and raw data are in [report 12](docs/pyra/12-stock-vs-optimised.md).
@@ -73,31 +70,50 @@ driver. It loads the copy already installed on your Pyra at `/opt/omap5-sgx-ddk-
 build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
 ([supported versions](docs/supportedHashes.json)).
 
-1. **Prepare the Pyra.** The port is built and tested on Debian 13 (trixie) with the fixes from
-   [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra). Two of them matter most:
-   - The SGX driver patch (`pyra-wsegl-fdfix.sh`). The driver closes file descriptors twice, which
-     corrupts logs and can make saves fail.
-   - The `pyrainput` service. Without it the nubs and buttons are dead.
+1. **Prepare the Pyra.** The game needs Debian 13 (trixie) with a working desktop and GPU. The
+   stock bookworm image cannot run it, because the binary is built against trixie's libraries. The
+   official trixie image needs some fixes first, and
+   [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra) applies all of them. Its
+   `docs/fixes.md` explains each one. The game itself does not depend on that repository.
 
-   The stock bookworm image has not been tested.
+   Required:
+   - **A desktop that starts.** Xorg on the trixie image crashes at startup. dragonbox-pyra fix 4
+     turns off GLX, which the game does not use.
+   - **The GPU on every boot.** The driver's start-up races the GPU probe and loses on about half of
+     boots. Every GL program then fails with `PVR:(Error): Couldn't connect to services`. Fix 11
+     (`pyra-sgx-init.sh`) removes the race. Without it, run
+     `sudo /opt/omap5-sgx-ddk-um-linux/bin/pvrsrvctl --start --no-module` after each boot that
+     fails.
+   - **Controls.** Trixie's `funkeymonkey-pyrainput` package leaves out its systemd unit, so the
+     nubs and buttons are dead. Without fix 3, only the keyboard works.
+
+   Strongly recommended:
+   - **The SGX descriptor fix** (`pyra-wsegl-fdfix.sh`). The driver's X11 layer closes a file
+     descriptor it no longer owns, and whatever file reuses that number loses it. That corrupts the
+     game's log in nearly every run, and once it hit a save file. The game's checked saves catch
+     some of this, not all of it.
+   - **Sound** (fix 9). The image ships with the audio outputs switched off.
+
+   Optional: `pyra-soh` (see step 4) and the thermal and charging fixes.
 2. **Get the game.** Download `soh-pyra.tar.gz`, or build it yourself (below). The archive holds
    `soh.elf`, `soh.o2r` and the extractor's `assets/` folder.
 3. **Add your ROM.** Unpack the archive to `~/soh-pyra` on the Pyra and put your ROM in the same
-   folder. On first launch the game asks to make `oot.o2r` from it. This takes about 2.5 minutes at
-   750 MHz and only happens once. You need a `pyra-soh` from dragonbox-pyra that includes the
-   first-launch check (commit `234c2cc` or later). Older versions refuse to start without `oot.o2r`.
-4. **Start the game** with `pyra-soh` from dragonbox-pyra. The launcher points SDL at the SGX
-   driver, starts the game from its own directory (where the game looks for saves and config) and pins the CPU at
-   750 MHz. To launch by hand instead, run
+   folder. On first launch the game asks to make `oot.o2r` from it. This takes about 2.5 minutes.
+   If you use `pyra-soh`, you need a version with the first-launch check (commit `234c2cc` or
+   later). Older versions refuse to start without `oot.o2r`.
+4. **Start the game** with `pyra-soh` from dragonbox-pyra, or by hand. The launcher points SDL at the
+   SGX driver, starts the game from its own directory (where the game looks for saves and config)
+   and pins the CPU at 750 MHz, which is the clock the 30 fps figures were measured at. To launch
+   by hand, run
    `cd ~/soh-pyra && SDL_VIDEO_X11_FORCE_EGL=1 SDL_VIDEO_GL_DRIVER=/opt/omap5-sgx-ddk-um-linux/lib/libGLESv2.so.1 ./soh.elf`
    from a logged-in desktop session.
 
 **Building it yourself.** You need an x86_64 Linux PC with Docker.
 1. **Get the GPU driver for linking.** The linker needs the driver's `libGLESv2.so.1`. Extract the
    stock `omap5-sgx-ddk-um-linux` armhf `.deb` so that `~/.cache/pyra-ddk/lib` exists, or set
-   `PYRA_DDK` to another location. Don't use the copy from a Pyra that has the dragonbox-pyra fixes
-   applied, because the fd patch modifies `libsrv_um.so`. The driver is only used at link time and
-   does not end up in the build.
+   `PYRA_DDK` to another location. Use the package, not a copy taken from a Pyra. An installed copy
+   is not guaranteed to match the package: the one on the test Pyra has a different
+   `libsrv_um.so`. The driver is only used at link time and does not end up in the build.
 2. **Cross-build the game** (`git clone --recursive`, then):
    ```sh
    ./scripts/pyra/build.sh image      # build the cross-compile container
