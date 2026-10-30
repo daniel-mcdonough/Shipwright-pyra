@@ -74,9 +74,9 @@ build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
    stock bookworm image cannot run it, because the binary is built against trixie's libraries. The
    official trixie image needs some fixes first, and
    [dragonbox-pyra](https://github.com/daniel-mcdonough/dragonbox-pyra) applies all of them. Its
-   `docs/fixes.md` explains the numbered fixes, and
-   `reports/pyra-ddk-dri3-wsegl-double-close.md` the descriptor fix. The game itself does not
-   depend on that repository.
+   `docs/fixes.md` explains the numbered fixes. The descriptor fix is explained in this repository,
+   in [report 10 §10.7](docs/pyra/10-save-file-corruption.md). The game itself does not depend on
+   dragonbox-pyra.
 
    Required:
    - **A desktop that starts.** Xorg on the trixie image crashes at startup. dragonbox-pyra fix 4
@@ -101,7 +101,7 @@ build is for Debian 13 (trixie) only. You also need your own legally dumped ROM
    `soh.elf`, `soh.o2r` and the extractor's `assets/` folder.
 3. **Add your ROM.** Unpack the archive to `~/soh-pyra` on the Pyra and put your ROM in the same
    folder. On first launch the game asks to make `oot.o2r` from it. This takes about 2.5 minutes.
-   If you use `pyra-soh`, you need a version with the first-launch check (commit `234c2cc` or
+   If you use `pyra-soh`, you need a version with the first-launch check (commit `9c24c9a` or
    later). Older versions refuse to start without `oot.o2r`.
 4. **Start the game** with `pyra-soh` from dragonbox-pyra, or by hand. The launcher points SDL at the
    SGX driver, starts the game from its own directory (where the game looks for saves and config)
