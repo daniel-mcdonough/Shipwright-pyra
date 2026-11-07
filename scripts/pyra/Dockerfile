@@ -4,9 +4,10 @@
 # packages installed here are the same versions the device runs. That avoids
 # needing a sysroot rsynced off the device for anything except the proprietary
 # PowerVR SGX driver, which is not in Debian.
-# --platform pins the build host's architecture. Without it a debian:trixie tag
-# that some other project pulled as arm/v7 gets reused, and binfmt then runs the
-# whole toolchain under qemu-user without any error.
+# --platform pins the build host's architecture. BuildKit already checks the
+# platform of a local base image, but the legacy builder (DOCKER_BUILDKIT=0)
+# reuses a debian:trixie tag that another project pulled as arm/v7, and binfmt
+# then runs the whole toolchain under qemu-user without any error.
 FROM --platform=$BUILDPLATFORM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
