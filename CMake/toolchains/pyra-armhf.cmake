@@ -33,6 +33,14 @@ set(PYRA_ARCH_FLAGS "-march=armv7ve+neon-vfpv4 -mtune=cortex-a15 -mfloat-abi=har
 set(CMAKE_C_FLAGS_INIT   "${PYRA_ARCH_FLAGS}")
 set(CMAKE_CXX_FLAGS_INIT "${PYRA_ARCH_FLAGS}")
 
+# lld rather than ld.bfd: relinking the 48 MB soh.elf drops from ~6.5 s to ~0.6 s,
+# and that link is most of an incremental build. mold is as fast but leaves out
+# the hard-float flag in the ELF header and the .ARM.attributes section; lld keeps
+# both. CMAKE_LINKER_TYPE (CMake 3.29+) also reaches existing build trees, which
+# CMAKE_*_LINKER_FLAGS_INIT does not. Set PYRA_LINKER=BFD to compare.
+set(PYRA_LINKER LLD CACHE STRING "CMAKE_LINKER_TYPE for the Pyra build (LLD, MOLD or BFD)")
+string(TOUPPER "${PYRA_LINKER}" CMAKE_LINKER_TYPE)
+
 # Debian multiarch: armhf libraries live beside the host's in the same rootfs,
 # so CMAKE_LIBRARY_ARCHITECTURE steers find_library rather than a sysroot split.
 set(CMAKE_LIBRARY_ARCHITECTURE ${PYRA_TRIPLE})

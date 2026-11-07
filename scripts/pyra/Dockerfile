@@ -4,12 +4,15 @@
 # packages installed here are the same versions the device runs. That avoids
 # needing a sysroot rsynced off the device for anything except the proprietary
 # PowerVR SGX driver, which is not in Debian.
-FROM debian:trixie
+# --platform pins the build host's architecture. Without it a debian:trixie tag
+# that some other project pulled as arm/v7 gets reused, and binfmt then runs the
+# whole toolchain under qemu-user without any error.
+FROM --platform=$BUILDPLATFORM debian:trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN dpkg --add-architecture armhf && apt-get update && apt-get install -y --no-install-recommends \
-      crossbuild-essential-armhf \
+      crossbuild-essential-armhf lld \
       cmake ninja-build pkg-config git curl ca-certificates python3 python3-pip \
       file xxd \
  && rm -rf /var/lib/apt/lists/*
