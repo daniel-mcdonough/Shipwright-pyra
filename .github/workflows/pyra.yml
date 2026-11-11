@@ -26,7 +26,7 @@ permissions:
 jobs:
 
   # soh.o2r carries this branch's shaders, so it must be generated from this
-  # tree. Same steps as generate-builds.yml.
+  # tree. Same steps as upstream's generate-builds.yml generate-soh-otr job.
   generate-soh-otr:
     runs-on: ubuntu-22.04
     steps:
